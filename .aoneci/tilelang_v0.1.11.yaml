@@ -28,7 +28,7 @@ jobs:
       - uses: setup-github-proxy
       - uses: checkout
         inputs:
-          repository-url: 'git@gitlab.alibaba-inc.com:PPU-Compiler/tilelang.git'
+          repository-url: 'git@gitlab.alibaba-inc.com:T-HEAD/tilelang.git'
           path: 'tilelang'
           submodules: true
           submodule-fetch-depth: 1
