@@ -987,7 +987,9 @@ void TVMFFIABIBuilder::BindDLTensors(
     // Check device_type consistency (device_id equality is implicitly ensured
     // by binding above)
     {
-      PrimExpr ok = (device_type == actual_dev_type);
+      PrimExpr ok = (device_type == actual_dev_type) ||
+                    (device_type == DLDeviceType::kDLPPU &&
+                     actual_dev_type == DLDeviceType::kDLCUDA);
       std::ostringstream device_msg;
       device_msg << "kernel " << kernel_nm << " input " << buf_nm
                  << " device_type mismatch";

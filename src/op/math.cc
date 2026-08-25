@@ -33,7 +33,8 @@ TVM_REGISTER_OP("tl.pow_of_int")
                                Integer(CallEffectKind::kPure))
     .set_attr<TScriptPrinterName>("TScriptPrinterName", "pow_of_int")
     .set_attr<FLowerIntrinsic>("hip.FLowerIntrinsic", pow_of_int_op)
-    .set_attr<FLowerIntrinsic>("cuda.FLowerIntrinsic", pow_of_int_op);
+    .set_attr<FLowerIntrinsic>("cuda.FLowerIntrinsic", pow_of_int_op)
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", pow_of_int_op);
 
 PrimExpr infinity_op(PrimExpr args) {
   const CallNode *call = args.as<CallNode>();
@@ -62,7 +63,8 @@ TVM_REGISTER_OP("tl.infinity")
                                Integer(CallEffectKind::kPure))
     .set_attr<TScriptPrinterName>("TScriptPrinterName", "infinity")
     .set_attr<FLowerIntrinsic>("cuda.FLowerIntrinsic", infinity_op)
-    .set_attr<FLowerIntrinsic>("hip.FLowerIntrinsic", infinity_op);
+    .set_attr<FLowerIntrinsic>("hip.FLowerIntrinsic", infinity_op)
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", infinity_op);
 
 PrimExpr round_ties_away_from_zero_op(PrimExpr args) {
   const CallNode *call = args.as<CallNode>();
@@ -88,6 +90,8 @@ TVM_REGISTER_OP("tl.round_ties_away_from_zero")
     .set_attr<FLowerIntrinsic>("cuda.FLowerIntrinsic",
                                round_ties_away_from_zero_op)
     .set_attr<FLowerIntrinsic>("hip.FLowerIntrinsic",
+                               round_ties_away_from_zero_op)
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
                                round_ties_away_from_zero_op);
 
 } // namespace tl

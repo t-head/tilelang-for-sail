@@ -1890,6 +1890,7 @@ ptx_tcgen05_mma_ss = _dtype_forward(_tir_op.ptx_tcgen05_mma_ss)
 ptx_tcgen05_mma_ts = _dtype_forward(_tir_op.ptx_tcgen05_mma_ts)
 ptx_tcgen05_mma_blockscaled_ss = _dtype_forward(_tir_op.ptx_tcgen05_mma_blockscaled_ss)
 ptx_ldmatrix = _dtype_forward(_tir_op.ptx_ldmatrix)
+ptx_ldmatrix_swzl = _dtype_forward(_tir_op.ptx_ldmatrix_swzl)  # PPU: ld swizzle
 ptx_cp_async = _dtype_forward(_tir_op.ptx_cp_async)
 ptx_cp_async_bulk = _dtype_forward(_tir_op.ptx_cp_async_bulk)
 mma_store = _dtype_forward(_tir_op.mma_store)
@@ -2144,6 +2145,7 @@ __all__ = [
     "ptx_tcgen05_mma_ss",
     "ptx_tcgen05_mma_blockscaled_ss",
     "ptx_ldmatrix",
+    "ptx_ldmatrix_swzl",  # PPU: ld swizzle
     "ptx_cp_async",
     "ptx_cp_async_bulk",
     "ptx_wait_group",

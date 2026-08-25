@@ -16,6 +16,7 @@ bool TargetIsCuda(Target target);
 bool TargetIsRocm(Target target);
 bool TargetIsMetal(Target target);
 bool TargetIsCPU(Target target);
+bool TargetIsPPU(Target target);
 
 bool TargetIsVolta(Target target);
 bool TargetIsTuring(Target target);
@@ -32,6 +33,7 @@ bool TargetHasLdmatrix(Target target);
 bool TargetHasStmatrix(Target target);
 bool TargetHasTmem(Target target);
 bool TargetHasBulkCopy(Target target);
+bool TargetHasAiuCopy(Target target);
 bool TargetIsCuTeDSL(Target target);
 bool TargetSupportVectorize256(Target target);
 int TargetGetWarpSize(Target target);

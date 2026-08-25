@@ -2,7 +2,7 @@
 
 import tilelang
 import tilelang.language as T
-from tilelang.autotuner import autotune
+from kda_autotune import autotune
 import torch
 
 from FLA_KDA.fla_wy_fast import recompute_w_u_fwd

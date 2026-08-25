@@ -25,6 +25,7 @@ SUPPORTED_TARGETS: dict[str, str] = {
     "webgpu": "WebGPU target for browser/WebGPU runtimes.",
     "c": "C source backend.",
     "cutedsl": "CuTe DSL GPU target. Use dict options such as {'kind': 'cutedsl', 'arch': 'sm_90'}.",
+    "ppu": "PPU target. Use dict options such as {'kind': 'ppu', 'arch': 'ppu_15'}.",
 }
 
 ROCM_MTRIPLE = "amdgcn-amd-amdhsa-hcc"
@@ -108,6 +109,18 @@ def _cuda_target_from_arch(arch: str | None) -> Target | str:
     return Target({"kind": "cuda", "arch": arch})
 
 
+# PPU: build a standalone PPU target from the CUDA-visible SM architecture.
+def _ppu_target_from_arch(arch: str | None) -> Target | str:
+    """Build a PPU target while preserving the legacy bare string fallback."""
+    if arch is None:
+        return "ppu"
+    if arch == "sm_80":
+        arch = "ppu_10"
+    elif arch == "sm_89":
+        arch = "ppu_15"
+    return Target({"kind": "ppu", "arch": arch})
+
+
 def describe_supported_targets() -> dict[str, str]:
     """
     Return a mapping of supported target names to usage descriptions.
@@ -136,6 +149,15 @@ def check_hip_availability() -> bool:
     """
     try:
         rocm.find_rocm_path()
+        return True
+    except Exception:
+        return False
+
+def check_ppu_availability() -> bool:
+    """Check if PPU is available by locating the PPU SDK."""
+    try:
+        from tilelang.contrib import hgcc
+        hgcc._find_ppu_sdk()
         return True
     except Exception:
         return False
@@ -251,9 +273,12 @@ def determine_target(target: TargetLike | Literal["auto"] = "auto", return_objec
             # Check for CUDA and HIP availability
             is_cuda_available = check_cuda_availability()
             is_hip_available = check_hip_availability()
+            is_ppu_available = check_ppu_availability()
 
+            if is_ppu_available:
+                return_var = _ppu_target_from_arch(_detect_torch_cuda_arch())
             # Determine the target based on availability
-            if is_cuda_available:
+            elif is_cuda_available:
                 return_var = _cuda_target_from_arch(_detect_torch_cuda_arch())
             elif is_hip_available:
                 return_var = _rocm_target_from_arch(_detect_torch_rocm_arch())
@@ -292,18 +317,24 @@ def determine_target(target: TargetLike | Literal["auto"] = "auto", return_objec
                 normalized_target = target.strip()
                 if not normalized_target:
                     raise AssertionError(f"Target {target} is not supported")
-                try:
-                    parsed_target = Target(normalized_target)
-                except Exception as err:
-                    examples = ", ".join(f"`{name}`" for name in SUPPORTED_TARGETS)
-                    raise AssertionError(
-                        f"Target {target} is not supported. Supported targets include: {examples}. "
-                        "Pass target options as a dict, e.g. `{'kind': 'cuda', 'arch': 'sm_80'}`."
-                    ) from err
-                if parsed_target.kind.name == "hip" and target_get_mcpu(parsed_target) is not None:
-                    return_var = with_rocm_target_attrs(parsed_target)
+                # PPU: a bare "ppu" target should work like bare "cuda" and
+                # infer the current CUDA-visible SM arch, so users can simply
+                # run with `export TILELANG_TARGET=ppu`.
+                if normalized_target == "ppu":
+                    return_var = _ppu_target_from_arch(_detect_torch_cuda_arch())
                 else:
-                    return_var = normalized_target
+                    try:
+                        parsed_target = Target(normalized_target)
+                    except Exception as err:
+                        examples = ", ".join(f"`{name}`" for name in SUPPORTED_TARGETS)
+                        raise AssertionError(
+                            f"Target {target} is not supported. Supported targets include: {examples}. "
+                            "Pass target options as a dict, e.g. `{'kind': 'cuda', 'arch': 'sm_80'}`."
+                        ) from err
+                    if parsed_target.kind.name == "hip" and target_get_mcpu(parsed_target) is not None:
+                        return_var = with_rocm_target_attrs(parsed_target)
+                    else:
+                        return_var = normalized_target
             else:
                 raise AssertionError(f"Target {target} is not supported")
 
@@ -326,6 +357,11 @@ def target_is_hip(target: Target) -> bool:
 
 def target_is_metal(target: Target) -> bool:
     return _ffi_api.TargetIsMetal(target)
+
+
+# PPU: standalone "ppu" target kind predicate (kind.name == "ppu").
+def target_is_ppu(target: Target) -> bool:
+    return _ffi_api.TargetIsPPU(target)
 
 
 def target_is_volta(target: Target) -> bool:

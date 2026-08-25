@@ -1504,6 +1504,24 @@ def ptx_ldmatrix(trans, num, src_access_ptr, dst_access_ptr):
     )
 
 
+def ptx_ldmatrix_swzl(trans, num, src_access_ptr, dst_access_ptr, swzl_mode, trans_block=False):
+    """PPU ldmatrix intrinsic using swizzled bulk tensor load.
+
+    This follows the v0.1.11 access-pointer style used by ``ptx_ldmatrix`` and
+    adds the PPU1.5 swizzle mode and block-transpose flag.
+    """
+    return tvm.tirx.call_intrin(
+        "handle",
+        tvm.tirx.op.Op.get("tl.ptx_ldmatrix_swzl"),
+        trans,
+        num,
+        src_access_ptr,
+        dst_access_ptr,
+        swzl_mode,
+        trans_block,
+    )
+
+
 def ptx_cp_async(dst_access_ptr, src_access_ptr, num_elems, predicate=None):
     """TVM intrinsic for ptx async copy from global to shared memory using cp.async
     https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-cp-async

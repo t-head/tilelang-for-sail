@@ -14,6 +14,7 @@ from tilelang.utils.language import retrieve_func_from_module
 from tilelang.utils.target import determine_target
 from tilelang.jit.adapter.base import BaseKernelAdapter, CachedTextSource
 from tilelang.jit.adapter.nvrtc import is_nvrtc_available, check_nvrtc_available
+from tilelang.jit.adapter.utils import is_ppu_target
 
 from .libgen import NVRTCLibraryGenerator
 
@@ -41,7 +42,10 @@ class NVRTCKernelAdapter(BaseKernelAdapter):
         pass_configs: dict[str, Any] | None = None,
         compile_flags: list[str] | None = None,
     ):
-        check_nvrtc_available()
+        # PPU compiles with hgcc and launches via the HGGC driver (ctypes),
+        # so it does not require cuda-python.
+        if not is_ppu_target(Target(determine_target(target))):
+            check_nvrtc_available()
 
         self.params = params
         self.result_idx = self._legalize_result_idx(result_idx)
@@ -89,10 +93,14 @@ class NVRTCKernelAdapter(BaseKernelAdapter):
         self.lib_generator.load_lib()
         self.libpath = self.lib_generator.libpath
         self.pymodule = self.lib_generator.pymodule
-        culib = self.lib_generator.culib
-        for name in self.function_names:
-            result, self.kernels[name] = cuda.cuLibraryGetKernel(culib, bytes(name, "utf-8"))
-            assert result == cuda.CUresult.CUDA_SUCCESS, f"Failed to get kernel: {name}"
+        if is_ppu_target(self.target):
+            for name in self.function_names:
+                self.kernels[name] = self.lib_generator.get_ppu_function(name)
+        else:
+            culib = self.lib_generator.culib
+            for name in self.function_names:
+                result, self.kernels[name] = cuda.cuLibraryGetKernel(culib, bytes(name, "utf-8"))
+                assert result == cuda.CUresult.CUDA_SUCCESS, f"Failed to get kernel: {name}"
 
         self._post_init()
 
@@ -148,10 +156,14 @@ class NVRTCKernelAdapter(BaseKernelAdapter):
         adapter.pymodule = adapter.lib_generator.pymodule
         adapter.function_names = adapter.pymodule._function_names
 
-        culib = adapter.lib_generator.culib
-        for name in adapter.function_names:
-            result, adapter.kernels[name] = cuda.cuLibraryGetKernel(culib, bytes(name, "utf-8"))
-            assert result == cuda.CUresult.CUDA_SUCCESS, f"Failed to get kernel: {name}"
+        if is_ppu_target(adapter.target):
+            for name in adapter.function_names:
+                adapter.kernels[name] = adapter.lib_generator.get_ppu_function(name)
+        else:
+            culib = adapter.lib_generator.culib
+            for name in adapter.function_names:
+                result, adapter.kernels[name] = cuda.cuLibraryGetKernel(culib, bytes(name, "utf-8"))
+                assert result == cuda.CUresult.CUDA_SUCCESS, f"Failed to get kernel: {name}"
 
         adapter._post_init()
         return adapter

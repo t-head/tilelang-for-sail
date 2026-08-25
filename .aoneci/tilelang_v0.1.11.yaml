@@ -1,0 +1,125 @@
+triggers:
+  merge_request:
+    target-branches:
+      - v0.1.11
+name: "v0.1.11 CI"
+params:
+  cuda_versions:
+    description: '多个cuda版本'
+    required: false
+    type: array
+    options: ['12.6.0', '12.8.0', '12.9.0','13.0.0']
+    default: ['13.0.0']
+
+jobs:
+  tilelang-build:
+    name: "tilelang-build"
+    image: "reg.docker.alibaba-inc.com/ai-tmp/pytorch:ubuntu24.04-py312.06"
+    timeout: 12h
+    runs-on:
+      - 32-128Gi
+      - amd64
+    matrix:
+      params:
+        - name: cuda_version
+          value: ${{params.cuda_versions}}
+    steps:
+      - run: echo "11.162.25.191 art-pub.eng.t-head.cn" >> /etc/hosts
+      - uses: setup-github-proxy
+      - uses: checkout
+        inputs:
+          repository-url: 'git@gitlab.alibaba-inc.com:PPU-Compiler/tilelang.git'
+          path: 'tilelang'
+          submodules: true
+          submodule-fetch-depth: 1
+          ssh-key: ${{secrets.private_ssh_key}}
+      - uses: ptg-sdk-setup  # 会下载并解压到$AONE_CI_WORKSPACE/opt/PPU_SDK
+        inputs:
+          hggc_version: "13.0.0"
+          sdk_version: "2.1.0"
+          type: "daily"
+          sdk_daily_version: "latest"
+          os: "ubuntu2404"
+          product: "ppu.2v1_opensource"
+      - envs:
+          os_version: 'ubuntu2404'
+          python_version: 'py312'
+          cuda_version: ${{matrix.cuda_version}}
+        timeout: 5h
+        name: "build"
+        run: |
+          echo "--------- Building TileLang ------------"
+          ls -l $AONE_CI_WORKSPACE
+          cd $AONE_CI_SOURCE/tilelang
+          source .aoneci/script/build.sh
+          ls -lha $build_output
+      - uses: upload-oss
+        inputs:
+          path: output.tar.gz
+
+  ppu0010_test:
+    needs: tilelang-build
+    name: "tilelang_ppu0010_test"
+    image: "reg.docker.alibaba-inc.com/ai-tmp/pytorch:ubuntu24.04-py312.06"
+    timeout: 12h
+    runs-on:
+      - 32-128Gi
+      - amd64
+    steps:
+      - envs:
+          PIPELINE_INST_ID: ${{pipeline.inst.id}}
+        timeout: 12h
+        name: "download_builds"
+        run: |
+          echo "current dir:" && pwd
+          echo "ls:" && ls
+          wget https://aone-ci-reports.alibaba-inc.com/public/${PIPELINE_INST_ID}/output.tar.gz
+      - uses: upload-oss
+        inputs:
+          path: output.tar.gz
+      - id: artifact
+        run: |
+          echo ${{ #array(steps.upload-oss.outputs.result)[0].remote }} > ${{outputs.oss_url.path}}
+      - uses: ptg-ai-test
+        inputs:
+          ppu: 1
+          run_image: art.eng.t-head.cn/ptgai-docker_ai-test/base:ubuntu24.04-py312.01
+          labels: OAM-810E
+          image_url: ${{steps.artifact.outputs.oss_url}}
+          cmd: export CI_TEST_PLATFORM=ppu0010; . ./install_requirements.sh; python test_tilelang.py -o test_result.xml
+          timeout: 43200
+
+  ppu0015_test:
+    needs: tilelang-build
+    name: "tilelang_ppu0015_test"
+    image: "reg.docker.alibaba-inc.com/ai-tmp/pytorch:ubuntu24.04-py312.06"
+    timeout: 12h
+    runs-on:
+      - 32-128Gi
+      - amd64
+    steps:
+      - envs:
+          PIPELINE_INST_ID: ${{pipeline.inst.id}}
+        timeout: 12h
+        name: "download_builds"
+        run: |
+          echo "current dir:" && pwd
+          echo "ls:" && ls
+          wget https://aone-ci-reports.alibaba-inc.com/public/${PIPELINE_INST_ID}/output.tar.gz
+      - uses: upload-oss
+        inputs:
+          path: output.tar.gz
+      - id: artifact
+        run: |
+          echo ${{ #array(steps.upload-oss.outputs.result)[0].remote }} > ${{outputs.oss_url.path}}
+      - uses: ptg-ai-test
+        inputs:
+          ppu: 1
+          run_image: art.eng.t-head.cn/ptgai-docker_ai-test/base:ubuntu24.04-py312.01
+          labels: BTV1P5-M890P96G
+          image_url: ${{steps.artifact.outputs.oss_url}}
+          cmd: export CI_TEST_PLATFORM=ppu0015; . ./install_requirements.sh; python test_tilelang.py -o test_result.xml
+          timeout: 43200
+
+strategy:
+  fast-fail: false

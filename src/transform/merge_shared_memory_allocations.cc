@@ -399,6 +399,8 @@ private:
         alignment = 1024;
       } else if (TargetHasBulkCopy(target)) {
         alignment = 128;
+      } else if (TargetHasAiuCopy(target)) {
+        alignment = 128;
       }
       shmem_alignment_map_[op] = alignment;
     }
@@ -407,6 +409,7 @@ private:
   void VisitExpr_(const CallNode *op) {
     if (op->op.same_as(tl::tl_gemm()) || op->op.same_as(tl::tl_gemm_sp()) ||
         op->op.same_as(tl::tma_load()) || op->op.same_as(tl::tma_store()) ||
+        op->op.same_as(tl::aiu_load()) ||
         op->op.same_as(tl::initialize_wgmma_descriptor()) ||
         op->op.same_as(tl::initialize_tcgen05_descriptor())) {
       // These intrinsics introduce stricter SMEM alignment requirements; mark

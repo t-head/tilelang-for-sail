@@ -68,6 +68,17 @@ def make_swizzled_layout(buffer: BufferLikeType, k_major: bool = True, allow_pad
     return _ffi_api.make_swizzled_layout(buf, k_major, allow_pad)
 
 
+# PPU: CUDA-compatible shared layout entrypoint with an RS B-shared actlize variant.
+def make_ppu_swizzled_layout(
+    buffer: BufferLikeType,
+    k_major: bool = True,
+    allow_pad: bool = True,
+    is_gemm_rs: bool = False,
+):
+    buf, _, _ = _get_buffer_info(buffer)
+    return _ffi_api.make_ppu_swizzled_layout(buf, k_major, allow_pad, is_gemm_rs)
+
+
 # for Volta Intrinsics
 def make_volta_swizzled_layout(buffer: BufferLikeType, is_a: bool = True, k_inner: bool = True):
     buf, _, _ = _get_buffer_info(buffer)

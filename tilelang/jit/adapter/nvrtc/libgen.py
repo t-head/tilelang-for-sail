@@ -15,8 +15,10 @@ Key responsibilities:
 """
 
 from __future__ import annotations
+import ctypes
 import importlib
 import logging
+import os
 import os.path as osp
 import platform
 import sys
@@ -27,7 +29,7 @@ from tvm.target import Target
 
 from tilelang import tvm as tvm
 from tilelang.jit.adapter.libgen import LibraryGenerator
-from tilelang.jit.adapter.utils import is_cuda_target
+from tilelang.jit.adapter.utils import is_cuda_target, is_ppu_target
 from tilelang.jit.adapter.nvrtc import is_nvrtc_available, NVRTC_UNAVAILABLE_MESSAGE
 
 logger = logging.getLogger(__name__)
@@ -35,8 +37,86 @@ logger = logging.getLogger(__name__)
 if is_nvrtc_available:
     import cuda.bindings.driver as cuda
     from tilelang.contrib.nvrtc import compile_cuda, get_nvrtc_version
-else:
-    raise ImportError(NVRTC_UNAVAILABLE_MESSAGE)
+# Note: no hard failure when cuda-python is missing — the PPU target path of
+# this backend (hgcc compile + HGGC driver via ctypes) works without
+# cuda-python. CUDA code paths raise naturally if used without it.
+
+
+_hg_driver_lib = None
+
+
+def _get_hg_driver():
+    """Lazily load libhggc.so and perform one-time hgInit(0).
+
+    HGGC driver must be initialized explicitly before any hgModule*/hgLaunch* call.
+    """
+    global _hg_driver_lib
+    if _hg_driver_lib is not None:
+        return _hg_driver_lib
+
+    ppu_sdk = os.environ.get("PPU_SDK")
+    if not ppu_sdk:
+        raise RuntimeError(
+            "PPU_SDK environment variable is not set. "
+            "Please source the PPU SDK envsetup.sh (e.g. source $PPU_SDK/envsetup.sh ppu)"
+        )
+    candidates = [
+        osp.join(ppu_sdk, "lib", "libhggc.so"),
+        osp.join(ppu_sdk, "targets", "x86_64-linux", "lib", "libhggc.so"),
+        "libhggc.so",
+    ]
+    lib = None
+    for cand in candidates:
+        try:
+            lib = ctypes.CDLL(cand)
+            break
+        except OSError:
+            continue
+    if lib is None:
+        raise RuntimeError(f"Failed to load libhggc.so (tried: {candidates})")
+
+    lib.hgInit.argtypes = [ctypes.c_uint]
+    lib.hgInit.restype = ctypes.c_int
+    res = lib.hgInit(0)
+    if res != 0:
+        raise RuntimeError(f"hgInit(0) failed: HGresult={res}")
+
+    # A current context is required before any hgModule*/hgLaunch* call —
+    # hgModuleLoadData returns HGGC_ERROR_INVALID_CONTEXT (201) otherwise.
+    # Mirrors EnsureCurrentPPUContext in src/ppu/codegen/rt_mod_ppu.cc
+    # (hgInit + device context), but stays purely on driver APIs so no
+    # second library (libhggcrt/libhggc_wrapper) is needed. The primary
+    # context is process-wide per device, so it is shared with torch's
+    # PPU runtime allocations.
+    lib.hgDeviceGet.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
+    lib.hgDeviceGet.restype = ctypes.c_int
+    lib.hgDevicePrimaryCtxRetain.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_int]
+    lib.hgDevicePrimaryCtxRetain.restype = ctypes.c_int
+    lib.hgCtxSetCurrent.argtypes = [ctypes.c_void_p]
+    lib.hgCtxSetCurrent.restype = ctypes.c_int
+    dev = ctypes.c_int(0)
+    res = lib.hgDeviceGet(ctypes.byref(dev), 0)
+    if res != 0:
+        raise RuntimeError(f"hgDeviceGet(0) failed: HGresult={res}")
+    ctx = ctypes.c_void_p()
+    res = lib.hgDevicePrimaryCtxRetain(ctypes.byref(ctx), dev)
+    if res != 0:
+        raise RuntimeError(f"hgDevicePrimaryCtxRetain failed: HGresult={res}")
+    res = lib.hgCtxSetCurrent(ctx)
+    if res != 0:
+        raise RuntimeError(f"hgCtxSetCurrent failed: HGresult={res}")
+    # Keep the retained primary context referenced for the process lifetime.
+    lib._hg_primary_ctx = ctx
+
+    lib.hgModuleLoadData.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p]
+    lib.hgModuleLoadData.restype = ctypes.c_int
+    lib.hgModuleGetFunction.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.c_char_p]
+    lib.hgModuleGetFunction.restype = ctypes.c_int
+    lib.hgModuleUnload.argtypes = [ctypes.c_void_p]
+    lib.hgModuleUnload.restype = ctypes.c_int
+
+    _hg_driver_lib = lib
+    return lib
 
 
 class NVRTCLibraryGenerator(LibraryGenerator):
@@ -63,6 +143,7 @@ class NVRTCLibraryGenerator(LibraryGenerator):
     culib: cuda.CUlibrary | None = None
     pymodule: ModuleType | None = None
     pypath: str | None = None
+    hgmod = None  # PPU: HGmodule handle (ctypes.c_void_p) when target is ppu
 
     def __init__(self, target: Target, verbose: bool = False):
         """Initialize NVRTC library generator.
@@ -127,8 +208,18 @@ class NVRTCLibraryGenerator(LibraryGenerator):
         else:
             self.libpath = lib_path
 
-        self.pypath = lib_path.replace(".cubin", ".py")
+        if lib_path.endswith(".cubin"):
+            self.pypath = lib_path.replace(".cubin", ".py")
+        elif lib_path.endswith(".hgbin"):
+            self.pypath = lib_path.replace(".hgbin", ".py")
+        else:
+            self.pypath = lib_path + ".py"
         self.pymodule = self.import_from_file("kernel", self.pypath)
+
+        if is_ppu_target(self.target):
+            # PPU: load the hgcc-compiled .hgbin through the HGGC driver.
+            self._load_module_ppu(lib_path)
+            return
 
         # Ensure the context is valid
         ctx = cuda.cuCtxGetCurrent()[1]
@@ -166,13 +257,20 @@ class NVRTCLibraryGenerator(LibraryGenerator):
         """
         target = self.target
         verbose = self.verbose
-        if is_cuda_target(target):
+        # PPU: minimal path compiles the CUDA-derived source with nvrtc, same as CUDA.
+        if is_ppu_target(target):
+            # PPU: no RTC equivalent — compile the device source to .hgbin AOT
+            # with hgcc (same command line as tilelang_callback_ppu_compile).
+            self._compile_lib_ppu()
+        elif is_cuda_target(target):
+            if not is_nvrtc_available:
+                raise ImportError(NVRTC_UNAVAILABLE_MESSAGE)
             from tilelang.env import CUDA_HOME, CUTLASS_INCLUDE_DIR, TILELANG_TEMPLATE_PATH
 
             src = tempfile.NamedTemporaryFile(mode="w", suffix=".cu", delete=False)
             libpath = src.name.replace(".cu", ".cubin")
 
-            project_root = osp.join(osp.dirname(__file__), "..", "..")
+            project_root = osp.join(osp.dirname(__file__), "..", "..", "..", "..")
             if CUTLASS_INCLUDE_DIR is None:
                 cutlass_path = osp.abspath(osp.join(project_root, "3rdparty/cutlass/include"))
             else:
@@ -242,6 +340,73 @@ class NVRTCLibraryGenerator(LibraryGenerator):
         else:
             raise ValueError(f"Unsupported target: {target}")
 
+    def _compile_lib_ppu(self):
+        """Compile PPU device source to .hgbin using hgcc (via tilelang.contrib.hgcc)."""
+        from tilelang.contrib import hgcc
+        from tilelang.transform import PassConfigKey
+
+        cfg = self.pass_configs or {}
+        verbose = bool(cfg.get(PassConfigKey.TL_ENABLE_PTXAS_VERBOSE_OUTPUT, False))
+
+        options = []
+        extra_flags = cfg.get(PassConfigKey.TL_DEVICE_COMPILE_FLAGS, None)
+        if extra_flags:
+            import shlex
+            if isinstance(extra_flags, str):
+                options += shlex.split(extra_flags)
+            else:
+                for flag in extra_flags:
+                    if isinstance(flag, str):
+                        options.extend(shlex.split(flag))
+                    else:
+                        options.append(str(flag))
+
+        if self.compile_flags:
+            options += [item for flag in self.compile_flags for item in flag.split() if item not in options]
+
+        # Write source code to temp file (srcpath not set in PPU path)
+        src = tempfile.NamedTemporaryFile(mode="w", suffix=".hg", delete=False)
+        src.write(self.lib_code)
+        src.close()
+        self.srcpath = src.name
+
+        binary = hgcc.compile_ppu(
+            self.lib_code, target=self.target, options=options, verbose=verbose
+        )
+
+        # Write binary to .hgbin file
+        self.libpath = self.srcpath.replace(".hg", ".hgbin")
+        with open(self.libpath, "wb") as f:
+            f.write(binary)
+        # Write host function to .py file (needed by NVRTC adapter)
+        self.pypath = self.srcpath.replace(".hg", ".py")
+        if self.host_func is None:
+            raise RuntimeError("Host function is not set, please call update_host_func() first.")
+        with open(self.pypath, "w") as f:
+            f.write(self.host_func)
+
+    def _load_module_ppu(self, lib_path: str):
+        """Load an hgcc-compiled .hgbin through the HGGC driver (ctypes)."""
+        drv = _get_hg_driver()
+        with open(lib_path, "rb") as f:
+            data = f.read()
+        # Keep the image buffer alive for the lifetime of the module.
+        self._hgbin_buf = ctypes.create_string_buffer(data, len(data))
+        module = ctypes.c_void_p()
+        res = drv.hgModuleLoadData(ctypes.byref(module), ctypes.cast(self._hgbin_buf, ctypes.c_void_p))
+        if res != 0 or not module:
+            raise RuntimeError(f"hgModuleLoadData failed for {lib_path}: HGresult={res}")
+        self.hgmod = module
+
+    def get_ppu_function(self, name: str):
+        """Return the HGfunction handle (ctypes.c_void_p) of a kernel in the loaded PPU module."""
+        drv = _get_hg_driver()
+        func = ctypes.c_void_p()
+        res = drv.hgModuleGetFunction(ctypes.byref(func), self.hgmod, name.encode("utf-8"))
+        if res != 0 or not func:
+            raise RuntimeError(f"hgModuleGetFunction({name}) failed: HGresult={res}")
+        return func
+
     def __del__(self):
         """Cleanup: unload CUDA library when object is destroyed.
 
@@ -251,6 +416,13 @@ class NVRTCLibraryGenerator(LibraryGenerator):
         Why explicit unload:
             Python GC doesn't know about GPU resources, must release manually.
         """
+        hgmod = getattr(self, "hgmod", None)
+        if hgmod:
+            try:
+                _get_hg_driver().hgModuleUnload(hgmod)
+            except Exception:
+                logger.warning(f"Failed to unload PPU module: {self.libpath}")
+            self.hgmod = None
         if self.culib:
             result = cuda.cuLibraryUnload(self.culib)[0]
             if result != cuda.CUresult.CUDA_SUCCESS:

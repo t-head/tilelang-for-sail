@@ -14,7 +14,12 @@ class NVRTCKernelCache(KernelCache):
     def _save_so_cubin_to_disk(self, kernel: JITKernel, cache_path: str, verbose: bool = False):
         src_lib_path = kernel.adapter.libpath
         kernel_py_path = os.path.join(cache_path, self.kernel_py_path)
-        src_lib_path = src_lib_path.replace(".cubin", ".py")
+        # Prefer the adapter's own launcher path: PPU compiles to .hgbin, where
+        # a ".cubin" -> ".py" string replace would silently no-op.
+        src_py_path = getattr(getattr(kernel.adapter, "lib_generator", None), "pypath", None)
+        if src_py_path is None:
+            src_py_path = src_lib_path.replace(".cubin", ".py")
+        src_lib_path = src_py_path
         if verbose:
             self.logger.debug(f"Saving kernel nvrtc python code to file: {kernel_py_path}")
         KernelCache._safe_write_file(kernel_py_path, "wb", lambda file: file.write(KernelCache._load_binary(src_lib_path)))

@@ -95,6 +95,9 @@ class PassConfigKey(str, Enum):
     v0.1.10.
     """
 
+    TL_DISABLE_AIU_LOWER = "tl.disable_aiu_lower"
+    """Disable PPU AIU global->swizzled-shared bulk copy lowering. Default: True"""
+
     TL_DISABLE_SAFE_MEMORY_ACCESS = "tl.disable_safe_memory_legalize"
     """Disable safe memory access optimization. Default: False"""
 
@@ -125,6 +128,9 @@ class PassConfigKey(str, Enum):
 
     Default: True
     """
+
+    TL_DISABLE_LDMAT_SWZL = "tl.disable_ldmat_swzl"
+    """Disable PPU1.5 ldmatrix swizzled bulk tensor load lowering. Default: True"""
 
     TL_ENABLE_LOWER_LDGSTG = "tl.enable_lower_ldgstg"
     """Enable non-predicated LDG/STG lowering for global memory access.

@@ -213,5 +213,8 @@ if not env.is_light_import():
     from . import cuda as cuda  # noqa: F401
     from . import rocm as rocm  # noqa: F401
     from . import metal as metal  # noqa: F401
+    # PPU: register the CUDA-derived "ppu" backend (must follow cuda import,
+    # since tilelang.ppu.pipeline reuses tilelang.cuda.pipeline).
+    from . import ppu as ppu  # noqa: F401
 
 del _lazy_load_lib

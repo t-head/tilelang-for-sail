@@ -1,7 +1,7 @@
 # Reference: FLA_KDA/fla_chunk_intra.py
 import tilelang
 import tilelang.language as T
-from tilelang.autotuner import autotune
+from kda_autotune import autotune
 
 from FLA_KDA.fla_chunk_intra import chunk_kda_bwd_intra
 from FLA_KDA.cumsum import chunk_local_cumsum
