@@ -14,7 +14,7 @@ from tilelang.autotuner.capture import set_autotune_inputs
 from tilelang import jit
 
 from configs import get_v32_configs
-from utils import print_benchmark_summary, bench_ref
+from utils import print_benchmark_summary, bench_ref, inject_pass_configs_from_env
 
 
 @autotune(configs=get_v32_configs(), warmup=5, rep=20, skip_check=True)
@@ -187,6 +187,7 @@ def run_profile(batch, seq_len, seq_len_kv, heads, kv_group, topk, dim, tail_dim
                 valid = max(1, t)
                 idx = torch.randperm(valid, device="cuda")[:min(topk, valid)]
                 Indices[b, t, h, :len(idx)] = idx
+    inject_pass_configs_from_env(sparse_mla_fwd)
     with set_autotune_inputs(Q, KV, Indices):
         kernel = sparse_mla_fwd(
             heads, dim, tail_dim, topk, kv_group,

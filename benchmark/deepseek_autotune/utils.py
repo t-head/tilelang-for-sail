@@ -215,6 +215,21 @@ def print_benchmark_summary(name, config_str, tilelang_latency, tilelang_tflops,
 # resulting log to extract SM/CE cycle counts and tensor-core efficiency.
 
 
+def inject_pass_configs_from_env(kernel_func):
+    """Inject pass_configs from TILELANG_PASS_CONFIGS env var onto jit_impl.
+
+    The autotune skip path (all tunable params provided) calls jit_compile()
+    with no arguments, so per-config pass_configs is lost.  This injects the
+    best config's pass_configs directly onto jit_impl before the kernel is
+    called in acu/ncu profiling scripts.
+    """
+    import json
+    pc_str = os.environ.get("TILELANG_PASS_CONFIGS", "")
+    if pc_str:
+        pc = json.loads(pc_str)
+        kernel_func.jit_impl.pass_configs = pc
+
+
 def run_cmd(cmd: str, timeout=None, stdout=subprocess.PIPE, stderr=subprocess.PIPE):
     """Run a shell command and stream its output."""
     print(f"Run command: {cmd}, timeout: {timeout}")

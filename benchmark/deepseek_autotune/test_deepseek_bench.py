@@ -22,6 +22,7 @@ Usage:
 
 import gc
 import itertools
+import json
 import os
 import sys
 
@@ -152,6 +153,18 @@ def _maybe_profile(kernel_key, problem_args, best_config):
     profile_args = list(problem_args) + ["--profile"]
     for key in meta["config_keys"]:
         profile_args.extend([f"--{key}", str(best_config[key])])
+
+    # Inject pass_configs from best_config into env for acu/ncu profiling.
+    # The autotune skip path loses per-config pass_configs; benchmark scripts
+    # read TILELANG_PASS_CONFIGS and set jit_impl.pass_configs before kernel call.
+    from enum import Enum
+    pass_configs = best_config.get("pass_configs")
+    if pass_configs:
+        safe_pc = {k.value if isinstance(k, Enum) else k: v for k, v in pass_configs.items()}
+        os.environ["TILELANG_PASS_CONFIGS"] = json.dumps(safe_pc)
+    else:
+        os.environ.pop("TILELANG_PASS_CONFIGS", None)
+
     tl_cycle, tl_tc = run_cycle_on_device(
         script_path, profile_args, dev=dev, log_file=log_file, framework="tilelang"
     )
@@ -276,13 +289,17 @@ def test_bench_mla_paged(batch, h_q, h_kv, cache_seqlen, d, dv):
 _deepgemm_config = get_bench_config("deepgemm", _TIER)
 _deepgemm_keys = list(_deepgemm_config.keys())
 
-from tilelang.contrib import nvcc
-arch = nvcc.get_target_compute_version()
-compute_version = nvcc.parse_compute_version(arch)
+from tilelang.contrib import hgcc
+try:
+    arch = hgcc.get_target_compute_version()
+    compute_version = hgcc.parse_compute_version(arch)
+except Exception:
+    arch = "unknown"
+    compute_version = (0, 0)
 
 @pytest.mark.skipif(
-    compute_version < (8, 9),
-    reason=f"Requires CUDA >= SM_89, but have {arch}",
+    compute_version != (1, 5),
+    reason=f"Requires PPU 1.5, but have {arch}",
 )
 @pytest.mark.parametrize(",".join(_deepgemm_keys), generate_configs(_deepgemm_config))
 def test_bench_deepgemm(M, N, K, in_dtype, out_dtype):

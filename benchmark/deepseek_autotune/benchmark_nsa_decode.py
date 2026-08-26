@@ -15,7 +15,7 @@ from tilelang.autotuner import autotune
 from tilelang import jit
 
 from configs import get_nsa_decode_configs
-from utils import nsa_flops, print_benchmark_summary, bench_ref
+from utils import nsa_flops, print_benchmark_summary, bench_ref, inject_pass_configs_from_env
 
 
 @autotune(configs=get_nsa_decode_configs(), warmup=5, rep=20, skip_check=True)
@@ -158,6 +158,7 @@ def run_profile(batch, heads, seq_len, dim, selected_blocks, block_size,
                                  (batch, 1, head_kv, selected_blocks),
                                  dtype=torch.int32, device="cuda")
 
+    inject_pass_configs_from_env(nsa_decode)
     kernel = nsa_decode(
         batch, heads, seq_len, dim,
         scale=scale, block_size=block_size,

@@ -12,6 +12,7 @@ root_dir = os.path.dirname(current_dir)
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 from fa_configs import get_configs
+from utils import inject_pass_configs_from_env
 
 @autotune(configs=get_configs(), warmup=3, rep=10, early_stop=True)
 @tilelang.jit(
@@ -146,6 +147,7 @@ def main(
         total_flops *= 0.5
 
     if (not tune):
+        inject_pass_configs_from_env(flashattn)
         kernel = flashattn(
             batch,
             heads,

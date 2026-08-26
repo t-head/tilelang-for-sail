@@ -6,6 +6,36 @@ to the tunable keyword arguments of the associated kernel function.
 
 import itertools
 
+import tilelang
+
+
+def _with_aiu_lower_tuning(configs):
+    """Expand each config with TL_DISABLE_AIU_LOWER True/False variants.
+
+    Only applied on PPU 1.5; on PPU 1.0 or non-PPU targets the original
+    configs are returned unchanged.
+
+    PPU 1.5 compute_version is (1, 5).
+    """
+    try:
+        from tilelang.contrib import hgcc
+        _arch = hgcc.get_target_compute_version()
+        _compute_version = hgcc.parse_compute_version(_arch)
+        if _compute_version != (1, 5):
+            return configs
+    except Exception:
+        return configs
+
+    expanded = []
+    for cfg in configs:
+        for val in (True, False):
+            new_cfg = dict(cfg)
+            new_cfg["pass_configs"] = {
+                tilelang.PassConfigKey.TL_DISABLE_AIU_LOWER: val
+            }
+            expanded.append(new_cfg)
+    return expanded
+
 
 # ---------------------------------------------------------------------------
 # DeepGEMM FP8 configs

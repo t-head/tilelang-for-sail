@@ -86,14 +86,47 @@ def _safe_config_repr(config):
 
     IntEnum values (e.g. GemmWarpPolicy) are converted to int to avoid
     ``<GemmWarpPolicy.Square: 0>`` syntax errors in generated profiling scripts.
+    PassConfigKey enum keys inside nested dicts (e.g. pass_configs) are
+    converted to their string values for the same reason.
     """
+    from enum import Enum
+
     safe = {}
     for k, v in config.items():
         if isinstance(v, int) and not isinstance(v, bool) and hasattr(v, "name"):
             safe[k] = int(v)
+        elif isinstance(v, dict):
+            safe[k] = {
+                kk.value if isinstance(kk, Enum) else kk: vv
+                for kk, vv in v.items()
+            }
         else:
             safe[k] = v
     return repr(safe)
+
+
+def _pass_configs_inject(config, obj_path):
+    """Extract pass_configs from config for direct jit_impl injection.
+
+    The autotune skip path (all tunable params provided) calls jit_compile()
+    with no arguments, so per-config pass_configs is lost.  To work around
+    this without modifying the autotuner, we set jit_impl.pass_configs
+    directly in the profiling script before calling the kernel.
+
+    Returns (inject_line, config_without_pass_configs).
+    """
+    from enum import Enum
+
+    config = dict(config)
+    pass_configs = config.pop("pass_configs", None)
+
+    if pass_configs:
+        safe_pc = {k.value if isinstance(k, Enum) else k: v for k, v in pass_configs.items()}
+        inject = f"{obj_path}.jit_impl.pass_configs = {safe_pc!r}"
+    else:
+        inject = ""
+
+    return inject, config
 
 
 def _maybe_profile(kernel_script, ref_script):
@@ -136,12 +169,14 @@ def test_matmul(m, n, k, with_roller=False):
     flops = _gemm_flops(m, n, k)
     tilelang_tflops = flops / result.latency * 1e-9
     ref_tflops = flops / result.ref_latency * 1e-9 if result.ref_latency is not None else 0.0
+    _pc_inject, _config_no_pc = _pass_configs_inject(result.config, "benchmark_matmul.matmul")
     kernel_script = textwrap.dedent(f"""\
         import sys; sys.path.insert(0, '.')
         import torch, benchmark_matmul
+        {_pc_inject}
         A = torch.randn({m}, {k}, device='cuda', dtype=torch.float16)
         B = torch.randn({n}, {k}, device='cuda', dtype=torch.float16)
-        kernel = benchmark_matmul.matmul({m}, {n}, {k}, False, **{_safe_config_repr(result.config)})
+        kernel = benchmark_matmul.matmul({m}, {n}, {k}, False, **{_safe_config_repr(_config_no_pc)})
         def run():
             kernel(A, B)
             torch.cuda.synchronize()
@@ -185,9 +220,6 @@ def test_matmul_intrinsic(m, n, k, with_roller=False):
     Usage:
         pytest test_benchmark_matmul.py::test_matmul_intrinsic[M4096_N4096_K4096] -v -s
     """
-    # Use a reduced search space during testing / profiling.
-    os.environ["TILELANG_BENCH_INTRINSIC_QUICK"] = "1"
-
     in_dtype = T.float16
     out_dtype = T.float16
     accum_dtype = T.float32
@@ -198,12 +230,14 @@ def test_matmul_intrinsic(m, n, k, with_roller=False):
     flops = _gemm_flops(m, n, k)
     tilelang_tflops = flops / result.latency * 1e-9
     ref_tflops = flops / result.ref_latency * 1e-9 if result.ref_latency is not None else 0.0
+    _pc_inject, _config_no_pc = _pass_configs_inject(result.config, "benchmark_matmul_intrinsic.matmul")
     kernel_script = textwrap.dedent(f"""\
         import sys; sys.path.insert(0, '.')
         import torch, tilelang.language as T, benchmark_matmul_intrinsic
+        {_pc_inject}
         A = torch.randn({m}, {k}, device='cuda', dtype=torch.float16)
         B = torch.randn({n}, {k}, device='cuda', dtype=torch.float16)
-        kernel = benchmark_matmul_intrinsic.matmul({m}, {n}, {k}, T.float16, T.float16, T.float32, False, **{_safe_config_repr(result.config)})
+        kernel = benchmark_matmul_intrinsic.matmul({m}, {n}, {k}, T.float16, T.float16, T.float32, False, **{_safe_config_repr(_config_no_pc)})
         def run():
             kernel(A, B)
             torch.cuda.synchronize()
@@ -250,8 +284,6 @@ def test_matmul_sp(m, n, k, accum_dtype="float"):
     Usage:
         pytest test_benchmark_matmul.py::test_matmul_sp[M4096_N4096_K4096] -v -s
     """
-    # Use a reduced search space during testing / profiling.
-    os.environ["TILELANG_BENCH_SP_QUICK"] = "1"
     result = benchmark_matmul_sp.matmul_sp(m, n, k, T.float16, accum_dtype, "int16")
     assert result.latency > 0, "Autotune returned zero/negative latency"
     assert result.config is not None, "Autotune returned no config"
@@ -259,17 +291,19 @@ def test_matmul_sp(m, n, k, accum_dtype="float"):
     flops = _gemm_flops(m, n, k)
     tilelang_tflops = flops / result.latency * 1e-9
     ref_tflops = flops / result.ref_latency * 1e-9 if result.ref_latency is not None else 0.0
+    _pc_inject, _config_no_pc = _pass_configs_inject(result.config, "benchmark_matmul_sp.matmul_sp")
     kernel_script = textwrap.dedent(f"""\
         import sys; sys.path.insert(0, '.')
         import torch, tilelang.language as T, benchmark_matmul_sp
         from tilelang.utils.sparse import get_e_factor
+        {_pc_inject}
         e_dtype_str = 'int16'
         ef = get_e_factor(T.float16, e_dtype_str)
         edtype = {{'int16': torch.int16, 'uint8': torch.uint8, 'int8': torch.int8, 'int32': torch.int32}}[e_dtype_str]
         A_sparse = torch.randn({m}, {k} // 2, device='cuda', dtype=torch.float16)
         E = torch.randint(0, 10, ({m}, {k} // ef), device='cuda', dtype=edtype)
         B = torch.randn({k}, {n}, device='cuda', dtype=torch.float16)
-        config = {_safe_config_repr(result.config)}
+        config = {_safe_config_repr(_config_no_pc)}
         config['policy'] = T.GemmWarpPolicy.Square
         kernel = benchmark_matmul_sp.matmul_sp({m}, {n}, {k}, T.float16, {accum_dtype!r}, e_dtype_str, config=config)
         def run():
@@ -325,12 +359,14 @@ def test_matmul_rs(m, n, k, with_roller=False):
     flops = _gemm_flops(m, n, k)
     tilelang_tflops = flops / result.latency * 1e-9
     ref_tflops = flops / result.ref_latency * 1e-9 if result.ref_latency is not None else 0.0
+    _pc_inject, _config_no_pc = _pass_configs_inject(result.config, "benchmark_matmul_rs.matmul")
     kernel_script = textwrap.dedent(f"""\
         import sys; sys.path.insert(0, '.')
         import torch, tilelang.language as T, benchmark_matmul_rs
+        {_pc_inject}
         A = torch.randn({k}, {m}, device='cuda', dtype=torch.float16)
         B = torch.randn({k}, {n}, device='cuda', dtype=torch.float16)
-        kernel = benchmark_matmul_rs.matmul({m}, {n}, {k}, False, T.float16, T.float16, T.float32, **{_safe_config_repr(result.config)})
+        kernel = benchmark_matmul_rs.matmul({m}, {n}, {k}, False, T.float16, T.float16, T.float32, **{_safe_config_repr(_config_no_pc)})
         def run():
             kernel(A, B)
             torch.cuda.synchronize()
@@ -384,12 +420,14 @@ def test_matmul_sr(m, n, k, with_roller=False):
     flops = _gemm_flops(m, n, k)
     tilelang_tflops = flops / result.latency * 1e-9
     ref_tflops = flops / result.ref_latency * 1e-9 if result.ref_latency is not None else 0.0
+    _pc_inject, _config_no_pc = _pass_configs_inject(result.config, "benchmark_matmul_sr.matmul")
     kernel_script = textwrap.dedent(f"""\
         import sys; sys.path.insert(0, '.')
         import torch, tilelang.language as T, benchmark_matmul_sr
+        {_pc_inject}
         A = torch.randn({m}, {k}, device='cuda', dtype=torch.float16)
         B = torch.randn({n}, {k}, device='cuda', dtype=torch.float16)
-        kernel = benchmark_matmul_sr.matmul({m}, {n}, {k}, False, **{_safe_config_repr(result.config)})
+        kernel = benchmark_matmul_sr.matmul({m}, {n}, {k}, False, **{_safe_config_repr(_config_no_pc)})
         def run():
             kernel(A, B)
             torch.cuda.synchronize()

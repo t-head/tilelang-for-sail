@@ -21,6 +21,7 @@ from utils import (
     calc_diff,
     print_benchmark_summary,
     bench_ref,
+    inject_pass_configs_from_env,
 )
 
 
@@ -124,6 +125,7 @@ def run_profile(M, N, K, in_dtype_str, out_dtype_str,
     A_fp8, scales_a = per_token_cast_to_fp8(A)
     B_fp8, scales_b = per_block_cast_to_fp8(B)
 
+    inject_pass_configs_from_env(deepgemm_fp8)
     kernel = deepgemm_fp8(
         M, N, K, in_dtype, out_dtype, accum_dtype,
         block_N=block_N, num_stages=num_stages,

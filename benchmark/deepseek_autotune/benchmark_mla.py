@@ -12,7 +12,7 @@ from tilelang.autotuner import autotune
 from tilelang import jit
 
 from configs import get_mla_configs
-from utils import mla_decode_flops, print_benchmark_summary, bench_ref
+from utils import mla_decode_flops, print_benchmark_summary, bench_ref, inject_pass_configs_from_env
 
 
 @autotune(configs=get_mla_configs(), warmup=5, rep=20, skip_check=True)
@@ -140,6 +140,7 @@ def run_profile(batch, heads, kv_heads, kv_ctx, dim, pe_dim,
     Output_partial = torch.zeros(batch, heads, num_split, dim, dtype=dtype, device="cuda")
     Output = torch.zeros(batch, heads, dim, dtype=dtype, device="cuda")
 
+    inject_pass_configs_from_env(mla_decode)
     kernel = mla_decode(
         batch, heads, kv_heads, kv_ctx, dim, pe_dim, num_split, softmax_scale,
         block_N=block_N, block_H=block_H,

@@ -14,6 +14,21 @@ def run_cmd(cmd: str, timeout=None, stdout=subprocess.PIPE, stderr=subprocess.PI
     else:
         print(f"Run command succeed!")
     return ret
+
+def inject_pass_configs_from_env(kernel_func):
+    """Inject pass_configs from TILELANG_PASS_CONFIGS env var onto jit_impl.
+
+    The autotune skip path (all tunable params provided) calls jit_compile()
+    with no arguments, so per-config pass_configs is lost.  This injects the
+    best config's pass_configs directly onto jit_impl before the kernel is
+    called in acu/ncu profiling scripts.
+    """
+    import json
+    pc_str = os.environ.get("TILELANG_PASS_CONFIGS", "")
+    if pc_str:
+        pc = json.loads(pc_str)
+        kernel_func.jit_impl.pass_configs = pc
+
 # devices = {
 #     "name": ["cycle", "tensor core efficiency", "waves"],
 #     "gpu":  ["sm__cycles_active.max", "sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active", "launch__waves_per_multiprocessor"],
@@ -189,6 +204,18 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
     log_file = "./gpu_cycles_single_case.log"
     cmd = "rm -f " + log_file
     run_cmd(cmd)
+
+    # Inject pass_configs from best_config into env for acu/ncu profiling.
+    # The autotune skip path loses per-config pass_configs; kernel scripts
+    # read TILELANG_PASS_CONFIGS and set jit_impl.pass_configs before kernel call.
+    import json
+    from enum import Enum
+    pass_configs = best_config.get("pass_configs")
+    if pass_configs:
+        safe_pc = {k.value if isinstance(k, Enum) else k: v for k, v in pass_configs.items()}
+        os.environ["TILELANG_PASS_CONFIGS"] = json.dumps(safe_pc)
+    else:
+        os.environ.pop("TILELANG_PASS_CONFIGS", None)
 
     # Get metrics based on device
     metrics_string = "sm__cycles_active.max,sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active" if dev == "gpu" else \

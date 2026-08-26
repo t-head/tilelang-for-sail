@@ -1,12 +1,13 @@
 import argparse
 import itertools
 import logging
+import os
 
 import tilelang.language as T
 from tilelang.autotuner import autotune
 from tilelang import jit
 
-from utils import print_benchmark_summary
+from utils import print_benchmark_summary, with_aiu_lower_tuning
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -106,13 +107,13 @@ def get_configs(M, N, K, with_roller, **kwargs):
             block_M=[64, 128, 256],
             block_N=[64, 128, 256],
             block_K=[32, 64],
-            num_stages=[0, 1, 2, 3],
+            num_stages=[1, 2, 3],
             thread_num=[128, 256],
             policy=[T.GemmWarpPolicy.Square],
             enable_rasteration=[True, False],
         )
-        return [{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())]
-    return configs
+        return with_aiu_lower_tuning([{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())])
+    return with_aiu_lower_tuning(configs)
 
 
 @autotune(

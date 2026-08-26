@@ -17,7 +17,7 @@ from tilelang.autotuner.capture import set_autotune_inputs
 from tilelang import jit
 
 from configs import get_mhc_post_configs
-from utils import print_benchmark_summary, bench_ref
+from utils import print_benchmark_summary, bench_ref, inject_pass_configs_from_env
 
 
 @autotune(configs=get_mhc_post_configs(), warmup=5, rep=20, skip_check=True)
@@ -100,6 +100,7 @@ def run_profile(n, hidden_size, hc_mult, n_thr, h_blk):
     post_layer_mix = torch.randn(n, hc_mult, dtype=torch.float32, device="cuda")
     x = torch.randn(n, hidden_size, dtype=torch.bfloat16, device="cuda")
 
+    inject_pass_configs_from_env(mhc_post)
     with set_autotune_inputs(comb_res_mix, residual, post_layer_mix, x):
         kernel = mhc_post(hc_mult, hidden_size, n_thr=n_thr, h_blk=h_blk)
     kernel(comb_res_mix, residual, post_layer_mix, x)

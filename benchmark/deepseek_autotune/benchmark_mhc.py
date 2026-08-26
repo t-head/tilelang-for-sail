@@ -19,7 +19,7 @@ from tilelang.autotuner.capture import set_autotune_inputs
 from tilelang import jit
 
 from configs import get_mhc_pre_configs
-from utils import print_benchmark_summary, bench_ref
+from utils import print_benchmark_summary, bench_ref, inject_pass_configs_from_env
 
 
 @autotune(configs=get_mhc_pre_configs(), warmup=5, rep=20, skip_check=True)
@@ -142,6 +142,7 @@ def run_profile(n, hidden_size, hc_mult,
     x = torch.randn(n, hc_hidden_size, dtype=torch.bfloat16, device="cuda")
     fn = torch.randn(hc_mult3, hc_hidden_size, dtype=torch.float32, device="cuda")
 
+    inject_pass_configs_from_env(mhc_pre_gemm_sqrsum)
     with set_autotune_inputs(x, fn):
         kernel = mhc_pre_gemm_sqrsum(
             hc_mult3, hc_hidden_size,

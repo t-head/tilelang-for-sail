@@ -228,26 +228,14 @@ def get_configs(M, N, K, in_dtype, out_dtype, accum_dtype, with_roller, **kwargs
         for config in configs:
             print(config)
     else:
-        if os.environ.get("TILELANG_BENCH_INTRINSIC_QUICK") == "1":
-            # Reduced search space for fast testing / profiling.
-            iter_params = dict(
-                block_row_warps=[1, 2],
-                block_col_warps=[1, 2],
-                warp_row_tiles=[32, 64],
-                warp_col_tiles=[32, 64],
-                chunk=[64, 128],
-                stage=[0, 2],
-                enable_rasteration=[False],
-            )
-        else:
-            iter_params = dict(
-                block_row_warps=[1, 2, 4],
-                block_col_warps=[1, 2, 4],
-                warp_row_tiles=[16, 32, 64, 128],
-                warp_col_tiles=[16, 32, 64, 128],
-                chunk=[32, 64, 128, 256],
-                stage=[0, 2],
-                enable_rasteration=[True, False],
+        iter_params = dict(
+            block_row_warps=[1, 2, 4],
+            block_col_warps=[1, 2, 4],
+            warp_row_tiles=[16, 32, 64, 128],
+            warp_col_tiles=[16, 32, 64, 128],
+            chunk=[32, 64, 128, 256],
+            stage=[0, 2],
+            enable_rasteration=[True, False],
             )
         return [{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())]
 

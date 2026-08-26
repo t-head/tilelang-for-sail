@@ -20,7 +20,7 @@ from tilelang.autotuner.capture import set_autotune_inputs
 from tilelang import jit
 
 from configs import get_mla_paged_configs
-from utils import print_benchmark_summary, bench_ref
+from utils import print_benchmark_summary, bench_ref, inject_pass_configs_from_env
 
 
 @autotune(configs=get_mla_paged_configs(), warmup=5, rep=20, skip_check=True)
@@ -312,6 +312,7 @@ def run_profile(batch, h_q, h_kv, cache_seqlen, d, dv,
         out_partial,
     )
 
+    inject_pass_configs_from_env(mla_decode_paged)
     with set_autotune_inputs(*kernel_inputs):
         kernel = mla_decode_paged(
             batch, h_q, h_kv, max_seqlen_pad, dv, dpe, block_size,

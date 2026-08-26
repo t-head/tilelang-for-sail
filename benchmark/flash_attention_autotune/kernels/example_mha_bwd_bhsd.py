@@ -13,6 +13,7 @@ root_dir = os.path.dirname(current_dir)
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 from fa_configs import get_configs
+from utils import inject_pass_configs_from_env
 
 @tilelang.jit(
     out_idx=[3, 4], pass_configs={
@@ -333,6 +334,7 @@ def main(
         total_flops *= 0.5
 
     if (not tune):
+        inject_pass_configs_from_env(flashattn_bwd)
         Q = (
             torch.empty(BATCH, H, N_CTX, D_HEAD, dtype=torch.half,
                         device="cuda").normal_().requires_grad_())
