@@ -10,7 +10,7 @@ Usage:
     # Run specific kernel
     pytest test_deepseek_bench.py -v -k "mla"
 
-    # Disable cycle/tensor-core profiling
+    # Disable cycle profiling
     TILELANG_PROFILE_CYCLES=0 pytest test_deepseek_bench.py -v
 
     # Run reference benchmarks too (default: skip reference)
@@ -51,7 +51,7 @@ from utils import (
 
 _TIER = os.environ.get("BENCHMARK_CONFIG", "DAILY").upper()
 
-# Set to '1' to also collect acu/ncu cycle and tensor-core utilisation numbers.
+# Set to '1' to also collect acu/ncu cycle numbers.
 PROFILE_CYCLES = os.environ.get("TILELANG_PROFILE_CYCLES", "1") == "1"
 # Skip reference benchmarks (both latency do_bench and ncu/acu cycle profiling).
 SKIP_REF = os.environ.get("TILELANG_SKIP_REF", "1") == "1"
@@ -133,11 +133,10 @@ _KERNEL_META = {
 def _maybe_profile(kernel_key, problem_args, best_config):
     """Run acu/ncu profiling if TILELANG_PROFILE_CYCLES=1.
 
-    Returns (tl_cycle, tl_tc, ref_cycle, ref_tc), or (None, None, None, None)
-    when profiling is disabled.
+    Returns (tl_cycle, ref_cycle), or (None, None) when profiling is disabled.
     """
     if not PROFILE_CYCLES:
-        return None, None, None, None
+        return None, None
 
     dev = PROFILE_DEV or get_device_type()
     if dev == "ppu":
@@ -165,18 +164,18 @@ def _maybe_profile(kernel_key, problem_args, best_config):
     else:
         os.environ.pop("TILELANG_PASS_CONFIGS", None)
 
-    tl_cycle, tl_tc = run_cycle_on_device(
+    tl_cycle = run_cycle_on_device(
         script_path, profile_args, dev=dev, log_file=log_file, framework="tilelang"
     )
 
     # Profile reference (skip when TILELANG_SKIP_REF=1)
     if SKIP_REF:
-        ref_cycle, ref_tc = 0, 0
+        ref_cycle = 0
     else:
         gc.collect()
         torch.cuda.empty_cache()
         ref_profile_args = list(problem_args) + ["--profile-ref"]
-        ref_cycle, ref_tc = run_cycle_on_device(
+        ref_cycle = run_cycle_on_device(
             script_path, ref_profile_args, dev=dev, log_file=log_file,
             framework="ref", kernel_filters=meta.get("ref_filters")
         )
@@ -184,7 +183,7 @@ def _maybe_profile(kernel_key, problem_args, best_config):
     gc.collect()
     torch.cuda.empty_cache()
 
-    return tl_cycle, tl_tc, ref_cycle, ref_tc
+    return tl_cycle, ref_cycle
 
 
 # ---------------------------------------------------------------------------
@@ -232,14 +231,14 @@ def test_bench_mla(batch, heads, kv_heads, kv_ctx, dim, pe_dim):
         "--kv_heads", str(kv_heads), "--kv_ctx", str(kv_ctx),
         "--dim", str(dim), "--pe_dim", str(pe_dim),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile("mla", problem_args, best_config)
+    tl_cycles, ref_cycles = _maybe_profile("mla", problem_args, best_config)
 
     print_benchmark_summary(
         "MLA Decode", config_str,
         latency, tflops, ref_latency, ref_tflops,
         "FlashMLA", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        tilelang_cycles=tl_cycles,
+        ref_cycles=ref_cycles,
     )
 
 
@@ -269,7 +268,7 @@ def test_bench_mla_paged(batch, h_q, h_kv, cache_seqlen, d, dv):
         "--h_kv", str(h_kv), "--cache_seqlen", str(cache_seqlen),
         "--d", str(d), "--dv", str(dv),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
+    tl_cycles, ref_cycles = _maybe_profile(
         "mla_paged", problem_args, best_config
     )
 
@@ -277,8 +276,8 @@ def test_bench_mla_paged(batch, h_q, h_kv, cache_seqlen, d, dv):
         "MLA Decode Paged", config_str,
         latency, tflops, ref_latency, ref_tflops,
         "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        tilelang_cycles=tl_cycles,
+        ref_cycles=ref_cycles,
     )
 
 
@@ -317,7 +316,7 @@ def test_bench_deepgemm(M, N, K, in_dtype, out_dtype):
         "--m", str(M), "--n", str(N), "--k", str(K),
         "--in_dtype", str(in_dtype), "--out_dtype", str(out_dtype),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
+    tl_cycles, ref_cycles = _maybe_profile(
         "deepgemm", problem_args, best_config
     )
 
@@ -325,8 +324,8 @@ def test_bench_deepgemm(M, N, K, in_dtype, out_dtype):
         "DeepGEMM FP8", config_str,
         latency, tflops, ref_latency, ref_tflops,
         "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        tilelang_cycles=tl_cycles,
+        ref_cycles=ref_cycles,
     )
 
 
@@ -360,7 +359,7 @@ def test_bench_nsa(batch, heads, seq_len, dim, selected_blocks, block_size, is_c
     ]
     if is_causal:
         problem_args.append("--causal")
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
+    tl_cycles, ref_cycles = _maybe_profile(
         "nsa", problem_args, best_config
     )
 
@@ -368,8 +367,8 @@ def test_bench_nsa(batch, heads, seq_len, dim, selected_blocks, block_size, is_c
         "NSA Fwd", config_str,
         latency, tflops, ref_latency, ref_tflops,
         "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        tilelang_cycles=tl_cycles,
+        ref_cycles=ref_cycles,
     )
 
 
@@ -400,7 +399,7 @@ def test_bench_nsa_decode(batch, heads, seq_len, dim, selected_blocks, block_siz
         "--seq_len", str(seq_len), "--dim", str(dim),
         "--selected_blocks", str(selected_blocks), "--block_size", str(block_size),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
+    tl_cycles, ref_cycles = _maybe_profile(
         "nsa_decode", problem_args, best_config
     )
 
@@ -408,8 +407,8 @@ def test_bench_nsa_decode(batch, heads, seq_len, dim, selected_blocks, block_siz
         "NSA Decode", config_str,
         latency, tflops, ref_latency, ref_tflops,
         "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        tilelang_cycles=tl_cycles,
+        ref_cycles=ref_cycles,
     )
 
 
@@ -436,7 +435,7 @@ def test_bench_mhc(n, hidden_size, hc_mult):
     problem_args = [
         "--n", str(n), "--hidden_size", str(hidden_size), "--hc_mult", str(hc_mult),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
+    tl_cycles, ref_cycles = _maybe_profile(
         "mhc", problem_args, best_config
     )
 
@@ -444,8 +443,8 @@ def test_bench_mhc(n, hidden_size, hc_mult):
         "mHC Pre", config_str,
         latency, tflops, ref_latency, ref_tflops,
         "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        tilelang_cycles=tl_cycles,
+        ref_cycles=ref_cycles,
     )
 
 
@@ -472,7 +471,7 @@ def test_bench_mhc_big_fuse(n, hidden_size, hc_mult):
     problem_args = [
         "--n", str(n), "--hidden_size", str(hidden_size), "--hc_mult", str(hc_mult),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
+    tl_cycles, ref_cycles = _maybe_profile(
         "mhc_big_fuse", problem_args, best_config
     )
 
@@ -480,8 +479,8 @@ def test_bench_mhc_big_fuse(n, hidden_size, hc_mult):
         "mHC BigFuse", config_str,
         latency, tflops, ref_latency, ref_tflops,
         "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        tilelang_cycles=tl_cycles,
+        ref_cycles=ref_cycles,
     )
 
 
@@ -508,7 +507,7 @@ def test_bench_mhc_post(n, hidden_size, hc_mult):
     problem_args = [
         "--n", str(n), "--hidden_size", str(hidden_size), "--hc_mult", str(hc_mult),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
+    tl_cycles, ref_cycles = _maybe_profile(
         "mhc_post", problem_args, best_config
     )
 
@@ -516,8 +515,8 @@ def test_bench_mhc_post(n, hidden_size, hc_mult):
         "mHC Post", config_str,
         latency, tflops, ref_latency, ref_tflops,
         "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        tilelang_cycles=tl_cycles,
+        ref_cycles=ref_cycles,
     )
 
 
@@ -550,7 +549,7 @@ def test_bench_v32(batch, seq_len, seq_len_kv, heads, kv_group, topk, dim, tail_
         "--kv_group", str(kv_group), "--topk", str(topk),
         "--dim", str(dim), "--tail_dim", str(tail_dim),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
+    tl_cycles, ref_cycles = _maybe_profile(
         "v32", problem_args, best_config
     )
 
@@ -558,8 +557,8 @@ def test_bench_v32(batch, seq_len, seq_len_kv, heads, kv_group, topk, dim, tail_
         "V32 Sparse MLA Fwd", config_str,
         latency, tflops, ref_latency, ref_tflops,
         "FlashMLA", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        tilelang_cycles=tl_cycles,
+        ref_cycles=ref_cycles,
     )
 
 

@@ -207,11 +207,11 @@ def run_comparison(batch, heads, seq_len, head_dim, groups, causal, algo="mha", 
     del Q, K, V, dO
     gc.collect()
     torch.cuda.empty_cache()
-    fa_cycle, fa_tc = run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode,
+    fa_cycle = run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode,
                            "./cycle.log", dev=dev)
     gc.collect()
     torch.cuda.empty_cache()
-    tilelang_cycle, tilelang_tc = run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode,
+    tilelang_cycle = run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode,
                            tilelang_best_config, "./cycle.log", dev=dev)
 
     # Print summary
@@ -230,9 +230,7 @@ def run_comparison(batch, heads, seq_len, head_dim, groups, causal, algo="mha", 
             ["TFlops", f"{results['tilelang_tflops']:.2f}", f"{results['flash_tflops']:.2f}",
              f"{results['tilelang_tflops']/results['flash_tflops']:.3f}x"],
             ["cycles", f"{tilelang_cycle:,.0f}", f"{fa_cycle:,.0f}",
-             f"{tilelang_cycle / fa_cycle:.3f}x"],
-            ["tc", f"{tilelang_tc}", f"{fa_tc}",
-             f"{tilelang_tc / fa_tc:.3f}x"]
+             f"{tilelang_cycle / fa_cycle:.3f}x"]
         ]
         print(tabulate(table_data, headers="firstrow", tablefmt="grid"))
     else:
