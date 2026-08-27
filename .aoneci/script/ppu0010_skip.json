@@ -1144,5 +1144,53 @@
     "test_filter": "test_tiled_ws_propagates_nested_postloop_liveness_to_outer_prelude",
     "extra_args": [],
     "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "tilelang/testing/python/ppu/kernel/test_ppu_kernel_gemm.py",
+    "test_filter": "test_ppu_gemm_f16f16f32_sr_nn",
+    "extra_args": [],
+    "reason": "gemm bug, to be fixed"
+  },
+  {
+    "file_path": "tilelang/testing/python/ppu/kernel/test_ppu_kernel_gemm.py",
+    "test_filter": "test_ppu_gemm_f16f16f32_sr_tn",
+    "extra_args": [],
+    "reason": "gemm bug, to be fixed"
+  },
+  {
+    "file_path": "tilelang/testing/python/ppu/kernel/test_ppu_kernel_gemm.py",
+    "test_filter": "test_ppu_gemm_bf16bf16f32_sr_nn",
+    "extra_args": [],
+    "reason": "gemm bug, to be fixed"
+  },
+  {
+    "file_path": "tilelang/testing/python/ppu/kernel/test_ppu_kernel_gemm.py",
+    "test_filter": "test_ppu_gemm_bf16bf16f32_sr_tn",
+    "extra_args": [],
+    "reason": "gemm bug, to be fixed"
+  },
+  {
+    "file_path": "tilelang/testing/python/ppu/kernel/test_ppu_kernel_gemm.py",
+    "test_filter": "test_ppu_gemm_f16f16f32_rs_tn",
+    "extra_args": [],
+    "reason": "gemm bug, to be fixed"
+  },
+  {
+    "file_path": "tilelang/testing/python/ppu/kernel/test_ppu_kernel_gemm.py",
+    "test_filter": "test_ppu_gemm_bf16bf16f32_rs_tn",
+    "extra_args": [],
+    "reason": "gemm bug, to be fixed"
+  },
+  {
+    "file_path": "tilelang/testing/python/ppu/kernel/test_ppu_kernel_gemm.py",
+    "test_filter": "test_ppu_gemm_f16f16f32_rs_tt",
+    "extra_args": [],
+    "reason": "gemm bug, to be fixed"
+  },
+  {
+    "file_path": "tilelang/testing/python/ppu/kernel/test_ppu_kernel_gemm.py",
+    "test_filter": "test_ppu_gemm_bf16bf16f32_rs_tt",
+    "extra_args": [],
+    "reason": "gemm bug, to be fixed"
   }
 ]

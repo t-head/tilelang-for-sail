@@ -18,6 +18,10 @@ GEMM_INST_MMA_PPU = "ppu.mma"
 class PPUGemmMMA(GemmBase):
     intrin_emitter_cls = PPUTensorCoreIntrinEmitter
 
+    @property
+    def allow_f8f6f4_mixed_dtypes(self) -> bool:
+        return True
+
     def _make_mma_emitter(self, target: Target, thread_nums: int, thread_var: tirx.Var | None = None):
         m_warp, n_warp = self.policy.compute_warp_partition(self.M, self.N, thread_nums, target, GEMM_INST_MMA_PPU)
         warp_row_tiles = int(self.M // m_warp)
