@@ -264,6 +264,11 @@ def make_mma_swizzle_layout(shared_buf, is_smooth: bool = False):
 # ================================================================
 
 
+def ppu_shared_16x16_to_mma_32x8_layout_trans_sr_b(i, j):
+    thread_id = 4 * (i % 8) + (j % 8) // 2
+    return thread_id, 4 * (j // 8) + (i // 8) * 2 + (j % 2)
+
+
 def ppu_ldmatrix_32x4_to_shared_16x8_layout_a(thread_id, local_id):
     row = (thread_id // 16) * 8 + (thread_id % 8)
     col = ((thread_id % 16) // 8) * 4 + local_id % 4
@@ -303,6 +308,12 @@ def ppu_shared_16x8_to_mma_32x4_layout_sr_a(i, j):
 def ppu_shared_16x16_to_mma_32x8_layout_sr_a(i, j):
     thread_id = 4 * (i % 8) + (j % 8) // 2
     local_id = 2 * (j // 8) + (i // 8) * 4 + (j % 2)
+    return thread_id, local_id
+
+
+def ppu_shared_16x16_to_mma_32x8_layout_trans_sr_a(i, j):
+    thread_id = 4 * (i % 8) + (j % 8) // 2
+    local_id = 2 * (i // 8) + (j // 8) * 4 + (j % 2)
     return thread_id, local_id
 
 

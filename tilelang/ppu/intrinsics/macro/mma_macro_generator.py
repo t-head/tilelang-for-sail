@@ -32,6 +32,7 @@ from ..layout.mma_layout import (
     ldmatrix_32x8_to_shared_16x16_layout,
     mma_store_32x8_to_shared_16x16_layout,
     # PPU-specific layout functions
+    ppu_shared_16x16_to_mma_32x8_layout_trans_sr_b,
     ppu_ldmatrix_32x4_to_shared_16x8_layout_a,
     ppu_ldmatrix_32x8_to_shared_16x16_layout,
     ppu_ldmatrix_trans_32x8_to_shared_16x16_layout,
@@ -39,6 +40,7 @@ from ..layout.mma_layout import (
     ppu_mma_load_a_32x4_to_shared_16x8_layout,
     ppu_shared_16x8_to_mma_32x4_layout_sr_a,
     ppu_shared_16x16_to_mma_32x8_layout_sr_a,
+    ppu_shared_16x16_to_mma_32x8_layout_trans_sr_a,
     ppu_shared_16x16_to_mma_32x8_layout_sr_a_from_gemm_c,
 )
 
@@ -1259,10 +1261,12 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
 
         return _atom_mma(A_local_buf, B_local_buf, C_local_buf)
 
-    def make_mma_load_layout(self, local_buf: Buffer, matrix: str = "A", a_from_gemm_c: bool = False) -> T.Fragment:
+    def make_mma_load_layout(self, local_buf: Buffer, matrix: str = "A", a_from_gemm_c: bool = False, is_regB: bool = False) -> T.Fragment:
         """PPU override: adds a_from_gemm_c parameter and PPU arch branches."""
         if a_from_gemm_c:
             return self.make_mma_load_layout_from_gemm_c(local_buf, matrix=matrix)
+        if matrix == "B" and self.ppu_arch == 10 and is_regB:
+            return self.make_mma_load_layout_ppu_b(local_buf)
         if matrix == "A" and self.ppu_arch == 10:
             dtype_bits = DataType(self.a_dtype).bits
             if dtype_bits in (16, 32):
@@ -1275,6 +1279,8 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         dtype_bits = DataType(self.a_dtype).bits
         if dtype_bits == 16:
             transform_func = ppu_shared_16x16_to_mma_32x8_layout_sr_a
+            if self.a_transposed:
+                transform_func = ppu_shared_16x16_to_mma_32x8_layout_trans_sr_a
         elif dtype_bits == 32:
             transform_func = ppu_shared_16x8_to_mma_32x4_layout_sr_a
         else:
@@ -1303,6 +1309,45 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
             return warp_fragment.repeat([self.block_row_warps, 1], repeat_on_thread=True, lower_dim_first=True).replicate(self.block_col_warps)
         warp_fragment = base_fragment.repeat([warp_r, warp_s], repeat_on_thread=False, lower_dim_first=True)
         return warp_fragment.repeat([1, self.block_row_warps], repeat_on_thread=True, lower_dim_first=True).replicate(self.block_col_warps)
+
+    def make_mma_load_layout_ppu_b(self, local_buf: Buffer) -> T.Fragment:
+        assert is_fragment(local_buf), f"local_buf must be a fragment, but got {local_buf.scope()}"
+        dtype_bits = DataType(self.b_dtype).bits
+        if dtype_bits == 16:
+            transform_func = shared_16x16_to_mma_32x8_layout_sr_b
+            if not self.b_transposed:
+                transform_func = ppu_shared_16x16_to_mma_32x8_layout_trans_sr_b
+        else:
+            return self._make_mma_load_layout_default(local_buf, matrix="B")
+
+        is_sr_axis_order = self.b_transposed
+        if not is_sr_axis_order:
+            base_transform_func = transform_func
+            transform_func = lambda i, j: base_transform_func(j, i)
+
+        inverse_mma_load_layout = IndexMap.from_func(transform_func, index_dtype=T.int32)
+
+        def forward_thread(i: int, j: int) -> int:
+            lane_id, _ = inverse_mma_load_layout.map_indices([i, j])
+            return lane_id
+
+        def forward_index(i: int, j: int) -> int:
+            _, local_id = inverse_mma_load_layout.map_indices([i, j])
+            return local_id
+
+        micro_size_r, micro_size_s = self.micro_size_k, self.micro_size_y
+        base_fragment = T.Fragment(
+            [micro_size_s, micro_size_r] if is_sr_axis_order else [micro_size_r, micro_size_s],
+            forward_thread_fn=forward_thread, forward_index_fn=forward_index,
+        )
+        warp_s, warp_r = self.warp_cols, self.chunk // self.micro_size_k
+        block_s = self.block_col_warps
+        replicate = self.block_row_warps
+        if is_sr_axis_order:
+            warp_fragment = base_fragment.repeat([warp_s, warp_r], repeat_on_thread=False, lower_dim_first=False)
+            return warp_fragment.replicate(replicate).repeat([block_s, 1], repeat_on_thread=True, lower_dim_first=True)
+        warp_fragment = base_fragment.repeat([warp_r, warp_s], repeat_on_thread=False, lower_dim_first=True)
+        return warp_fragment.replicate(replicate).repeat([1, block_s], repeat_on_thread=True, lower_dim_first=True)
 
     def make_mma_load_layout_from_gemm_c(self, local_buf: Buffer, matrix: str = "A") -> T.Fragment:
         """RS GEMM: A fragment layout compatible with PPU MMA C-store layout."""

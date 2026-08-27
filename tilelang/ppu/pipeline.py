@@ -70,6 +70,10 @@ def PPUPassPipelineBodyPrologue(mod: IRModule, target: Target) -> IRModule:
     mod = tilelang.transform.InjectSoftwarePipeline()(mod)
     mod = tilelang.transform.Simplify()(mod)
 
+    # @PPU-specific: Annotate chained gemm (A from prior GEMM C).
+    # Must run after software pipelining and before LayoutInference.
+    mod = tilelang.ppu.transform.AnnotateChainedGemm()(mod)
+
     # @PPU-specific: Use PPU LayoutInference that handles GEMM RS SRCA
     # layout conflicts via trans_buffer mechanism
     mod = tilelang.ppu.transform.LayoutInference()(mod)

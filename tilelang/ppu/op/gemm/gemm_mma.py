@@ -6,7 +6,6 @@ from tilelang.ppu.intrinsics.macro.mma_macro_generator import (
     PPUTensorCoreIntrinEmitter,
 )
 from tilelang.utils.language import is_shared, is_fragment, is_full_region
-from tilelang import tvm as tvm
 from tvm.target import Target
 from tvm.ir import Range
 from tvm import tirx, DataType
@@ -14,9 +13,6 @@ from tilelang import language as T
 from tilelang.transform.simplify import _Simplify
 
 GEMM_INST_MMA_PPU = "ppu.mma"
-
-# Annotation key: maps source_buffer -> override_buffer for layout operations.
-GEMM_BUFFER_LAYOUT_OVERRIDES = "gemm_buffer_layout_overrides"
 
 
 class PPUGemmMMA(GemmBase):
@@ -47,28 +43,44 @@ class PPUGemmMMA(GemmBase):
         return emitter
 
     @staticmethod
-    def _has_layout_for_buffer(layout_map, buffer):
-        """Check if buffer already has a layout in the map (mirrors C++ HasLayoutForBuffer)."""
-        if layout_map is None:
+    def _read_a_from_gemm_c_annotation(gemm_node) -> bool:
+        """Read the 'a_from_gemm_c' annotation from gemm_node. Returns False if absent."""
+        try:
+            annotations = getattr(gemm_node, "annotations", None)
+            if not annotations:
+                return False
+            value = None
+            get = getattr(annotations, "get", None)
+            if callable(get):
+                value = get("a_from_gemm_c")
+            elif "a_from_gemm_c" in annotations:
+                value = annotations["a_from_gemm_c"]
+            if value is None:
+                return False
+            if isinstance(value, bool):
+                return value
+            return bool(int(getattr(value, "value", value)))
+        except Exception:
             return False
-        for buf in layout_map:
-            if buf is buffer:
-                return True
-            if hasattr(buf, 'data') and hasattr(buffer, 'data') and buf.data.same_as(buffer.data):
-                return True
-            if hasattr(buf, 'name') and hasattr(buffer, 'name') and str(buf.name) == str(buffer.name):
-                return True
-        return False
 
-    def _is_chained_rs_gemm(self, ppu_arch: int, layout_map) -> bool:
-        """Detect chained RS GEMM condition (A sourced from previous GEMM's C output)."""
+    def _is_ppu0010_fp16_config(self, mma_emitter) -> bool:
+        """True if running on PPU0010 with fp16 A/B and fp32 accumulator."""
+        return (
+            mma_emitter.ppu_arch == 10
+            and DataType(self.a_dtype).bits == 16
+            and DataType(self.b_dtype).bits == 16
+            and DataType(self.accum_dtype).bits == 32
+        )
+
+    def _is_chained_rs_gemm(self, ppu_arch: int) -> bool:
+        """True if this is a chained RS GEMM (A from prior GEMM C) on PPU0010."""
         return (
             self.is_gemm_rs()
             and ppu_arch == 10
             and DataType(self.a_dtype).bits == 16
             and DataType(self.b_dtype).bits == 16
             and DataType(self.accum_dtype).bits == 32
-            and self._has_layout_for_buffer(layout_map, self.A)
+            and self._read_a_from_gemm_c_annotation(self.gemm_node)
         )
 
     def infer_layout(self, target: Target, thread_nums: int):
@@ -80,40 +92,28 @@ class PPUGemmMMA(GemmBase):
                 self.C: mma_emitter.make_mma_store_layout(self.C),
             }
         elif self.is_gemm_sr():
+            if self._is_ppu0010_fp16_config(mma_emitter):
+                return {
+                    self.A: make_swizzled_layout(self.A),
+                    self.B: mma_emitter.make_mma_load_layout(self.B, matrix="B", is_regB=True),
+                    self.C: mma_emitter.make_mma_store_layout(self.C),
+                }
             return {
                 self.A: make_swizzled_layout(self.A),
                 self.B: mma_emitter.make_mma_load_layout(self.B, matrix="B"),
                 self.C: mma_emitter.make_mma_store_layout(self.C),
             }
         elif self.is_gemm_rs():
-            if (
-                mma_emitter.ppu_arch == 10
-                and DataType(self.a_dtype).bits == 16
-                and DataType(self.b_dtype).bits == 16
-                and DataType(self.accum_dtype).bits == 32
-            ):
-                # Always return extra B original-layout buffers for PPU0010 RS GEMM
-                extra_layout = make_ppu_swizzled_layout(
-                    self.B,
-                    k_major=self.trans_B,
-                    is_gemm_rs=False,
-                )
-                b_name = str(self.B.name)
-                unique_id = "_" + str(id(self.gemm_node))
-                common_buf = tirx.decl_buffer(
-                    self.B.shape, self.B.dtype, b_name + "_original_layout")
-                unique_buf = tirx.decl_buffer(
-                    self.B.shape, self.B.dtype, b_name + unique_id + "_original_layout")
+            if self._is_ppu0010_fp16_config(mma_emitter):
+                a_from_gemm_c = self._read_a_from_gemm_c_annotation(self.gemm_node)
                 return {
-                    self.A: mma_emitter.make_mma_load_layout(self.A, matrix="A", a_from_gemm_c=True),
+                    self.A: mma_emitter.make_mma_load_layout(self.A, matrix="A", a_from_gemm_c=a_from_gemm_c),
                     self.B: make_ppu_swizzled_layout(
                         self.B,
                         k_major=self.trans_B,
-                        is_gemm_rs=True,
+                        is_gemm_rs=a_from_gemm_c,
                     ),
                     self.C: mma_emitter.make_mma_store_layout(self.C),
-                    common_buf: extra_layout,
-                    unique_buf: extra_layout,
                 }
             return {
                 self.A: mma_emitter.make_mma_load_layout(self.A, matrix="A"),
@@ -121,6 +121,12 @@ class PPUGemmMMA(GemmBase):
                 self.C: mma_emitter.make_mma_store_layout(self.C),
             }
         elif self.is_gemm_rr():
+            if self._is_ppu0010_fp16_config(mma_emitter):
+                return {
+                    self.A: mma_emitter.make_mma_load_layout(self.A, matrix="A"),
+                    self.B: mma_emitter.make_mma_load_layout(self.B, matrix="B", is_regB=True),
+                    self.C: mma_emitter.make_mma_store_layout(self.C),
+                }
             return {
                 self.A: mma_emitter.make_mma_load_layout(self.A, matrix="A"),
                 self.B: mma_emitter.make_mma_load_layout(self.B, matrix="B"),
@@ -146,7 +152,7 @@ class PPUGemmMMA(GemmBase):
             ppu_arch = int(arch.split("_")[-1].rstrip("af"))
         except ValueError:
             ppu_arch = 10
-        a_from_gemm_c = self._is_chained_rs_gemm(ppu_arch, layout_map)
+        a_from_gemm_c = self._is_chained_rs_gemm(ppu_arch)
         mma_emitter = self._make_mma_emitter(target, thread_nums, thread_var=local_thread_var)
 
         a_dtype = self.a_dtype
@@ -268,33 +274,7 @@ class PPUGemmMMA(GemmBase):
 
             # Simplify to optimize the index computing
             # Must inline let statements to simplify the analysis
-            func = _Simplify(_gemm_rsr, inline_let=True)
-            if a_from_gemm_c:
-                # Directly set gemm_buffer_layout_overrides annotation on the SBlock
-                override_buf = self._find_override_buffer(layout_map, B_buf)
-                if override_buf is not None:
-                    overrides = tvm.runtime.convert({B_buf: override_buf})
-                    body = func.body  # SBlockRealize
-                    assert isinstance(body, tirx.SBlockRealize), (
-                        f"Expected SBlockRealize as PrimFunc body, got {type(body)}")
-                    block = body.block  # SBlock
-                    new_annotations = dict(block.annotations)
-                    new_annotations[GEMM_BUFFER_LAYOUT_OVERRIDES] = overrides
-                    new_block = tirx.SBlock(
-                        iter_vars=block.iter_vars,
-                        reads=block.reads,
-                        writes=block.writes,
-                        name_hint=block.name_hint,
-                        body=block.body,
-                        init=block.init,
-                        alloc_buffers=block.alloc_buffers,
-                        match_buffers=block.match_buffers,
-                        annotations=new_annotations,
-                    )
-                    new_body = tirx.SBlockRealize(
-                        body.iter_values, body.predicate, new_block)
-                    func = func.with_body(new_body)
-            return func
+            return _Simplify(_gemm_rsr, inline_let=True)
         elif self.is_gemm_rr():
             assert is_full_region(A_region), "Fragment input A must be a full region"
             assert is_full_region(B_region), "Fragment input B must be a full region"
@@ -316,17 +296,6 @@ class PPUGemmMMA(GemmBase):
             return _Simplify(_gemm_rrr, inline_let=True)
         else:
             raise ValueError(f"Unsupported gemm combination, A: {self.A.scope()}, B: {self.B.scope()}")
-
-    @staticmethod
-    def _find_override_buffer(layout_map, b_buf):
-        """Find the B_original_layout buffer in layout_map for scoped buffer overrides."""
-        if layout_map is None:
-            return None
-        original_name = str(b_buf.name) + "_original_layout"
-        for buf in layout_map:
-            if str(buf.name) == original_name:
-                return buf
-        return None
 
     def is_gemm_ss(self) -> bool:
         return is_shared(self.A) and is_shared(self.B)

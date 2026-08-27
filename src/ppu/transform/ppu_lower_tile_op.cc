@@ -39,11 +39,6 @@ namespace tl {
 using namespace tirx;
 using namespace ffi;
 
-namespace attr {
-// Maps source buffer to override buffer for GEMM chained-RS layout conflicts.
-constexpr const char *kGemmBufferLayoutOverrides = "gemm_buffer_layout_overrides";
-}  // namespace attr
-
 namespace {
 
 // PPU alias for shared utility function
@@ -332,14 +327,6 @@ private:
   using arith::IRMutatorWithAnalyzer::IRMutatorWithAnalyzer;
 
   Stmt VisitStmt_(const SBlockNode *op) final {
-    SBlock current_block = GetRef<SBlock>(op);
-    block_stack_.push_back(current_block);
-    Map<Buffer, Buffer> block_overrides;
-    if (op->annotations.count(attr::kGemmBufferLayoutOverrides)) {
-      block_overrides = Downcast<Map<Buffer, Buffer>>(
-          op->annotations.at(attr::kGemmBufferLayoutOverrides));
-    }
-    buffer_override_stack_.push_back(block_overrides);
     // Record the mapping from buffer data var to buffer for later lookup
     for (auto buffer : op->alloc_buffers) {
       buffer_map_.insert({buffer->data, buffer});
@@ -433,8 +420,6 @@ private:
       }
     }
 
-    buffer_override_stack_.pop_back();
-    block_stack_.pop_back();
     return block;
   }
 
@@ -498,21 +483,6 @@ private:
       }
 
       Buffer original_buffer = it->second;
-
-      // Apply block-scoped buffer overrides: redirect layout operations to
-      // an alternative buffer when the current block declares an override.
-      if (!buffer_override_stack_.empty() && IsSharedBuffer(original_buffer)) {
-        const auto& overrides = buffer_override_stack_.back();
-        for (const auto& [src, dst] : overrides) {
-          if (src->data.same_as(original_buffer->data) ||
-              src->name == original_buffer->name) {
-            if (layout_map_.count(dst)) {
-              original_buffer = dst;
-              break;
-            }
-          }
-        }
-      }
 
       // Check if this buffer has a layout
       if (!layout_map_.count(original_buffer)) {
@@ -1516,10 +1486,6 @@ private:
   size_t thread_block_size_ = 0;
   // Product of cluster_dims from block annotation (default 1).
   int cluster_size_ = 1;
-  // Stack of currently visited blocks (parallels buffer_override_stack_).
-  std::vector<SBlock> block_stack_;
-  // Block-scoped buffer override stack (from kGemmBufferLayoutOverrides).
-  std::vector<Map<Buffer, Buffer>> buffer_override_stack_;
   // Stack of per-Block workspace buffers gathered while visiting children
   std::vector<Array<Buffer>> workspace_stack_;
   // Counter and arrive-counts for mbarrier allocation via

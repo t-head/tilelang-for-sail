@@ -45,6 +45,11 @@ def InjectAIUSyncBarrier():
     return _ffi_api.InjectAIUSyncBarrier()  # type: ignore
 
 
+def AnnotateChainedGemm():
+    """Annotate chained gemm (A from prior GEMM C) with 'a_from_gemm_c'."""
+    return _ffi_api.AnnotateChainedGemm()  # type: ignore
+
+
 def LayoutInference():
     """PPU-specific layout inference that handles GEMM RS SRCA layout conflicts."""
     # PPU: call the independently registered PPU transform implementation.
@@ -76,6 +81,7 @@ __all__ = [
     "LowerLDGSTG",
     "LowerL2Persistent",
     "LowerTileOp",
+    "AnnotateChainedGemm",
     "MarkPpuSyncCalls",
     "PersistThreadblock",
     "ReorderAIULoads",
