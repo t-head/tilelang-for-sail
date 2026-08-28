@@ -211,7 +211,7 @@ def tilelang_callback_ppu_compile(code, target, pass_config=None):
 
     cfg = pass_config or {}
     enable_fast_math = bool(cfg.get(PassConfigKey.TL_ENABLE_FAST_MATH, False))
-    verbose = bool(cfg.get(PassConfigKey.TL_ENABLE_PTXAS_VERBOSE_OUTPUT, False))
+    verbose = env.get_default_verbose()
 
     options = []
     if enable_fast_math:

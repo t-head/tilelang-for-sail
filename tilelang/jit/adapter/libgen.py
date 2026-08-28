@@ -119,14 +119,13 @@ class LibraryGenerator:
             ]
 
         elif is_ppu_target(target):
+            from tilelang.contrib.hgcc import get_target_arch, get_target_compute_version
             from tilelang.env import ACTLIZE_INCLUDE_DIR
             # PPU: compile device source and host wrapper into one shared
             # library with hgcc (same model as the HIP hipcc path).
             src = tempfile.NamedTemporaryFile(mode="w", suffix=".hg", delete=False)  # noqa: SIM115
             libpath = src.name.replace(".hg", ".so")
-            target_arch = get_target_arch(get_target_compute_version(target))
-            target_arch_int = int(target_arch)
-            ppu_arch = "ppu_15" if target_arch_int >= 15 else "ppu_10"
+            ppu_arch = get_target_arch(get_target_compute_version(target))
 
             ppu_sdk = os.environ.get("PPU_SDK")
             if not ppu_sdk:

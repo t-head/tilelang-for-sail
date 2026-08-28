@@ -15,12 +15,17 @@
 #include <vector>
 
 #include "../../op/builtin.h"
-#include "../../transform/pipeline/helpers.h"
 
 namespace tvm {
 namespace tl {
 
 using namespace tirx;
+using namespace ffi;
+
+// Forward declaration: defined in transform/inject_pipeline.cc.
+namespace software_pipeline {
+Stmt LowerAsyncCommitWaitAttrs(const Stmt &stmt);
+} // namespace software_pipeline
 
 /*!
  * \brief Check if a statement is an async_scope AttrStmt (pipeline-managed).

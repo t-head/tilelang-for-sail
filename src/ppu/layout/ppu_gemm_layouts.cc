@@ -19,6 +19,7 @@ namespace tvm {
 namespace tl {
 
 using namespace ffi;
+using namespace tirx;
 
 // ---------------------------------------------------------------------------
 // Local helpers (mirrored from gemm_layouts.cc for self-contained compilation)
@@ -240,8 +241,8 @@ static Layout MakeFullBankSwizzleLayoutPPU2D(int stride, int continuous,
 Layout makeGemmBLayoutPaddedPPU(int stride, int continuous, int element_size,
                                 bool k_inner) {
   // PPU: row/column swizzle used by cutlass-ppu Actlize shared B layouts.
-  IterVar i = make_itervar("i", stride);
-  IterVar j = make_itervar("j", continuous);
+  IterVar i = MakeIterVar("i", stride);
+  IterVar j = MakeIterVar("j", continuous);
   int padded = continuous;
   if ((element_size * continuous) % 256 == 0)
     padded += 128 / element_size;
@@ -263,11 +264,11 @@ Layout makeGemmABLayoutPPU(int mat_stride, int mat_continuous, int continuity,
       return makeGemmABLayoutF64_Kouter(mat_stride, mat_continuous);
     if (k_inner && continuity % 16 == 0) // float64 NxK
       return makeGemmABLayoutF64_Kinner(mat_stride, mat_continuous);
-    return makeGemmABLayoutPadded(mat_stride, mat_continuous, element_size);
+    return MakeGemmABLayoutPadded(mat_stride, mat_continuous, element_size);
   }
   int vector_size = 128 / element_size;
   if (!k_inner && element_size == 8) // int8 KxN
-    return makeGemmABLayoutPadded(mat_stride, mat_continuous, element_size);
+    return MakeGemmABLayoutPadded(mat_stride, mat_continuous, element_size);
   if (mat_continuous % (vector_size * 8) == 0) {
     if (is_gemm_rs && element_size == 16)
       return MakeFullBankSwizzleLayoutPPU2D(mat_stride, mat_continuous,
@@ -288,7 +289,7 @@ Layout makeGemmABLayoutPPU(int mat_stride, int mat_continuous, int continuity,
   if (mat_continuous % (vector_size * 2) == 0)
     return MakeQuarterBankSwizzleLayout2D(mat_stride, mat_continuous,
                                           element_size);
-  return makeGemmABLayoutPadded(mat_stride, mat_continuous, element_size);
+  return MakeGemmABLayoutPadded(mat_stride, mat_continuous, element_size);
 }
 
 Layout makePPUSwizzledLayout(const Buffer &buffer, bool k_inner,
@@ -302,7 +303,7 @@ Layout makePPUSwizzledLayout(const Buffer &buffer, bool k_inner,
         static_cast<int>(info.continuous), info.element_size, k_inner,
         is_gemm_rs);
   } else {
-    base = makeGemmABLayoutHopper(
+    base = MakeGemmABLayoutHopper(
         static_cast<int>(info.stride), static_cast<int>(info.continuous),
         static_cast<int>(info.continuous), info.element_size, k_inner);
   }
