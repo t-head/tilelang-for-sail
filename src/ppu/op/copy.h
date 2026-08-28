@@ -50,18 +50,6 @@ struct CopyInstSelection {
 CopyInstSelection SelectCopyInstForLowering(const CopyNode &op,
                                             const CopyAnalysisContext &ctx);
 
-// Coarse pre-layout classification used by InstructionAnnotation.
-std::string ClassifyCopyForInstructionAnnotation(const CopyNode &op,
-                                                 Target target,
-                                                 bool in_pipeline);
-
-// Pre-layout producer classification used by warp-specialized scheduling.
-CopyInstSelection ClassifyWarpSpecializedProducerCopy(const CopyNode &op,
-                                                      Target target);
-
-// Semantic queries used by transform passes that need copy shape/capability
-// information without knowing the PPU lowering policy knobs.
-bool IsPipelineManagedCPAsyncCopy(const CopyNode &op, Target target);
 
 } // namespace ppu
 } // namespace tl

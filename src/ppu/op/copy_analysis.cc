@@ -342,69 +342,6 @@ CopyInstSelection SelectCopyInstForLowering(const CopyNode &op,
   return Supported(SelectSyncLikeInst(facts));
 }
 
-std::string ClassifyCopyForInstructionAnnotation(const CopyNode &op,
-                                                 Target target,
-                                                 bool in_pipeline) {
-  CopyAnalysisContext ctx;
-  ctx.target = target;
-  CopyFacts facts = AnalyzeCopyFacts(op, ctx);
-  if (!facts.target_supported) {
-    return "sync";
-  }
-
-  if (facts.cluster_mask != 0 || facts.explicit_tma ||
-      GetBoolAnnotation(op, "is_gather4") ||
-      GetBoolAnnotation(op, "is_scatter4")) {
-    return "sync";
-  }
-
-  if (facts.explicit_cp_async || facts.no_implicit_async_commit_wait) {
-    return facts.can_cp_async ? "cp_async" : "sync";
-  }
-
-  if (in_pipeline && IsAutoAsyncCopyEnabled(/*default_enabled=*/false) &&
-      facts.can_cp_async) {
-    return "cp_async";
-  }
-
-  return "sync";
-}
-
-CopyInstSelection ClassifyWarpSpecializedProducerCopy(const CopyNode &op,
-                                                      Target target) {
-  CopyAnalysisContext ctx;
-  ctx.target = target;
-  CopyFacts facts = AnalyzeCopyFacts(op, ctx);
-  if (!facts.target_supported) {
-    return Supported(CopyInst::kNormal);
-  }
-
-  if (facts.cluster_mask != 0 || facts.explicit_tma ||
-      GetBoolAnnotation(op, "is_gather4") ||
-      GetBoolAnnotation(op, "is_scatter4")) {
-    return Unsupported(MakeTmaUnavailableReason(op));
-  }
-
-  if (facts.explicit_cp_async || facts.no_implicit_async_commit_wait) {
-    return facts.can_cp_async ? Supported(CopyInst::kCPAsync)
-                              : Unsupported(facts.async_unavailable_reason);
-  }
-
-  return Supported(SelectSyncLikeInst(facts));
-}
-
-bool IsPipelineManagedCPAsyncCopy(const CopyNode &op, Target target) {
-  CopyAnalysisContext ctx;
-  ctx.target = target;
-  CopyFacts facts = AnalyzeCopyFacts(op, ctx);
-  if (!facts.target_supported || facts.explicit_tma ||
-      facts.explicit_cp_async || GetBoolAnnotation(op, "is_gather4") ||
-      GetBoolAnnotation(op, "is_scatter4")) {
-    return false;
-  }
-  return facts.can_cp_async;
-}
-
 } // namespace ppu
 } // namespace tl
 } // namespace tvm

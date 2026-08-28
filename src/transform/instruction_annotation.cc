@@ -40,9 +40,7 @@
 #include "../op/gemm.h"
 #include "../op/operator.h"
 #include "../op/utils.h"
-#include "backend/common/target_utils.h"
 #include "cuda/op/copy.h"
-#include "ppu/op/copy.h"
 
 namespace tvm {
 namespace tl {
@@ -70,11 +68,6 @@ std::string ClassifyCopy(const CopyNode *copy, Target target,
                          bool in_pipeline) {
   if (copy == nullptr) {
     return "sync";
-  }
-  // PPU: use ppu ClassifyCopyForInstructionAnnotation
-  if (TargetIsPPU(target)) {
-    return ppu::ClassifyCopyForInstructionAnnotation(*copy, target,
-                                                     in_pipeline);
   }
   return cuda::ClassifyCopyForInstructionAnnotation(*copy, target, in_pipeline);
 }
