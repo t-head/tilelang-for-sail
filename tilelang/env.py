@@ -1,5 +1,7 @@
 from __future__ import annotations
 import importlib.metadata
+import json
+import math
 import sys
 import os
 import pathlib
@@ -7,11 +9,12 @@ import logging
 import shutil
 import glob
 from dataclasses import dataclass
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 logger = logging.getLogger(__name__)
 
 EnvVarDefault = str | None | Callable[[], str | None]
+TargetConfig = dict[str, object]
 
 # SETUP ENVIRONMENT VARIABLES
 CUTLASS_NOT_FOUND_MESSAGE = "CUTLASS is not installed or found in the expected path"
@@ -42,6 +45,11 @@ if not os.path.exists(THIRD_PARTY_ROOT):
     TL_LIBS = [os.path.join(dev_lib_root, "lib"), os.path.join(dev_lib_root, "tvm")]
     THIRD_PARTY_ROOT = os.path.join(tl_dev_root, "3rdparty")
     logger.warning(f"Loading tilelang libs from dev root: {dev_lib_root}")
+else:
+    try:
+        import z3  # noqa: F401
+    except ImportError:
+        logger.error("Failed to import z3, consider to reinstall tilelang.")
 
 assert TL_LIBS and all(os.path.exists(i) for i in TL_LIBS), f"tilelang lib root do not exists: {TL_LIBS}"
 
@@ -253,7 +261,7 @@ class EnvVar:
 
     key: str  # Environment variable name (e.g. "TILELANG_PRINT_ON_COMPILATION")
     default: EnvVarDefault  # Default value if the environment variable is not set
-    _forced_value: str | None = None  # Temporary runtime override (mainly for tests/debugging)
+    _forced_value: object | None = None  # Temporary runtime override (mainly for tests/debugging)
 
     def _get_default(self):
         return self.default() if callable(self.default) else self.default
@@ -282,6 +290,24 @@ class EnvVar:
         self._forced_value = value
         # Uncomment the following line if you want the override to persist globally:
         # os.environ[self.key] = value
+
+
+def _parse_target_config(value: str) -> TargetConfig | None:
+    value = value.strip()
+    if not value.startswith("{"):
+        return None
+
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as err:
+        raise ValueError(
+            'TILELANG_DEFAULT_TARGET looks like a dict but could not be parsed. Use JSON syntax like {"kind": "cuda", "arch": "sm_100"}.'
+        ) from err
+    if not isinstance(parsed, dict):
+        raise ValueError("TILELANG_DEFAULT_TARGET must parse to a dict")
+    if not all(isinstance(key, str) for key in parsed):
+        raise ValueError("TILELANG_DEFAULT_TARGET dict keys must be strings")
+    return dict(parsed)
 
 
 # Utility function for environment variables with defaults
@@ -319,11 +345,19 @@ class Environment:
     TILELANG_DISABLE_CACHE = EnvVar(
         "TILELANG_DISABLE_CACHE", "0"
     )  # disable kernel cache, usually for unit testing / debugging, high priority
-    TILELANG_CLEAR_CACHE = EnvVar("TILELANG_CLEAR_CACHE", "0")  # DEPRECATED! clear cache automatically if set
+    TILELANG_KERNEL_CACHE_USE_LIB_STAMP = EnvVar(
+        "TILELANG_KERNEL_CACHE_USE_LIB_STAMP", "0"
+    )  # include native TileLang library content hash in kernel cache keys
     TILELANG_CLEANUP_TEMP_FILES = EnvVar(
         "TILELANG_CLEANUP_TEMP_FILES", "1"
     )  # cleanup temporary compiler files/dirs after compilation (set to 0 to keep for debugging)
     TILELANG_HIP_SAVE_TEMP_FILES = EnvVar("TILELANG_HIP_SAVE_TEMP_FILES", "0")  # save temporary files for HIP compilation
+    TILELANG_JIT_DIAGNOSTICS = EnvVar("TILELANG_JIT_DIAGNOSTICS", "0")  # enable JIT phase diagnostics
+    TILELANG_COMPILE_TIMEOUT_SECONDS = EnvVar("TILELANG_COMPILE_TIMEOUT_SECONDS", "")  # optional NVCC subprocess timeout in seconds
+
+    # Pass diff debugging
+    TILELANG_PASS_DIFF = EnvVar("TILELANG_PASS_DIFF", "0")  # "0"=off, "terminal", "html", "both"
+    TILELANG_PASS_DIFF_OUTPUT = EnvVar("TILELANG_PASS_DIFF_OUTPUT", "tmp/pass_diff_output")  # output directory for HTML reports
 
     # Auto-tuning settings
     TILELANG_AUTO_TUNING_DISABLE_CACHE = EnvVar("TILELANG_AUTO_TUNING_DISABLE_CACHE", "0")
@@ -333,7 +367,7 @@ class Environment:
 
     # Compilation defaults (for jit, autotune, compile)
     # These allow overriding default compilation parameters via environment variables
-    TILELANG_DEFAULT_TARGET = EnvVar("TILELANG_TARGET", "auto")
+    TILELANG_DEFAULT_TARGET = EnvVar("TILELANG_DEFAULT_TARGET", "auto")
     TILELANG_DEFAULT_EXECUTION_BACKEND = EnvVar("TILELANG_EXECUTION_BACKEND", "auto")
     TILELANG_DEFAULT_VERBOSE = EnvVar("TILELANG_VERBOSE", "0")
 
@@ -347,7 +381,7 @@ class Environment:
         to ensure PyTorch extensions are built for the proper GPU arch.
         """
         from tilelang.contrib import nvcc
-        from tilelang.utils.target import determine_target
+        from tilelang.backend.target import determine_target
 
         target = determine_target(return_object=True)  # get target GPU
         compute_version = nvcc.get_target_compute_version(target)  # e.g. "8.6"
@@ -367,6 +401,9 @@ class Environment:
     def is_cache_globally_disabled(self) -> bool:
         return self.TILELANG_DISABLE_CACHE.lower() in ("1", "true", "yes", "on")
 
+    def should_use_kernel_cache_lib_stamp(self) -> bool:
+        return str(self.TILELANG_KERNEL_CACHE_USE_LIB_STAMP).lower() in ("1", "true", "yes", "on")
+
     def is_autotune_cache_disabled(self) -> bool:
         return self.TILELANG_AUTO_TUNING_DISABLE_CACHE.lower() in ("1", "true", "yes", "on")
 
@@ -376,9 +413,42 @@ class Environment:
     def should_cleanup_temp_files(self) -> bool:
         return str(self.TILELANG_CLEANUP_TEMP_FILES).lower() in ("1", "true", "yes", "on")
 
-    def get_default_target(self) -> str:
+    def is_jit_diagnostics_enabled(self) -> bool:
+        return str(self.TILELANG_JIT_DIAGNOSTICS).lower() in ("1", "true", "yes", "on")
+
+    def get_compile_timeout_seconds(self) -> float | None:
+        value = str(self.TILELANG_COMPILE_TIMEOUT_SECONDS).strip()
+        if not value:
+            return None
+        try:
+            timeout = float(value)
+        except ValueError as exc:
+            raise ValueError("TILELANG_COMPILE_TIMEOUT_SECONDS must be empty or a non-negative number") from exc
+        if not math.isfinite(timeout) or timeout < 0:
+            raise ValueError("TILELANG_COMPILE_TIMEOUT_SECONDS must be empty or a non-negative number")
+        return timeout if timeout > 0 else None
+
+    def get_pass_diff_mode(self) -> str | None:
+        """Return the pass diff mode: None (off), 'terminal', 'html', or 'both'."""
+        value = str(self.TILELANG_PASS_DIFF).lower().strip()
+        if value in ("0", "false", "no", "off", ""):
+            return None
+        if value in ("1", "true", "yes", "on", "terminal"):
+            return "terminal"
+        if value in ("html", "both"):
+            return value
+        return "terminal"  # fallback for unrecognized truthy values
+
+    def get_default_target(self) -> str | TargetConfig:
         """Get default compilation target from environment."""
-        return self.TILELANG_DEFAULT_TARGET
+        target = self.TILELANG_DEFAULT_TARGET
+        if target is None:
+            return "auto"
+        if isinstance(target, Mapping):
+            return dict(target)
+        if isinstance(target, str):
+            return _parse_target_config(target) or target
+        raise TypeError("TILELANG_DEFAULT_TARGET must be a string or target config dict")
 
     def get_default_execution_backend(self) -> str:
         """Get default execution backend from environment."""

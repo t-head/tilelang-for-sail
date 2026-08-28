@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Literal
-from tvm.target import Target
+from tvm.target import Target as TVMTarget
 from tvm.tirx import PrimFunc
 from tilelang.jit import JITKernel
 from tilelang import env
@@ -17,6 +17,8 @@ from tilelang.jit.adapter.kernel_cache import TVMFFIKernelCache
 if TYPE_CHECKING:
     from .kernel_cache import KernelCache
 
+TargetLike = str | dict[str, object] | TVMTarget
+
 # Create a map of singleton instance of KernelCaches
 _dispatch_map: dict[str, KernelCache] = {
     "tvm_ffi": TVMFFIKernelCache(),
@@ -28,7 +30,7 @@ _dispatch_map: dict[str, KernelCache] = {
 
 
 def _resolve_cache_dispatch(
-    target: str | Target | None,
+    target: TargetLike | None,
     execution_backend: Literal["auto", "tvm_ffi", "cython", "nvrtc", "torch", "cutedsl"] | None,
     verbose: bool | None,
 ):
@@ -39,8 +41,8 @@ def _resolve_cache_dispatch(
     if verbose is None:
         verbose = env.get_default_verbose()
 
-    from tilelang.utils.target import determine_target as _determine_target
-    from tilelang.jit.execution_backend import resolve_execution_backend, allowed_backends_for_target
+    from tilelang.backend.target import determine_target as _determine_target
+    from tilelang.backend.execution_backend import resolve_execution_backend, allowed_backends_for_target
 
     norm_target = _determine_target(target, return_object=True)
     requested_backend = execution_backend
@@ -66,8 +68,8 @@ def cached(
     func: PrimFunc = None,
     out_idx: list[int] = None,
     *args,
-    target: str | Target | None = None,
-    target_host: str | Target | None = None,
+    target: TargetLike | None = None,
+    target_host: TargetLike | None = None,
     execution_backend: Literal["auto", "tvm_ffi", "cython", "nvrtc", "torch", "cutedsl"] | None = None,
     verbose: bool | None = None,
     pass_configs: dict | None = None,
@@ -88,22 +90,3 @@ def cached(
         pass_configs=pass_configs,
         compile_flags=compile_flags,
     )
-
-
-def clear_cache():
-    """
-    Disabled helper that previously removed the entire kernel cache.
-
-    Raises:
-        RuntimeError: Always raised to warn users to clear the cache manually.
-    """
-    cache_dir = env.TILELANG_CACHE_DIR
-    raise RuntimeError(
-        "tilelang.clear_cache() is disabled because deleting the cache directory "
-        "is dangerous. If you accept the risk, remove it manually with "
-        f"`rm -rf '{cache_dir}'`."
-    )
-
-
-if env.TILELANG_CLEAR_CACHE.lower() in ("1", "true", "yes", "on"):
-    clear_cache()

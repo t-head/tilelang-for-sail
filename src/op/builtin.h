@@ -85,6 +85,14 @@ static constexpr const char *kDebugMergeSharedMemoryAllocations =
 // PrimFunc attribute: set by LowerTileOp to indicate TMA operations were
 // actually generated.  Read by OptimizeForTarget to pick the right pipeline.
 static constexpr const char *kHasTMA = "tl.has_tma";
+// PrimFunc attribute: Map<String, IntImm> from a shared buffer's data Var
+// name to the minimum base alignment (bytes) required by swizzle-sensitive
+// instructions that consume it (TMA bulk copy, wgmma/tcgen05 descriptors).
+// Keyed by name rather than Var so the attribute does not hold references
+// into the function body (which would perturb printing and SSA passes); a
+// name collision can only over-align, never under-align. Written by
+// LowerTileOp, consumed by MergeSharedMemoryAllocations.
+static constexpr const char *kSmemAlignmentMap = "tl.smem_alignment_map";
 static constexpr const char *kDisableSafeMemoryLegalize =
     "tl.disable_safe_memory_legalize";
 static constexpr const char *kDisableWarpSpecialized =
@@ -103,8 +111,6 @@ static constexpr const char *kDisableFastMath = "tl.disable_fast_math";
 static constexpr const char *kEnableFastMath = "tl.enable_fast_math";
 static constexpr const char *kPtxasRegisterUsageLevel =
     "tl.ptxas_register_usage_level";
-static constexpr const char *kEnablePTXASVerboseOutput =
-    "tl.enable_ptxas_verbose_output";
 static constexpr const char *kDisableVectorize256 = "tl.disable_vectorize_256";
 static constexpr const char *kEnableAsyncCopy = "tl.enable_async_copy";
 static constexpr const char *kDisableLdmatSwzl = "tl.disable_ldmat_swzl";
@@ -198,10 +204,10 @@ static constexpr const char *kDumpIRDir = "tl.dump_ir_path";
 /*!
  * \brief Get the type of the CUDA tensor map
  *
- * DataType cuTensorMapType()
+ * DataType CuTensorMapType()
  *
  */
-DataType cuTensorMapType();
+DataType CuTensorMapType();
 
 /*!
  * \brief TileLang intrinsic for carrying pointer access metadata in frontend.
@@ -239,6 +245,8 @@ TVM_DLL const Op &__tan();
 TVM_DLL const Op &__cos();
 // __sin(x) - fast sine
 TVM_DLL const Op &__sin();
+// fast_rcp(x) - approximate reciprocal
+TVM_DLL const Op &fast_rcp();
 // max_nan(x, y) - max with CUDA __hmax_nan semantics for fp16/bf16
 TVM_DLL const Op &max_nan();
 // min_nan(x, y) - min with CUDA __hmin_nan semantics for fp16/bf16
@@ -298,6 +306,14 @@ TVM_DLL const Op &create_tma_descriptor();
  *
  */
 TVM_DLL const Op &create_tma_im2col_descriptor();
+
+/*!
+ * \brief tvm intrinsic for prefetching a TMA descriptor on Hopper.
+ *
+ * prefetch_tma_descriptor(descriptor)
+ *
+ */
+TVM_DLL const Op &prefetch_tma_descriptor();
 
 /*!
  * \brief tvm intrinsics for loading data from global tensor descriptor to
@@ -546,12 +562,28 @@ TVM_DLL const Op &ptx_cp_async_barrier_noinc();
 TVM_DLL const Op &ptx_cp_async();
 
 /*!
+ * \brief TileLang intrinsic for zeroing shared memory with st.bulk.
+ *
+ * ptx_st_bulk_shared(smem_data, bytes, init_val)
+ *
+ */
+TVM_DLL const Op &ptx_st_bulk_shared();
+
+/*!
  * \brief Pack two b16 value into a b32 value
  *
  * int32 pack_b16(b16_value, b16_value)
  *
  */
 TVM_DLL const Op &pack_b16();
+
+/*!
+ * \brief Pack four b8 value into a b32 value
+ *
+ * int32 pack_b8x4(b8_value, b8_value, b8_value, b8_value)
+ *
+ */
+TVM_DLL const Op &pack_b8x4();
 
 /*!
  * \brief Issue a shared memory fence for async operations
@@ -1021,27 +1053,6 @@ TVM_DLL const Op &tvm_rdna_wmma();
 TVM_DLL const Op &tvm_rdna_wmma_store();
 
 /*!
- * \brief tilelang intrinsic for general matrix multiplication (GEMM).
- *
- *  This op wraps a templated `tl::gemm_*<...>` call into the generated device
- *  code. Python-side lowering backends that want to delegate to the C++
- *  template implementations in `src/tl_templates/<target>/gemm*.h` can emit a
- *  call to this builtin directly via
- *    T.call_intrin("handle", "tl.tl_gemm", op_instance_str, A_ptr, B_ptr,
- * C_ptr) where `op_instance_str` is the fully-instantiated `tl::gemm_ss<M, N,
- * K, ...>` template string.
- */
-TVM_DLL const Op &tl_gemm();
-
-/*!
- * \brief tilelang intrinsic for sparse matrix multiplication (GEMM with
- * sparsity).
- *
- *  This op is used to represent a sparse GEMM operation in tilelang.
- */
-TVM_DLL const Op &tl_gemm_sp();
-
-/*!
  * \brief tilelang intrinsic for shuffle elect.
  *
  *  This op is used to represent a shuffle elect operation in tilelang.
@@ -1157,6 +1168,14 @@ TVM_DLL const Op &atomic_load_elem_op();
 TVM_DLL const Op &atomic_store_elem_op();
 
 /*!
+ * \brief tilelang intrinsic for element-wise atomic bitwise-or.
+ *
+ *  This op is used to represent an element-wise atomic or operation in
+ * tilelang.
+ */
+TVM_DLL const Op &atomic_or_elem_op();
+
+/*!
  * \brief tilelang intrinsic for element-wise atomic maximum.
  *
  *  This op is used to represent an element-wise atomic max operation in
@@ -1258,6 +1277,17 @@ TVM_DLL const Op &__ldg();
 TVM_DLL const Op &__ffs();
 
 /*!
+ * \brief tilelang intrinsic for CUDA find-nth-set bit (__fns).
+ *
+ *  Returns the zero-based position of the offset-th set bit in mask starting
+ *  from base, or 0xFFFFFFFF when not found. CUDA codegen emits `__fns`.
+ *
+ *  Usage from TVMScript:
+ *    lane = T.__fns(mask, 0, k + 1)
+ */
+TVM_DLL const Op &__fns();
+
+/*!
  * \brief tilelang intrinsic for global memory load with 32-bit vector width.
  *
  *  This op loads 32 bits (4 bytes) from global memory using explicit
@@ -1289,6 +1319,27 @@ TVM_DLL const Op &ldg64();
  *    y[i] = T.ldg128(x, i)
  */
 TVM_DLL const Op &ldg128();
+
+/*!
+ * \brief tilelang intrinsic for shared memory load with 32-bit vector width.
+ *
+ * This op loads 32 bits (4 bytes) from shared memory and returns uint32.
+ */
+TVM_DLL const Op &lds32();
+
+/*!
+ * \brief tilelang intrinsic for shared memory load with 64-bit vector width.
+ *
+ * This op loads 64 bits (8 bytes) from shared memory and returns uint32x2.
+ */
+TVM_DLL const Op &lds64();
+
+/*!
+ * \brief tilelang intrinsic for shared memory load with 128-bit vector width.
+ *
+ * This op loads 128 bits (16 bytes) from shared memory and returns uint32x4.
+ */
+TVM_DLL const Op &lds128();
 
 /*!
  * \brief tilelang intrinsic for global memory load with 256-bit vector width.
@@ -1335,6 +1386,27 @@ TVM_DLL const Op &stg64();
  *    T.stg128(y, i, value)
  */
 TVM_DLL const Op &stg128();
+
+/*!
+ * \brief tilelang intrinsic for shared memory store with 32-bit vector width.
+ *
+ * This op stores a uint32 value to shared memory.
+ */
+TVM_DLL const Op &sts32();
+
+/*!
+ * \brief tilelang intrinsic for shared memory store with 64-bit vector width.
+ *
+ * This op stores a uint32x2 value to shared memory.
+ */
+TVM_DLL const Op &sts64();
+
+/*!
+ * \brief tilelang intrinsic for shared memory store with 128-bit vector width.
+ *
+ * This op stores a uint32x4 value to shared memory.
+ */
+TVM_DLL const Op &sts128();
 
 /*!
  * \brief tilelang intrinsic for global memory store with 256-bit vector width.
