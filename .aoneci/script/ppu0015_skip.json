@@ -1,397 +1,349 @@
 [
   {
-    "file_path": "./tilelang/testing/python/debug/test_device_assert.py",
-    "test_filter": "test_device_assert_no_trigger",
-    "extra_args": [],
-    "reason": "N/A"
-  },
-  {
-    "file_path": "./tilelang/testing/python/issue/test_tilelang_issue_830.py",
+    "file_path": "tilelang/testing/python/issue/test_tilelang_issue_830.py",
     "test_filter": "test_empty_kernel_lowering",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Lazy init issue"
   },
   {
-    "file_path": "./tilelang/testing/python/issue/test_tilelang_issue_830.py",
+    "file_path": "tilelang/testing/python/issue/test_tilelang_issue_830.py",
     "test_filter": "test_empty_kernel_with_binding_variants",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Lazy init issue"
   },
   {
-    "file_path": "./tilelang/testing/python/kernel/test_tilelang_kernel_gemm.py",
+    "file_path": "tilelang/testing/python/kernel/test_tilelang_kernel_gemm.py",
     "test_filter": "test_gemm_f64f64f64_nt",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported gemm layout"
   },
   {
-    "file_path": "./tilelang/testing/python/kernel/test_tilelang_kernel_gemm.py",
-    "test_filter": "test_gemm_f16f16f16_rs",
-    "extra_args": [],
-    "reason": "N/A"
-  },
-  {
-    "file_path": "./tilelang/testing/python/language/test_tilelang_language_async_copy_gemm_sm80.py",
+    "file_path": "tilelang/testing/python/language/test_tilelang_language_async_copy_gemm_sm80.py",
     "test_filter": "test_copy_and_async_copy_gemm_codegen_equivalent_sm80",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "async_copy introduced additional commit & wait"
   },
   {
-    "file_path": "./tilelang/testing/python/language/test_tilelang_language_atomic.py",
+    "file_path": "tilelang/testing/python/ppu/language/test_tilelang_language_async_copy_gemm_sm80.py",
+    "test_filter": "test_copy_and_async_copy_gemm_codegen_equivalent_sm80",
+    "extra_args": [],
+    "reason": "async_copy introduced additional commit & wait"
+  },
+  {
+    "file_path": "tilelang/testing/python/language/test_tilelang_language_atomic.py",
     "test_filter": "test_tma_atomic_add",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported tma"
   },
   {
-    "file_path": "./tilelang/testing/python/language/test_tilelang_language_get_warp_info.py",
+    "file_path": "tilelang/testing/python/language/test_tilelang_language_get_warp_info.py",
     "test_filter": "test_shuffle_elect_default",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported tl_shuffle_elect"
   },
   {
-    "file_path": "./tilelang/testing/python/language/test_tilelang_language_get_warp_info.py",
+    "file_path": "tilelang/testing/python/language/test_tilelang_language_get_warp_info.py",
     "test_filter": "test_shuffle_elect_block_leader",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported tl_shuffle_elect"
   },
   {
-    "file_path": "./tilelang/testing/python/runtime/test_tilelang_runtime_tma_validation.py",
+    "file_path": "tilelang/testing/python/runtime/test_tilelang_runtime_tma_validation.py",
     "test_filter": "test_tma_host_codegen_aligns_tvm_ffi_stack_alloca_for_descriptor",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported tma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_ss[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_ss[128-8-64-False-True-float16-float16-float32-128-8-32-0-128-int16]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_ss[64-128-128-True-True-int8-int8-int32-64-128-128-2-128-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_ss[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int16]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_ss[128-128-64-False-True-float8_e5m2-float8_e5m2-float32-128-128-64-2-128-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rs[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rs[128-8-64-False-True-float16-float16-float32-128-8-32-0-128-int16]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rs[64-128-128-True-True-int8-int8-int32-64-128-128-2-128-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rs[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int16]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rs[128-128-64-False-True-float8_e5m2-float8_e5m2-float32-128-128-64-2-128-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_sr[128-128-128-False-True-int8-int8-int32-128-128-128-2-128-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_sr[128-8-64-False-True-float16-float16-float32-128-8-32-0-128-int16]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_sr[64-128-128-True-True-int8-int8-int32-64-128-128-2-128-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_sr[128-128-128-False-True-int8-int8-int32-128-128-128-2-128-int16]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_sr[128-128-64-False-True-float8_e5m2-float8_e5m2-float32-128-128-64-2-128-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rr[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rr[128-8-64-False-True-int8-int8-int32-128-8-64-2-128-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rr[64-128-128-True-True-int8-int8-int32-64-128-128-2-128-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rr[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int16]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rr[128-128-64-False-True-float8_e5m2-float8_e5m2-float32-128-128-64-2-128-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_compress_dtype_combinations[float16-float16-float32-int16]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_compress_dtype_combinations[int8-int8-int32-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_compress_dtype_combinations[float16-float16-float32-int8]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_compress_dtype_combinations[bfloat16-bfloat16-float32-int8]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_compress_dtype_combinations[bfloat16-bfloat16-float32-int16]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_compress_dtype_combinations[int8-int8-int32-int8]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_compress_dtype_combinations[int8-int8-int32-int16]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_compress_dtype_combinations[float8_e5m2-float8_e5m2-float32-int8]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_compress_dtype_combinations[float8_e5m2-float8_e5m2-float32-int16]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_compress_dtype_combinations[float8_e5m2-float8_e5m2-float32-int32]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/transform/test_tilelang_transform_im2col_fallback.py",
+    "file_path": "tilelang/testing/python/transform/test_tilelang_transform_im2col_fallback.py",
     "test_filter": "test_im2col_uses_simt_fallback_before_hopper",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported tma"
   },
   {
-    "file_path": "./tilelang/testing/python/transform/test_tilelang_transform_im2col_fallback.py",
+    "file_path": "tilelang/testing/python/transform/test_tilelang_transform_im2col_fallback.py",
     "test_filter": "test_im2col_uses_tma_on_hopper",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported tma"
   },
   {
-    "file_path": "./tilelang/testing/python/transform/test_tilelang_transform_im2col_fallback.py",
+    "file_path": "tilelang/testing/python/transform/test_tilelang_transform_im2col_fallback.py",
     "test_filter": "test_c2d_im2col_alias_warns_and_uses_new_tileop",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported tma"
   },
   {
-    "file_path": "./tilelang/testing/python/utils/test_compress_utils.py",
+    "file_path": "tilelang/testing/python/utils/test_compress_utils.py",
     "test_filter": "test_compress[int8-int8]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/utils/test_compress_utils.py",
+    "file_path": "tilelang/testing/python/utils/test_compress_utils.py",
     "test_filter": "test_compress[int8-int16]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/utils/test_compress_utils.py",
+    "file_path": "tilelang/testing/python/utils/test_compress_utils.py",
     "test_filter": "test_compress[float16-int8]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/utils/test_compress_utils.py",
+    "file_path": "tilelang/testing/python/utils/test_compress_utils.py",
     "test_filter": "test_compress[float16-int16]",
     "extra_args": [],
-    "reason": "N/A"
+    "reason": "Unsupported sparse mma"
   },
   {
-    "file_path": "./tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
+    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
     "test_filter": "test_disk_cache_with_postproc[tvm_ffi]",
     "extra_args": [],
     "reason": "cuda_free is unsupported in this test case."
   },
   {
-    "file_path": "./tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
+    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
     "test_filter": "test_disk_cache_with_postproc[cython]",
     "extra_args": [],
     "reason": "cuda_free is unsupported in this test case."
   },
   {
-    "file_path": "./tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
+    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
     "test_filter": "test_disk_cache_with_postproc[nvrtc]",
     "extra_args": [],
     "reason": "cuda_free is unsupported in this test case."
   },
   {
-    "file_path": "./tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
+    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
     "test_filter": "test_cache_miss_detection[tvm_ffi]",
     "extra_args": [],
     "reason": "cuda_free is unsupported in this test case."
   },
   {
-    "file_path": "./tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
+    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
     "test_filter": "test_cache_miss_detection[cython]",
     "extra_args": [],
     "reason": "cuda_free is unsupported in this test case."
   },
   {
-    "file_path": "./tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
+    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
     "test_filter": "test_cache_miss_detection[nvrtc]",
     "extra_args": [],
     "reason": "cuda_free is unsupported in this test case."
   },
   {
-    "file_path": "./tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
+    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
     "test_filter": "test_cache_isolation_between_tests[tvm_ffi]",
     "extra_args": [],
     "reason": "cuda_free is unsupported in this test case."
   },
   {
-    "file_path": "./tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
+    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
     "test_filter": "test_cache_isolation_between_tests[cython]",
     "extra_args": [],
     "reason": "cuda_free is unsupported in this test case."
   },
   {
-    "file_path": "./tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
+    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
     "test_filter": "test_cache_isolation_between_tests[nvrtc]",
     "extra_args": [],
     "reason": "cuda_free is unsupported in this test case."
   },
   {
-    "file_path": "./tilelang/testing/python/jit/test_tilelang_jit_nvrtc.py",
+    "file_path": "tilelang/testing/python/jit/test_tilelang_jit_nvrtc.py",
     "test_filter": "test_gemm_jit_kernel",
     "extra_args": [],
     "reason": "cuda_free is unsupported in this test case."
   },
   {
-    "file_path": "./tilelang/testing/python/jit/test_tilelang_jit_nvrtc.py",
+    "file_path": "tilelang/testing/python/jit/test_tilelang_jit_nvrtc.py",
     "test_filter": "test_nvrtc_kernel_multi_stream",
     "extra_args": [],
     "reason": "cuda_free is unsupported in this test case."
   },
   {
-    "file_path": "./tilelang/testing/python/jit/test_tilelang_jit_nvrtc.py",
+    "file_path": "tilelang/testing/python/jit/test_tilelang_jit_nvrtc.py",
     "test_filter": "test_nvrtc_dynamic_shape",
-    "extra_args": [],
-    "reason": "cuda_free is unsupported in this test case."
-  },
-  {
-    "file_path": "./tilelang/testing/python/kernel/test_tilelang_kernel_gemm.py",
-    "test_filter": "test_gemm_f16f16f16_nn",
-    "extra_args": [],
-    "reason": "cuda_free is unsupported in this test case."
-  },
-  {
-    "file_path": "./tilelang/testing/python/kernel/test_tilelang_kernel_gemm.py",
-    "test_filter": "test_gemm_f16f16f16_tn",
-    "extra_args": [],
-    "reason": "cuda_free is unsupported in this test case."
-  },
-  {
-    "file_path": "./tilelang/testing/python/kernel/test_tilelang_kernel_gemm.py",
-    "test_filter": "test_gemm_f16f16f16_nt",
-    "extra_args": [],
-    "reason": "cuda_free is unsupported in this test case."
-  },
-  {
-    "file_path": "./tilelang/testing/python/kernel/test_tilelang_kernel_gemm.py",
-    "test_filter": "test_pad_aligned_f16f16f16_nn",
-    "extra_args": [],
-    "reason": "cuda_free is unsupported in this test case."
-  },
-  {
-    "file_path": "./tilelang/testing/python/kernel/test_tilelang_kernel_gemm.py",
-    "test_filter": "test_pad_f16f16f16_nn",
-    "extra_args": [],
-    "reason": "cuda_free is unsupported in this test case."
-  },
-  {
-    "file_path": "./tilelang/testing/python/kernel/test_tilelang_kernel_gemm.py",
-    "test_filter": "test_gemm_f16f16f16_sr",
-    "extra_args": [],
-    "reason": "cuda_free is unsupported in this test case."
-  },
-  {
-    "file_path": "./tilelang/testing/python/kernel/test_tilelang_kernel_gemm_batched.py",
-    "test_filter": "test_gemm_f16f16f16_nn",
     "extra_args": [],
     "reason": "cuda_free is unsupported in this test case."
   },
@@ -399,7 +351,7 @@
     "file_path": "tilelang/examples/gemm/test_example_gemm.py",
     "test_filter": "test_example_gemm_intrinsics",
     "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported TensorCoreIntrinEmitter"
   },
   {
     "file_path": "tilelang/examples/gemm_fp8/test_example_gemm_fp8.py",
@@ -417,83 +369,11 @@
     "file_path": "tilelang/examples/gemm_sp/test_example_gemm_sp.py",
     "test_filter": "test_example_gemm_sp",
     "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/examples/minference/test_vs_sparse_attn.py",
     "test_filter": "test_vs_sparse_attn",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
-    "test_filter": "test_disk_cache_with_postproc[tvm_ffi]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
-    "test_filter": "test_disk_cache_with_postproc[cython]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
-    "test_filter": "test_disk_cache_with_postproc[nvrtc]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
-    "test_filter": "test_cache_miss_detection[tvm_ffi]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
-    "test_filter": "test_cache_miss_detection[cython]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
-    "test_filter": "test_cache_miss_detection[nvrtc]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
-    "test_filter": "test_cache_isolation_between_tests[tvm_ffi]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
-    "test_filter": "test_cache_isolation_between_tests[cython]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/cache/test_tilelang_kernel_cache.py",
-    "test_filter": "test_cache_isolation_between_tests[nvrtc]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/debug/test_device_assert.py",
-    "test_filter": "test_device_assert_no_trigger",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/issue/test_tilelang_issue_830.py",
-    "test_filter": "test_empty_kernel_lowering",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/issue/test_tilelang_issue_830.py",
-    "test_filter": "test_empty_kernel_with_binding_variants",
     "extra_args": [],
     "reason": "CI FAILED"
   },
@@ -504,32 +384,8 @@
     "reason": "CI FAILED"
   },
   {
-    "file_path": "tilelang/testing/python/kernel/test_tilelang_kernel_gemm.py",
-    "test_filter": "test_gemm_f64f64f64_nt",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
     "file_path": "tilelang/testing/python/language/test_tilelang_cast_rounding.py",
     "test_filter": "test_cast_default_unchanged",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/language/test_tilelang_language_atomic.py",
-    "test_filter": "test_tma_atomic_add",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/language/test_tilelang_language_get_warp_info.py",
-    "test_filter": "test_shuffle_elect_default",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/language/test_tilelang_language_get_warp_info.py",
-    "test_filter": "test_shuffle_elect_block_leader",
     "extra_args": [],
     "reason": "CI FAILED"
   },
@@ -558,358 +414,130 @@
     "reason": "CI FAILED"
   },
   {
-    "file_path": "tilelang/testing/python/runtime/test_tilelang_runtime_tma_validation.py",
-    "test_filter": "test_tma_host_codegen_aligns_tvm_ffi_stack_alloca_for_descriptor",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_ss[128-128-32-False-True-float16-float16-float32-128-128-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_ss[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_ss[128-128-32-False-False-float16-float16-float32-128-128-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_ss[64-128-32-True-False-float16-float16-float32-64-128-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_ss[64-128-32-True-True-float16-float16-float32-64-128-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_ss[128-8-64-False-True-float16-float16-float32-128-8-32-0-128-int16]",
-    "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_ss[128-128-32-False-True-bfloat16-bfloat16-float32-128-128-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_ss[64-128-128-True-True-int8-int8-int32-64-128-128-2-128-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_ss[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int16]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_ss[128-128-64-False-True-float8_e5m2-float8_e5m2-float32-128-128-64-2-128-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rs[128-256-32-False-True-float16-float16-float32-128-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_rs[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rs[128-256-32-False-False-float16-float16-float32-128-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rs[64-256-32-True-False-float16-float16-float32-64-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rs[64-256-32-True-True-float16-float16-float32-64-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_rs[128-8-64-False-True-float16-float16-float32-128-8-32-0-128-int16]",
-    "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rs[128-256-32-False-True-bfloat16-bfloat16-float32-128-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_rs[64-128-128-True-True-int8-int8-int32-64-128-128-2-128-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_rs[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int16]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_rs[128-128-64-False-True-float8_e5m2-float8_e5m2-float32-128-128-64-2-128-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_sr[128-256-32-False-True-float16-float16-float32-128-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_sr[128-128-128-False-True-int8-int8-int32-128-128-128-2-128-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_sr[128-256-32-False-False-float16-float16-float32-128-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_sr[64-256-32-True-False-float16-float16-float32-64-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_sr[64-256-32-True-True-float16-float16-float32-64-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_sr[128-8-64-False-True-float16-float16-float32-128-8-32-0-128-int16]",
-    "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_sr[128-256-32-False-True-bfloat16-bfloat16-float32-128-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_sr[64-128-128-True-True-int8-int8-int32-64-128-128-2-128-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_sr[128-128-128-False-True-int8-int8-int32-128-128-128-2-128-int16]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_sr[128-128-64-False-True-float8_e5m2-float8_e5m2-float32-128-128-64-2-128-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rr[128-256-32-False-True-float16-float16-float32-128-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_rr[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rr[128-256-32-False-False-float16-float16-float32-128-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rr[64-256-32-True-False-float16-float16-float32-64-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rr[64-256-32-True-True-float16-float16-float32-64-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rr[128-256-32-False-True-bfloat16-bfloat16-float32-128-256-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
     "test_filter": "test_gemm_rr[128-8-32-False-True-float16-float16-float32-128-8-32-2-128-int16]",
     "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_rr[128-8-64-False-True-int8-int8-int32-128-8-64-2-128-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_rr[64-128-128-True-True-int8-int8-int32-64-128-128-2-128-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_rr[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int16]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_gemm_rr[128-128-64-False-True-float8_e5m2-float8_e5m2-float32-128-128-64-2-128-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_compress_dtype_combinations[float16-float16-float32-int16]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_compress_dtype_combinations[int8-int8-int32-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_compress_dtype_combinations[float16-float16-float32-int8]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_compress_dtype_combinations[bfloat16-bfloat16-float32-int8]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_compress_dtype_combinations[bfloat16-bfloat16-float32-int16]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_compress_dtype_combinations[int8-int8-int32-int8]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_compress_dtype_combinations[int8-int8-int32-int16]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_compress_dtype_combinations[float8_e5m2-float8_e5m2-float32-int8]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_compress_dtype_combinations[float8_e5m2-float8_e5m2-float32-int16]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
-    "test_filter": "test_compress_dtype_combinations[float8_e5m2-float8_e5m2-float32-int32]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/transform/test_tilelang_transform_im2col_fallback.py",
-    "test_filter": "test_im2col_uses_simt_fallback_before_hopper",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/transform/test_tilelang_transform_im2col_fallback.py",
-    "test_filter": "test_im2col_uses_tma_on_hopper",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/transform/test_tilelang_transform_im2col_fallback.py",
-    "test_filter": "test_c2d_im2col_alias_warns_and_uses_new_tileop",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/utils/test_compress_utils.py",
-    "test_filter": "test_compress[int8-int8]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/utils/test_compress_utils.py",
-    "test_filter": "test_compress[int8-int16]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/utils/test_compress_utils.py",
-    "test_filter": "test_compress[float16-int8]",
-    "extra_args": [],
-    "reason": "CI FAILED"
-  },
-  {
-    "file_path": "tilelang/testing/python/utils/test_compress_utils.py",
-    "test_filter": "test_compress[float16-int16]",
-    "extra_args": [],
-    "reason": "CI FAILED"
+    "reason": "Unsupported sparse mma"
   },
   {
     "file_path": "tilelang/testing/python/utils/test_compress_utils.py",
