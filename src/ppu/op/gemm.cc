@@ -51,7 +51,7 @@ ComputeDefaultWarpPartition(const GemmWarpPolicyNode &policy, int M, int N,
   ICHECK(N % k_n_per_warp == 0)
       << "N must be divisible by " << k_n_per_warp << ", but got " << N;
 
-  if (policy.isFullRow()) {
+  if (policy.IsFullRow()) {
     int best_m = 1;
     int best_n = 1;
     int max_m_warp = M / kMPerWarp;
@@ -70,7 +70,7 @@ ComputeDefaultWarpPartition(const GemmWarpPolicyNode &policy, int M, int N,
     }
     m_warp = best_m;
     n_warp = best_n;
-  } else if (policy.isFullCol()) {
+  } else if (policy.IsFullCol()) {
     int best_m = 1;
     int best_n = 1;
     int max_m_warp = M / kMPerWarp;
@@ -89,7 +89,7 @@ ComputeDefaultWarpPartition(const GemmWarpPolicyNode &policy, int M, int N,
     }
     m_warp = best_m;
     n_warp = best_n;
-  } else if (policy.isSquare()) {
+  } else if (policy.IsSquare()) {
     int max_m_warps = M / kMPerWarp;
     float ideal_ratio = N > 0 ? static_cast<float>(M) / N : 1.0f;
 
@@ -144,7 +144,7 @@ struct Gemm {
   static std::pair<int, int>
   ComputeWarpPartition(const GemmWarpPolicyNode &policy, int M, int N,
                        int block_size, Target target, String gemm_inst) {
-    int num_warps = block_size / TargetGetWarpSize(target);
+    int num_warps = block_size / TargetPPUGetWarpSize(target);
     // PPU MMA uses m16n16 tiles, so each warp needs at least 16 columns.
     constexpr int kNPerWarp = 16;
     return ComputeDefaultWarpPartition(policy, M, N, num_warps, kNPerWarp);
@@ -178,7 +178,6 @@ bool RegisterPpuGemm() {
       ppu::Gemm::SelectInst,
       ppu::Gemm::ComputeWarpPartition,
       ppu::Gemm::ReuseExistingSharedLayout,
-      ppu::Gemm::InstructionKind,
   });
   return true;
 }

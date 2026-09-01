@@ -17,7 +17,7 @@
 #include "transform/common/loop_fusion_utils.h"
 #include "transform/loop_partition.h"
 #include "transform/loop_vectorize.h"
-#include "transform/ptx_async_copy_injector.h"
+#include "cuda/transform/ptx_async_copy_injector.h"
 
 #include <tvm/tirx/analysis.h>
 #include <tvm/tirx/builtin.h>
@@ -238,7 +238,7 @@ Stmt Copy::LowerCPAsync(const CopyNode &op, const LowerArgs &T,
                         par_op->LoopLayoutRequiresPaddingGuard());
 
   auto inject_result =
-      InjectPTXAsyncCopy(lowered_loop, /*enable_auto_async_copy=*/true,
+      InjectPTXAsyncCopy(lowered_loop,
                          /*async_without_async_commit_wait=*/
                          no_implicit_commit_wait || GetIsAsyncCopy(op));
   Stmt cp_async_loop = inject_result.stmt;
@@ -332,10 +332,10 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &T,
   IterVar row_var = loop_vars[loop_vars.size() - 2];
   PrimExpr local_layout_thread_map =
       FloorMod(local_layout->ForwardThread(local_indices, std::nullopt), 32);
-  PrimExpr matrix_8x8_thread_map = makeGemmFragment8x8()->ForwardThread(
+  PrimExpr matrix_8x8_thread_map = MakeGemmFragment8x8()->ForwardThread(
       {FloorMod(row_var, 8), FloorMod(col_var, 8)}, std::nullopt);
   PrimExpr matrix_8x8_thread_map_trans =
-      makeGemmFragment8x8Transposed()->ForwardThread(
+      MakeGemmFragment8x8Transposed()->ForwardThread(
           {FloorMod(row_var, 8), FloorMod(col_var, 8)}, std::nullopt);
   PrimExpr local_indices_flattened =
       local_tensor.OffsetOf(local_indices_transformed).back();
@@ -424,6 +424,13 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &T,
         Substitute(for_node->body, {{thread_var, thread_var_with_offset}});
   }
   return for_node;
+}
+
+static void RequireAIUSmemAlignment(const LowerArgs &lower_args,
+                                    const Buffer &shared_tensor) {
+  if (!lower_args.require_smem_alignment)
+    return;
+  lower_args.require_smem_alignment(shared_tensor->data, 128);
 }
 
 Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &T,
@@ -570,13 +577,15 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &T,
   int swizzle = -1;
   SwizzleMode swizzle_mode =
       DetectSwizzleMode(shared_layout, shared_tensor_unmapped);
-  if (swizzle_mode == SwizzleMode::kHalf) {
+  if (swizzle_mode == SwizzleMode::Swizzle64B()) {
     swizzle = 1;
-  } else if (swizzle_mode == SwizzleMode::kFull) {
+  } else if (swizzle_mode == SwizzleMode::Swizzle128B()) {
     swizzle = 0;
   } else {
     return fallback_to_normal("shared layout is not 64B/128B swizzled");
   }
+
+  RequireAIUSmemAlignment(T, shared_tensor_unmapped);
 
   auto inner_box_dim = as_const_int(smem_box[0]);
   auto outer_box_dim = as_const_int(smem_box[cube_layout_pos[1]]);
@@ -591,9 +600,9 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &T,
   int thread_extent_value = static_cast<int>(*thread_extent);
 
   int instruction_dim = inner_box_dim_value;
-  if (swizzle_mode == SwizzleMode::kHalf) {
+  if (swizzle_mode == SwizzleMode::Swizzle64B()) {
     instruction_dim = AiuElementsForBytes(64, shared_tensor->dtype);
-  } else if (swizzle_mode == SwizzleMode::kFull) {
+  } else if (swizzle_mode == SwizzleMode::Swizzle128B()) {
     instruction_dim = AiuElementsForBytes(128, shared_tensor->dtype);
   }
   if (instruction_dim > 256) {
@@ -608,7 +617,7 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &T,
 
   int64_t inner_box_bytes =
       AiuBytesFromElements(instruction_dim, shared_tensor->dtype);
-  int max_swizzle_bytes = swizzle_mode == SwizzleMode::kHalf ? 64 : 128;
+  int max_swizzle_bytes = swizzle_mode == SwizzleMode::Swizzle64B() ? 64 : 128;
   if (inner_box_bytes > max_swizzle_bytes) {
     return fallback_to_normal("AIU inner box exceeds swizzle byte width");
   }

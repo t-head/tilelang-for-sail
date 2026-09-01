@@ -49,7 +49,7 @@ ComputeDefaultWarpPartition(const GemmSPWarpPolicyNode &policy, int M, int N,
   ICHECK(N % k_n_per_warp == 0)
       << "N must be divisible by " << k_n_per_warp << ", but got " << N;
 
-  if (policy.isFullRow()) {
+  if (policy.IsFullRow()) {
     m_warp = num_warps;
     n_warp = 1;
     if (M % (m_warp * kMPerWarp) != 0) {
@@ -59,7 +59,7 @@ ComputeDefaultWarpPartition(const GemmSPWarpPolicyNode &policy, int M, int N,
       if (n_warp == 0)
         n_warp = 1;
     }
-  } else if (policy.isFullCol()) {
+  } else if (policy.IsFullCol()) {
     m_warp = 1;
     n_warp = num_warps;
     if (N % (n_warp * k_n_per_warp) != 0) {
@@ -69,7 +69,7 @@ ComputeDefaultWarpPartition(const GemmSPWarpPolicyNode &policy, int M, int N,
       if (m_warp == 0)
         m_warp = 1;
     }
-  } else if (policy.isSquare()) {
+  } else if (policy.IsSquare()) {
     int max_m_warps = M / kMPerWarp;
     float ideal_ratio = N > 0 ? static_cast<float>(M) / N : 1.0f;
 
@@ -125,7 +125,7 @@ struct GemmSP {
   static std::pair<int, int>
   ComputeWarpPartition(const GemmSPWarpPolicyNode &policy, int M, int N,
                        int block_size, Target target, String gemm_inst) {
-    int num_warps = block_size / TargetGetWarpSize(target);
+    int num_warps = block_size / TargetPPUGetWarpSize(target);
     // PPU only targets ppu0010/ppu0015, so the warp partition uses the ppu0010+ rule.
     constexpr int kNPerWarp = 8;
     return ComputeDefaultWarpPartition(policy, M, N, num_warps, kNPerWarp);
@@ -156,7 +156,6 @@ bool RegisterPpuGemmSP() {
       ppu::GemmSP::SelectInst,
       ppu::GemmSP::ComputeWarpPartition,
       ppu::GemmSP::ReuseExistingSharedLayout,
-      ppu::GemmSP::InstructionKind,
   });
   return true;
 }

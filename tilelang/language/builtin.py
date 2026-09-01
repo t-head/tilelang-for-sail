@@ -8,13 +8,10 @@ from tilelang import tvm as tvm
 from tilelang.language import ptx_arrive_barrier, evaluate
 from tilelang.language.eager.builder import macro
 from tilelang.language.kernel import get_thread_bindings, get_block_extents
-from tilelang.utils.target import check_hip_availability
 from tvm import DataType, tirx
 from tvm.runtime import convert
 from tvm.tirx import PrimExpr, Var, Call, BufferLoad, BufferRegion
 from tilelang.utils.language import retrieve_ptr, get_buffer_region_from_load, retrieve_buffer_and_offset
-
-_IS_HIP_AVAILABLE = check_hip_availability()
 
 
 def _normalize_index_arg(value: int | PrimExpr | None) -> PrimExpr | None:
@@ -88,6 +85,19 @@ def __ffs(value: int | PrimExpr) -> PrimExpr:
     """
     value = tirx.convert(value)
     return tirx.call_intrin("int32", tirx.op.Op.get("tl.__ffs"), value)
+
+
+def __fns(mask: int | PrimExpr, base: int | PrimExpr, offset: int | PrimExpr) -> PrimExpr:
+    """Find the position of the nth set bit in a bitmask.
+
+    Lowers to CUDA ``__fns``. Returns a zero-based bit position (0-31), or
+    ``0xFFFFFFFF`` when not found. ``mask`` is a 32-bit bitmask; ``base`` is
+    the starting bit (0-31); ``offset`` selects the nth set bit (1-based).
+    """
+    mask = tirx.convert(mask)
+    base = tirx.convert(base)
+    offset = tirx.convert(offset)
+    return tirx.call_intrin("uint32", tirx.op.Op.get("tl.__fns"), mask, base, offset)
 
 
 def access_ptr(
@@ -692,8 +702,8 @@ def shuffle_elect(thread_extent: int) -> PrimExpr:
     --------------------
     Lowered to the CUDA helper `tl::tl_shuffle_elect<thread_extent>()` defined in
     `src/tl_templates/cuda/intrin.h`, which relies on
-    `cutlass::canonical_warp_idx_sync()` and `cute::elect_one_sync()` (or
-    `__shfl_sync`) to pick one lane per group.
+    `cutlass::canonical_warp_idx()` and `cute::elect_one_sync()`
+    to pick one lane per group.
     """
     return tirx.call_intrin("bool", tirx.op.Op.get("tl.tl_shuffle_elect"), thread_extent)
 
@@ -1580,6 +1590,30 @@ def ldg128(src: BufferLikeType, pred: PrimExpr = None) -> PrimExpr:
         return tirx.call_intrin("uint32x4", tirx.op.Op.get("tl.ldg128"), ptr, pred)
 
 
+def lds32(src: BufferLikeType) -> PrimExpr:
+    """Load 32 bits (4 bytes) from shared memory and return a uint32."""
+    if not isinstance(src, BufferLikeTypeTuple):
+        raise TypeError(f"T.lds32 expects Buffer, BufferRegion, or BufferLoad. Got {type(src)}: {src}")
+    ptr = retrieve_ptr(src, access_type="r")
+    return tirx.call_intrin("uint32", tirx.op.Op.get("tl.lds32"), ptr)
+
+
+def lds64(src: BufferLikeType) -> PrimExpr:
+    """Load 64 bits (8 bytes) from shared memory and return a uint32x2."""
+    if not isinstance(src, BufferLikeTypeTuple):
+        raise TypeError(f"T.lds64 expects Buffer, BufferRegion, or BufferLoad. Got {type(src)}: {src}")
+    ptr = retrieve_ptr(src, access_type="r")
+    return tirx.call_intrin("uint32x2", tirx.op.Op.get("tl.lds64"), ptr)
+
+
+def lds128(src: BufferLikeType) -> PrimExpr:
+    """Load 128 bits (16 bytes) from shared memory and return a uint32x4."""
+    if not isinstance(src, BufferLikeTypeTuple):
+        raise TypeError(f"T.lds128 expects Buffer, BufferRegion, or BufferLoad. Got {type(src)}: {src}")
+    ptr = retrieve_ptr(src, access_type="r")
+    return tirx.call_intrin("uint32x4", tirx.op.Op.get("tl.lds128"), ptr)
+
+
 def ldg256(src: BufferLikeType, pred: PrimExpr = None) -> PrimExpr:
     """Load 256 bits (32 bytes) from global memory using explicit PTX instructions.
 
@@ -1673,6 +1707,30 @@ def stg128(dst: BufferLikeType, value: PrimExpr, pred: PrimExpr = None) -> None:
         return tirx.call_intrin("handle", tirx.op.Op.get("tl.stg128"), ptr, value)
     else:
         return tirx.call_intrin("handle", tirx.op.Op.get("tl.stg128"), ptr, value, pred)
+
+
+def sts32(dst: BufferLikeType, value: PrimExpr) -> None:
+    """Store a uint32 value to shared memory as 32 bits (4 bytes)."""
+    if not isinstance(dst, BufferLikeTypeTuple):
+        raise TypeError(f"T.sts32 expects Buffer, BufferRegion, or BufferLoad. Got {type(dst)}: {dst}")
+    ptr = retrieve_ptr(dst, access_type="w")
+    return tirx.call_intrin("handle", tirx.op.Op.get("tl.sts32"), ptr, value)
+
+
+def sts64(dst: BufferLikeType, value: PrimExpr) -> None:
+    """Store a uint32x2 value to shared memory as 64 bits (8 bytes)."""
+    if not isinstance(dst, BufferLikeTypeTuple):
+        raise TypeError(f"T.sts64 expects Buffer, BufferRegion, or BufferLoad. Got {type(dst)}: {dst}")
+    ptr = retrieve_ptr(dst, access_type="w")
+    return tirx.call_intrin("handle", tirx.op.Op.get("tl.sts64"), ptr, value)
+
+
+def sts128(dst: BufferLikeType, value: PrimExpr) -> None:
+    """Store a uint32x4 value to shared memory as 128 bits (16 bytes)."""
+    if not isinstance(dst, BufferLikeTypeTuple):
+        raise TypeError(f"T.sts128 expects Buffer, BufferRegion, or BufferLoad. Got {type(dst)}: {dst}")
+    ptr = retrieve_ptr(dst, access_type="w")
+    return tirx.call_intrin("handle", tirx.op.Op.get("tl.sts128"), ptr, value)
 
 
 def stg256(dst: BufferLikeType, value: PrimExpr, pred: PrimExpr = None) -> None:

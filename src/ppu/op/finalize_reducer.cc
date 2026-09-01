@@ -17,7 +17,7 @@ using namespace tirx;
 namespace ppu {
 
 struct FinalizeReducer : backend::FinalizeReducerLowerer<FinalizeReducer> {
-  static int WarpSize(Target target) { return TargetGetWarpSize(target); }
+  static int WarpSize(Target target) { return TargetPPUGetWarpSize(target); }
 
   static std::string MakeBatchAllReduce(std::string reducer,
                                         int reducing_threads, int scale,

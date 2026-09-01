@@ -29,6 +29,7 @@ namespace tvm {
 namespace tl {
 
 using namespace tirx;
+using namespace ffi;
 
 /*!
  * \brief Extract the dst buffer VarNode from an aiu_load call.

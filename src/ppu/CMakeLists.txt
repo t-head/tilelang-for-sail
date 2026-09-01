@@ -31,6 +31,7 @@ file(GLOB TILE_LANG_PPU_TRANSFORM_SRCS
 # PPU: register the standalone "ppu" target kind, codegen, op lowering, and transform passes.
 list(APPEND TILE_LANG_SRCS
   "${CMAKE_CURRENT_SOURCE_DIR}/src/ppu/target/target_ppu.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/ppu/target_utils.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/ppu/codegen/codegen_ppu.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/ppu/codegen/intrin_rule_ppu.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/ppu/codegen/tix.cc"

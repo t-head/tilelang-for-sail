@@ -21,7 +21,7 @@ Layout makeGemmABLayoutPPU(int mat_stride, int mat_continuous, int continuity,
                            bool is_gemm_rs = false);
 
 // PPU: Buffer-based wrapper around makeGemmABLayoutPPU.
-Layout makePPUSwizzledLayout(const Buffer &buffer, bool k_inner = true,
+Layout makePPUSwizzledLayout(const tirx::Buffer &buffer, bool k_inner = true,
                              bool allow_pad = true,
                              bool is_gemm_rs = false);
 

@@ -25,7 +25,7 @@
 #include "../../op/operator.h"
 #include "../../op/utils.h"
 #include "backend/common/target_utils.h"
-#include "../../transform/ptx_async_copy_injector.h"
+#include "cuda/transform/ptx_async_copy_injector.h"
 
 #include "arith/ir_mutator_with_analyzer.h"
 #include "../../transform/common/mbarrier.h"
@@ -1157,23 +1157,28 @@ private:
       barrier_arrive_updates_[data_var] = n;
     };
 
-    auto lowered = tile_op->Lower(
-        LowerArgs{target_, thread_bounds, thread_var_->var, callback,
-                  mbarrier_callback, barrier_arrive_callback, layout_map_,
-                  buffer_remap_, bind_var_to_expr,
-                  loop_mbar_phase_stack_.empty()
-                      ? PrimExpr(IntImm(DataType::Int(32), 0))
-                      : loop_mbar_phase_stack_.back(),
-                  &mbarrier_buffer_, cluster_size_},
-        analyzer_);
+    LowerArgs lower_args;
+    lower_args.target = target_;
+    lower_args.thread_bounds = thread_bounds;
+    lower_args.thread_var = thread_var_->var;
+    lower_args.layout_map = layout_map_;
+    lower_args.buffer_remap = buffer_remap_;
+    lower_args.bind_var_to_expr = bind_var_to_expr;
+    lower_args.mbar_phase_expr = loop_mbar_phase_stack_.empty()
+                                     ? PrimExpr(IntImm(DataType::Int(32), 0))
+                                     : loop_mbar_phase_stack_.back();
+    lower_args.mbarrier_buffer = &mbarrier_buffer_;
+    lower_args.cluster_size = cluster_size_;
+    lower_args.add_workspace = callback;
+    lower_args.alloc_mbarrier = mbarrier_callback;
+    lower_args.update_barrier_arrive = barrier_arrive_callback;
+
+    auto lowered = tile_op->Lower(lower_args, analyzer_);
 
     return IRMutatorWithAnalyzer::VisitStmt(lowered);
   }
 
   Stmt VisitStmt_(const AttrStmtNode *op) final {
-    if (op->attr_key == kPipelineContextNumStages) {
-      return VisitStmt(op->body);
-    }
     if (op->attr_key == tirx::attr::thread_extent) {
       IterVar iv = Downcast<IterVar>(op->node);
       ICHECK_NE(iv->thread_tag.length(), 0U);
@@ -1462,10 +1467,11 @@ private:
       bool should_enable_async_copy =
           parallel_prefer_async ||
           (enable_auto_async_copy && parallel_async_without_async_commit_wait);
-      auto inject_result =
-          InjectPTXAsyncCopy(lowered, should_enable_async_copy,
-                             parallel_async_without_async_commit_wait);
-      lowered = inject_result.stmt;
+      if (should_enable_async_copy) {
+        auto inject_result = InjectPTXAsyncCopy(
+            lowered, parallel_async_without_async_commit_wait);
+        lowered = inject_result.stmt;
+      }
     }
     return lowered;
   }

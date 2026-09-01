@@ -109,7 +109,7 @@ PreferredCopyInstruction GetPreferredInstruction(const CopyNode &op) {
 }
 
 bool CheckLDSMCopy(const CopyNode &op, Target target) {
-  return TargetHasLdmatrix(target) && IsSharedBuffer(op.src) &&
+  return TargetPPUHasLdmatrix(target) && IsSharedBuffer(op.src) &&
          IsFragmentBuffer(op.dst);
 }
 
