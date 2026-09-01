@@ -9,7 +9,7 @@ import itertools
 import tilelang
 
 
-def _with_aiu_lower_tuning(configs):
+def with_aiu_lower_tuning(configs):
     """Expand each config with TL_DISABLE_AIU_LOWER True/False variants.
 
     Only applied on PPU 1.5; on PPU 1.0 or non-PPU targets the original
@@ -49,10 +49,10 @@ def get_deepgemm_configs():
         threads=[128, 256],
         enable_rasteration=[True, False],
     )
-    return [
+    return with_aiu_lower_tuning([
         {k: v for k, v in zip(iter_params, values)}
         for values in itertools.product(*iter_params.values())
-    ]
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +72,7 @@ def get_mla_configs():
         config = {k: v for k, v in zip(iter_params, values)}
         # block_H should not exceed kv_group_num, but we filter at runtime
         configs.append(config)
-    return configs
+    return with_aiu_lower_tuning(configs)
 
 
 # ---------------------------------------------------------------------------
@@ -90,10 +90,10 @@ def get_mla_paged_configs():
         num_stages=[1, 2, 3],
         threads=[128, 256],
     )
-    return [
+    return with_aiu_lower_tuning([
         {k: v for k, v in zip(iter_params, values)}
         for values in itertools.product(*iter_params.values())
-    ]
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -103,13 +103,13 @@ def get_mla_paged_configs():
 def get_nsa_configs():
     """Tunable configs for NSA fwd kernel."""
     iter_params = dict(
-        num_stages=[0, 1, 2],
+        num_stages=[1, 2, 3],
         threads=[32, 64, 128],
     )
-    return [
+    return with_aiu_lower_tuning([
         {k: v for k, v in zip(iter_params, values)}
         for values in itertools.product(*iter_params.values())
-    ]
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -123,10 +123,10 @@ def get_mhc_pre_configs():
         hidden_block=[128, 256, 512],
         num_stages=[1, 2, 3],
     )
-    return [
+    return with_aiu_lower_tuning([
         {k: v for k, v in zip(iter_params, values)}
         for values in itertools.product(*iter_params.values())
-    ]
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -136,13 +136,13 @@ def get_mhc_pre_configs():
 def get_mhc_big_fuse_configs():
     """Tunable configs for mHC pre big_fuse kernel."""
     iter_params = dict(
-        threads=[64, 96, 128, 160],
+        threads=[64, 96],
         num_stages=[1, 2, 3],
     )
-    return [
+    return with_aiu_lower_tuning([
         {k: v for k, v in zip(iter_params, values)}
         for values in itertools.product(*iter_params.values())
-    ]
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +155,10 @@ def get_mhc_post_configs():
         n_thr=[64, 128, 256],
         h_blk=[256, 512, 1024],
     )
-    return [
+    return with_aiu_lower_tuning([
         {k: v for k, v in zip(iter_params, values)}
         for values in itertools.product(*iter_params.values())
-    ]
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -168,13 +168,13 @@ def get_mhc_post_configs():
 def get_nsa_decode_configs():
     """Tunable configs for NSA decode kernel."""
     iter_params = dict(
-        num_stages=[0, 1, 2],
-        threads=[32, 64, 128],
+        num_stages=[1, 2, 3],
+        threads=[128, 256],
     )
-    return [
+    return with_aiu_lower_tuning([
         {k: v for k, v in zip(iter_params, values)}
         for values in itertools.product(*iter_params.values())
-    ]
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -184,11 +184,11 @@ def get_nsa_decode_configs():
 def get_v32_configs():
     """Tunable configs for DeepSeek V32 sparse MLA fwd kernel."""
     iter_params = dict(
-        block_I=[32, 64, 128],
+        block_I=[64, 128],
         num_stages=[1, 2, 3],
         threads=[128, 256],
     )
-    return [
+    return with_aiu_lower_tuning([
         {k: v for k, v in zip(iter_params, values)}
         for values in itertools.product(*iter_params.values())
-    ]
+    ])

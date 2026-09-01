@@ -4,7 +4,7 @@ import argparse
 import tilelang
 
 
-def _with_aiu_lower_tuning(configs):
+def with_aiu_lower_tuning(configs):
     """Expand each config with TL_DISABLE_AIU_LOWER True/False variants.
 
     Only applied on PPU 1.5; on PPU 1.0 or non-PPU targets the original
@@ -73,4 +73,4 @@ def get_configs(user_config=None):
                         "num_stages": num_stages,
                         "threads": threads,
                     })
-    return valid_configs
+    return with_aiu_lower_tuning(valid_configs)

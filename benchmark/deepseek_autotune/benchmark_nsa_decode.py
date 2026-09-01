@@ -74,7 +74,7 @@ def nsa_decode(
     BK = BV = block_T
 
     @T.prim_func
-    def native_sparse_attention_decode(
+    def main(
         Q: T.Tensor(q_shape, dtype),
         K: T.Tensor(kv_shape, dtype),
         V: T.Tensor(kv_shape, dtype),
@@ -138,7 +138,7 @@ def nsa_decode(
             T.copy(acc_o, O_shared)
             T.copy(O_shared, Output[i_b, 0, i_h * G:(i_h + 1) * G, i_v * BV:(i_v + 1) * BV])
 
-    return native_sparse_attention_decode
+    return main
 
 
 def run_profile(batch, heads, seq_len, dim, selected_blocks, block_size,
