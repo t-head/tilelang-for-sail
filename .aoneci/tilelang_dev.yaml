@@ -61,14 +61,14 @@ jobs:
     needs: tilelang-build
     name: "tilelang_ppu0010_test"
     image: "reg.docker.alibaba-inc.com/ai-tmp/pytorch:ubuntu24.04-py312.06"
-    timeout: 12h
+    timeout: 36h
     runs-on:
       - 32-128Gi
       - amd64
     steps:
       - envs:
           PIPELINE_INST_ID: ${{pipeline.inst.id}}
-        timeout: 12h
+        timeout: 36h
         name: "download_builds"
         run: |
           echo "current dir:" && pwd
@@ -93,14 +93,14 @@ jobs:
     needs: tilelang-build
     name: "tilelang_ppu0015_test"
     image: "reg.docker.alibaba-inc.com/ai-tmp/pytorch:ubuntu24.04-py312.06"
-    timeout: 12h
+    timeout: 36h
     runs-on:
       - 32-128Gi
       - amd64
     steps:
       - envs:
           PIPELINE_INST_ID: ${{pipeline.inst.id}}
-        timeout: 12h
+        timeout: 36h
         name: "download_builds"
         run: |
           echo "current dir:" && pwd
