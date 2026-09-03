@@ -11,6 +11,7 @@
 #include <tvm/s_tir/stmt.h>
 #include <tvm/tirx/index_map.h>
 #include <tvm/tirx/op.h>
+#include <tvm/tirx/stmt_functor.h>
 
 #include <cmath>
 #include <cstdint>
@@ -20,7 +21,6 @@
 #include <vector>
 
 #include "arith/pattern_match.h"
-#include "backend/common/target_utils.h"
 #include "op/builtin.h"
 #include "tix.h"
 #include "transform/common/attr.h"
@@ -62,19 +62,22 @@ std::optional<DataType> GetAccessPtrElementType(const PrimExpr &expr) {
 }
 
 int GetTileLangCPAsyncTransferBytes(const CallNode *op) {
-  ICHECK(op->args.size() == 3 || op->args.size() == 4)
-      << "tl::tix_cp_async expects 3 or 4 arguments (dst_access_ptr, "
+  auto call = Downcast<Call>(GetRef<PrimExpr>(op));
+  ICHECK(call->args.size() == 3 || call->args.size() == 4)
+      << call
+      << " expects 3 or 4 arguments (dst_access_ptr, "
          "src_access_ptr, num_elems, [predicate])";
-  const auto *num_elems_imm = op->args[2].as<IntImmNode>();
-  ICHECK(num_elems_imm) << "tl::tix_cp_async num_elems must be IntImm, but got "
-                        << op->args[2];
+  const auto *num_elems_imm = call->args[2].as<IntImmNode>();
+  ICHECK(num_elems_imm) << call << " num_elems must be IntImm, but got "
+                        << call->args[2];
   int64_t num_elems = num_elems_imm->value;
-  ICHECK_GT(num_elems, 0);
+  ICHECK_GT(num_elems, 0) << call << " num_elems must be positive";
 
-  auto dst_elem_type = GetAccessPtrElementType(op->args[0]);
-  auto src_elem_type = GetAccessPtrElementType(op->args[1]);
+  auto dst_elem_type = GetAccessPtrElementType(call->args[0]);
+  auto src_elem_type = GetAccessPtrElementType(call->args[1]);
   ICHECK(dst_elem_type.has_value() && src_elem_type.has_value())
-      << "tl::tix_cp_async expects address_of, tl.access_ptr, or "
+      << call
+      << " expects address_of, tl.access_ptr, or "
          "tvm_access_ptr operands";
 
   int64_t dst_total_bits =
@@ -82,16 +85,15 @@ int GetTileLangCPAsyncTransferBytes(const CallNode *op) {
   int64_t src_total_bits =
       num_elems * src_elem_type.value().bits() * src_elem_type.value().lanes();
   ICHECK_EQ(dst_total_bits, src_total_bits)
-      << "tl::tix_cp_async requires src/dst transfer widths to match, but got "
+      << call << " requires src/dst transfer widths to match, but got "
       << dst_total_bits << " vs " << src_total_bits << " bits";
   ICHECK_EQ(dst_total_bits % 8, 0)
-      << "tl::tix_cp_async requires byte-aligned transfers, but got "
-      << dst_total_bits << " bits";
+      << call << " requires byte-aligned transfers, but got " << dst_total_bits
+      << " bits";
 
   int64_t total_bytes = dst_total_bits / 8;
   ICHECK(IsValidCPAsyncTransferBytes(total_bytes))
-      << "tl::tix_cp_async requires a final TIX byte width in {4, 8, 16}, but "
-         "got "
+      << call << " requires a final TIX byte width in {4, 8, 16}, but got "
       << total_bytes;
   return static_cast<int>(total_bytes);
 }
@@ -107,8 +109,7 @@ bool CanEmitPackedX2Math(DataType t) {
   }
 
   if (t.is_float() && t.bits() == 32) {
-    Target cur_target = Target::Current(/*allow_not_defined=*/true);
-    return cur_target.defined() && tl::TargetHasSMVersionGE(cur_target, 100);
+    return true;
   }
 
   return false;
@@ -629,6 +630,15 @@ std::string CodeGenTileLangPPU::Finish() {
   if (need_mma_sp_instruction_h_) {
     decl_stream << "#include <tl_templates/ppu/instruction/mma_sp.h>\n";
   }
+  if (need_intrin_h_) {
+    decl_stream << "#include <tl_templates/ppu/intrin.h>\n";
+  }
+  if (need_barrier_h_) {
+    decl_stream << "#include <tl_templates/ppu/barrier.h>\n";
+  }
+  if (need_math_h_) {
+    decl_stream << "#include <tl_templates/ppu/math.h>\n";
+  }
   if (enable_fp8_) {
     decl_stream << "#include <tl_templates/ppu/hggc_fp8.h>\n";
   }
@@ -651,10 +661,6 @@ std::string CodeGenTileLangPPU::Finish() {
     decl_stream << "#include <acrand_kernel.h>\n";
   }
 
-  decl_stream << "#include <tl_templates/ppu/gemm.h>\n";
-  if (enable_sparse_gemm_) {
-    decl_stream << "#include <tl_templates/ppu/gemm_sp.h>\n";
-  }
   decl_stream << "#include <tl_templates/ppu/copy.h>\n";
   decl_stream << "#include <tl_templates/ppu/reduce.h>\n";
   decl_stream << "#include <tl_templates/ppu/scan.h>\n";
@@ -1513,6 +1519,47 @@ void CodeGenTileLangPPU::VisitExpr_(const CastNode *op, std::ostream &os) {
   };
   std::string cast_round = get_str_anno("round");
 
+  // Scalar fp8 <-> half via the __tl_cvt helpers; the default cast detours
+  // through fp32.
+  if (from_ty.is_scalar() && cast_round.empty() && target_ty.is_float16() &&
+      IsHggcVectorizableFP8(from_ty)) {
+    bool is_e4m3 = from_ty.is_float8_e4m3() || from_ty.is_float8_e4m3fn();
+    std::string interp = is_e4m3 ? "__HG_E4M3" : "__HG_E5M2";
+    os << "half_t(__tl_cvt_fp8_to_half((" << PrintExpr(op->value) << ").raw(), "
+       << interp << "))";
+    return;
+  }
+
+  if (from_ty.is_scalar() && cast_round.empty() && from_ty.is_float16() &&
+      IsHggcVectorizableFP8(target_ty)) {
+    bool is_e4m3 = target_ty.is_float8_e4m3() || target_ty.is_float8_e4m3fn();
+    std::string interp = is_e4m3 ? "__HG_E4M3" : "__HG_E5M2";
+    this->PrintType(target_ty, os);
+    os << "::bitcast(__tl_cvt_half_to_fp8((" << PrintExpr(op->value)
+       << ").to_half(), " << interp << "))";
+    return;
+  }
+
+  // Scalar fp8 <-> bfloat16: same idea, via the HG helpers.
+  if (from_ty.is_scalar() && cast_round.empty() && target_ty.is_bfloat16() &&
+      IsHggcVectorizableFP8(from_ty)) {
+    bool is_e4m3 = from_ty.is_float8_e4m3() || from_ty.is_float8_e4m3fn();
+    std::string interp = is_e4m3 ? "__HG_E4M3" : "__HG_E5M2";
+    os << "bfloat16_t(__tl_cvt_fp8_to_bfloat16((" << PrintExpr(op->value)
+       << ").raw(), " << interp << "))";
+    return;
+  }
+
+  if (from_ty.is_scalar() && cast_round.empty() && from_ty.is_bfloat16() &&
+      IsHggcVectorizableFP8(target_ty)) {
+    bool is_e4m3 = target_ty.is_float8_e4m3() || target_ty.is_float8_e4m3fn();
+    std::string interp = is_e4m3 ? "__HG_E4M3" : "__HG_E5M2";
+    this->PrintType(target_ty, os);
+    os << "::bitcast(__tl_cvt_bfloat16_to_fp8((" << PrintExpr(op->value)
+       << ").to_ppu_bfloat16(), " << interp << "))";
+    return;
+  }
+
   // Emit simple C-style type conversion for scalar casts without custom
   // rounding.
   if (from_ty.is_scalar() && cast_round.empty())
@@ -1554,7 +1601,7 @@ void CodeGenTileLangPPU::VisitExpr_(const CastNode *op, std::ostream &os) {
   // To add a new type conversion, you should do the following things:
   // 1. Add the new conversion function in tl_templates. (__tl_cvt_xx)
   // 2. Add a new if statement like the one below.
-  // 3. In src/backend/common/target_utils.cc, allow this vectorizable cast.
+  // 3. In src/ppu/target_utils.cc, allow this vectorizable cast.
 
   // Handle conversion from float16 to float32
   if (from_ty.is_float16() && target_ty.is_float() && target_ty.bits() == 32) {
@@ -1615,6 +1662,35 @@ void CodeGenTileLangPPU::VisitExpr_(const CastNode *op, std::ostream &os) {
     }
   }
 
+  // Handle conversion from float16 to float8 (E4M3/E5M2)
+  if (from_ty.is_float16() && IsHggcVectorizableFP8(target_ty)) {
+    bool target_type_is_e4m3 =
+        target_ty.is_float8_e4m3() || target_ty.is_float8_e4m3fn();
+    std::string type_suffix = target_type_is_e4m3 ? "__HG_E4M3" : "__HG_E5M2";
+    // Use __tl_cvt_half2_to_fp8x2 for vectorized conversion (half2 -> fp8x2)
+    if (lanes == 2 || lanes == 4 || lanes == 8) {
+      PrintVectorizedCast("__tl_cvt_half2_to_fp8x2", "half2",
+                          "__hg_fp8x2_storage_t", ", " + type_suffix, false,
+                          true);
+      return;
+    }
+  }
+
+  // Handle conversion from bfloat16 to float8 (E4M3/E5M2)
+  if (from_ty.is_bfloat16() && IsHggcVectorizableFP8(target_ty)) {
+    bool target_type_is_e4m3 =
+        target_ty.is_float8_e4m3() || target_ty.is_float8_e4m3fn();
+    std::string type_suffix = target_type_is_e4m3 ? "__HG_E4M3" : "__HG_E5M2";
+    // Use __tl_cvt_bfloat162_to_fp8x2 for vectorized conversion (bfloat162 ->
+    // fp8x2)
+    if (lanes == 2 || lanes == 4 || lanes == 8) {
+      PrintVectorizedCast("__tl_cvt_bfloat162_to_fp8x2", "__ppu_bfloat162",
+                          "__hg_fp8x2_storage_t", ", " + type_suffix, true,
+                          true);
+      return;
+    }
+  }
+
   // Handle conversion from float8 (E4M3/E5M2) to float32
   if (IsHggcVectorizableFP8(from_ty) && target_ty.is_float() &&
       target_ty.bits() == 32) {
@@ -1626,6 +1702,34 @@ void CodeGenTileLangPPU::VisitExpr_(const CastNode *op, std::ostream &os) {
     if (lanes == 2 || lanes == 4 || lanes == 8) {
       PrintVectorizedCast("__tl_cvt_fp8x2_to_float2", "__hg_fp8x2_storage_t",
                           "float2", ", " + type_suffix, true, false);
+      return;
+    }
+  }
+
+  // Handle conversion from float8 (E4M3/E5M2) to float16
+  if (IsHggcVectorizableFP8(from_ty) && target_ty.is_float16()) {
+    bool from_type_is_e4m3 =
+        from_ty.is_float8_e4m3() || from_ty.is_float8_e4m3fn();
+    std::string type_suffix = from_type_is_e4m3 ? "__HG_E4M3" : "__HG_E5M2";
+    // Use __tl_cvt_fp8x2_to_half2 for vectorized conversion (fp8x2 -> half2)
+    if (lanes == 2 || lanes == 4 || lanes == 8) {
+      PrintVectorizedCast("__tl_cvt_fp8x2_to_half2", "__hg_fp8x2_storage_t",
+                          "half2", ", " + type_suffix, true, false);
+      return;
+    }
+  }
+
+  // Handle conversion from float8 (E4M3/E5M2) to bfloat16
+  if (IsHggcVectorizableFP8(from_ty) && target_ty.is_bfloat16()) {
+    bool from_type_is_e4m3 =
+        from_ty.is_float8_e4m3() || from_ty.is_float8_e4m3fn();
+    std::string type_suffix = from_type_is_e4m3 ? "__HG_E4M3" : "__HG_E5M2";
+    // Use __tl_cvt_fp8x2_to_bfloat162 for vectorized conversion (fp8x2 ->
+    // bfloat162)
+    if (lanes == 2 || lanes == 4 || lanes == 8) {
+      PrintVectorizedCast("__tl_cvt_fp8x2_to_bfloat162",
+                          "__hg_fp8x2_storage_t", "__ppu_bfloat162",
+                          ", " + type_suffix, true, true);
       return;
     }
   }
@@ -1778,13 +1882,22 @@ void CodeGenTileLangPPU::VisitExpr_(const CastNode *op, std::ostream &os) {
                << " (only f32 -> fp8/fp4 supported)";
   }
 
-  // Fallback: elementwise cast
+  // Fallback: elementwise cast.
+  // fp16<->bf16 elements load as native __half/__hg_bfloat16, where a direct
+  // `(half_t)(__hg_bfloat16)` (or reverse) is an ambiguous conversion; route
+  // through float to disambiguate.
+  bool cross_half = (from_ty.is_float16() && target_ty.is_bfloat16()) ||
+                    (from_ty.is_bfloat16() && target_ty.is_float16());
   for (int i = 0, lanes = from_ty.lanes(); i < lanes; ++i) {
     std::ostringstream val;
     val << "(";
     PrintType(target_ty.element_of(), val);
     val << ")(";
+    if (cross_half)
+      val << "(float)(";
     PrintVecElemLoad(src, from_ty, i, val);
+    if (cross_half)
+      val << ")";
     val << ")";
     PrintVecElemStore(sret, target_ty, i, val.str());
   }
@@ -2073,7 +2186,7 @@ void CodeGenTileLangPPU::PrintVecStore(const BufferNode *buffer, DataType t,
  * Side effects:
  * - Emits to `os` and the internal codegen output stream.
  * - May set internal feature flags (e.g., need_cooperative_groups_,
- * need_mma_h_, need_cast_smem_ptr_to_int_, enable_sparse_gemm_).
+ * need_mma_h_, need_cast_smem_ptr_to_int_).
  * - May open/close SSA scopes and mutate internal variable mappings.
  * - May call LOG(FATAL) / ICHECK on invalid or unsupported argument
  *   patterns.
@@ -2102,6 +2215,16 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     this->stream << ss.str();
     this->stream << ");\n";
   };
+  auto print_extern_call_expr = [&](std::ostream &os, std::string name,
+                                    size_t start = 0, size_t end = 0) {
+    os << name << "(";
+    for (size_t i = start; i < op->args.size() - end; i++) {
+      if (i > start)
+        os << ", ";
+      os << this->PrintExpr(op->args[i]);
+    }
+    os << ")";
+  };
   if (op->op.same_as(Op::Get("tirx.exp2"))) {
     ICHECK_EQ(op->args.size(), 1U);
     os << "exp2f(" << PrintExpr(op->args[0]) << ")";
@@ -2117,7 +2240,7 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     const bool is_max = op->op.same_as(tl::max_nan());
     const DataType t = op->dtype;
     const char *f16_intrin = is_max ? "__hmax_nan" : "__hmin_nan";
-    const char *fallback = is_max ? "cutlass::fast_max" : "cutlass::fast_min";
+    const char *fallback = is_max ? "tl::fast_max" : "tl::fast_min";
 
     if (t.is_bfloat16() && t.is_scalar()) {
       os << "cutlass::bfloat16_t(" << f16_intrin << "("
@@ -2234,10 +2357,12 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
                  << op->args.size();
     }
   } else if (op->op.same_as(builtin::ptx_cp_async_barrier())) {
+    need_barrier_h_ = true;
     print_extern_call_stmt("tl::mbarrier_cp_async_arrive");
   } else if (op->op.same_as(tl::ptx_fence_barrier_init())) {
     LOG(FATAL) << "fence_barrier_init is not supported on PPU backend";
   } else if (op->op.same_as(tl::ptx_cp_async_barrier_noinc())) {
+    need_barrier_h_ = true;
     print_extern_call_stmt("tl::mbarrier_cp_async_arrive_noinc");
   } else if (op->op.same_as(tl::mbarrier_expect_tx()) ||
              op->op.same_as(tl::mbarrier_wait_parity())) {
@@ -2303,6 +2428,8 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
   } else if (op->op.same_as(tl::pack_b16())) {
     os << "__pack_half2(" << this->PrintExpr(op->args[0]) << ", "
        << this->PrintExpr(op->args[1]) << ")";
+  } else if (op->op.same_as(tl::pack_b8x4())) {
+    print_extern_call_expr(os, "tl::pack_b8x4");
   } else if (op->op.same_as(tl::sync_grid())) {
     this->need_cooperative_groups_ = true;
     this->PrintIndent();
@@ -2837,6 +2964,17 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
         << arg_dtype;
     os << (arg_dtype.bits() == 64 ? "__ffsll(" : "__ffs(")
        << PrintExpr(op->args[0]) << ")";
+  } else if (op->op.same_as(tl::__fns())) {
+    ICHECK_EQ(op->args.size(), 3U)
+        << "T.__fns expects three arguments: mask, base, offset.";
+    DataType mask_dtype = op->args[0].dtype();
+    ICHECK(mask_dtype.is_int() || mask_dtype.is_uint())
+        << "T.__fns expects an integer mask argument, but got " << mask_dtype;
+    ICHECK(mask_dtype.bits() == 32)
+        << "T.__fns expects a 32-bit integer mask argument, but got "
+        << mask_dtype;
+    os << "tl::fns(" << PrintExpr(op->args[0]) << ", " << PrintExpr(op->args[1])
+       << ", " << PrintExpr(op->args[2]) << ")";
   } else if (op->op.same_as(tl::ldg32())) {
     // Explicit 32-bit global memory load: load_global_32(ptr) or
     // load_global_32_conditional(ptr, pred)
@@ -2911,6 +3049,51 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
       os << ", ";
       this->PrintExpr(op->args[1], os);
     }
+    os << ")";
+  } else if (op->op.same_as(tl::lds32())) {
+    // Explicit 32-bit shared memory load: load_shared_32(ptr)
+    ICHECK_EQ(op->args.size(), 1U) << "T.lds32 expects a pointer argument.";
+    os << "tl::load_shared_32(";
+    this->PrintExpr(op->args[0], os);
+    os << ")";
+  } else if (op->op.same_as(tl::lds64())) {
+    // Explicit 64-bit shared memory load: load_shared_64(ptr)
+    ICHECK_EQ(op->args.size(), 1U) << "T.lds64 expects a pointer argument.";
+    os << "tl::load_shared_64(";
+    this->PrintExpr(op->args[0], os);
+    os << ")";
+  } else if (op->op.same_as(tl::lds128())) {
+    // Explicit 128-bit shared memory load: load_shared_128(ptr)
+    ICHECK_EQ(op->args.size(), 1U) << "T.lds128 expects a pointer argument.";
+    os << "tl::load_shared_128(";
+    this->PrintExpr(op->args[0], os);
+    os << ")";
+  } else if (op->op.same_as(tl::sts32())) {
+    // Explicit 32-bit shared memory store: store_shared_32(ptr, value)
+    ICHECK_EQ(op->args.size(), 2U)
+        << "T.sts32 expects pointer and value arguments.";
+    os << "tl::store_shared_32(";
+    this->PrintExpr(op->args[0], os);
+    os << ", ";
+    this->PrintExpr(op->args[1], os);
+    os << ")";
+  } else if (op->op.same_as(tl::sts64())) {
+    // Explicit 64-bit shared memory store: store_shared_64(ptr, value)
+    ICHECK_EQ(op->args.size(), 2U)
+        << "T.sts64 expects pointer and value arguments.";
+    os << "tl::store_shared_64(";
+    this->PrintExpr(op->args[0], os);
+    os << ", ";
+    this->PrintExpr(op->args[1], os);
+    os << ")";
+  } else if (op->op.same_as(tl::sts128())) {
+    // Explicit 128-bit shared memory store: store_shared_128(ptr, value)
+    ICHECK_EQ(op->args.size(), 2U)
+        << "T.sts128 expects pointer and value arguments.";
+    os << "tl::store_shared_128(";
+    this->PrintExpr(op->args[0], os);
+    os << ", ";
+    this->PrintExpr(op->args[1], os);
     os << ")";
   } else if (op->op.same_as(tl::stg64())) {
     // Explicit 64-bit global memory store: store_global_64(ptr, value) or
@@ -3164,6 +3347,7 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
        << PrintExpr(op->args[0]) << ", " << PrintExpr(op->args[1])
        << ", &_tl_pred); }())";
   } else if (op->op.same_as(tl::get_lane_idx())) {
+    need_intrin_h_ = true;
     ICHECK_LE(op->args.size(), 1)
         << "tl.get_lane_idx expects at most one argument <warp_size>.";
     os << "tl::get_lane_idx(";
@@ -3172,6 +3356,7 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     }
     os << ")";
   } else if (op->op.same_as(tl::get_warp_idx_sync())) {
+    need_intrin_h_ = true;
     ICHECK_LE(op->args.size(), 1)
         << "tl.get_warp_idx_sync expects at most one argument <warp_size>.";
     os << "tl::get_warp_idx_sync(";
@@ -3180,6 +3365,7 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     }
     os << ")";
   } else if (op->op.same_as(tl::get_warp_idx())) {
+    need_intrin_h_ = true;
     ICHECK_LE(op->args.size(), 1)
         << "tl.get_warp_idx expects at most one argument <warp_size>.";
     os << "tl::get_warp_idx(";
@@ -3188,6 +3374,7 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     }
     os << ")";
   } else if (op->op.same_as(tl::get_warp_group_idx())) {
+    need_intrin_h_ = true;
     ICHECK_LE(op->args.size(), 2)
         << "tl.get_warp_group_idx expects <warp_size, warps_per_group>.";
     os << "tl::get_warp_group_idx(";
@@ -3199,6 +3386,7 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     }
     os << ")";
   } else if (op->op.same_as(tl::tl_shuffle_elect())) {
+    need_intrin_h_ = true;
     os << "tl::tl_shuffle_elect<" << PrintExpr(op->args[0]) << ">()";
   } else if (op->op.same_as(tl::initialize_wgmma_descriptor())) {
     LOG(FATAL) << "PPU only supports ppu0010/ppu0015; WGMMA descriptors require "
@@ -3221,6 +3409,7 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
   if (op->op.same_as(tl::__exp())) {
     PPUFastMath math_func;
     std::string func_name = math_func(op->dtype, "exp");
+    need_math_h_ = true;
     os << func_name << "(" << PrintExpr(op->args[0]) << ")";
     return true;
   } else if (op->op.same_as(tl::__exp10())) {
@@ -3231,6 +3420,7 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
   } else if (op->op.same_as(tl::__log())) {
     PPUFastMath math_func;
     std::string func_name = math_func(op->dtype, "log");
+    need_math_h_ = true;
     os << func_name << "(" << PrintExpr(op->args[0]) << ")";
     return true;
   } else if (op->op.same_as(tl::__log2())) {
@@ -3251,11 +3441,13 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
   } else if (op->op.same_as(tl::__cos())) {
     PPUFastMath math_func;
     std::string func_name = math_func(op->dtype, "cos");
+    need_math_h_ = true;
     os << func_name << "(" << PrintExpr(op->args[0]) << ")";
     return true;
   } else if (op->op.same_as(tl::__sin())) {
     PPUFastMath math_func;
     std::string func_name = math_func(op->dtype, "sin");
+    need_math_h_ = true;
     os << func_name << "(" << PrintExpr(op->args[0]) << ")";
     return true;
   } else if (op->op.same_as(tl::ieee_add())) {
@@ -3309,6 +3501,13 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     std::string func_name = math_func(op->dtype, "fdiv", rounding_mode);
     os << func_name << "(" << PrintExpr(op->args[0]) << ", "
        << PrintExpr(op->args[1]) << ")";
+    return true;
+  } else if (op->op.same_as(tl::fast_rcp())) {
+    need_math_h_ = true;
+    ICHECK(op->dtype.is_float() && op->dtype.bits() == 32 &&
+           op->dtype.lanes() == 1)
+        << "tl.fast_rcp currently supports scalar float32 only";
+    os << "tl::fast_rcp(" << PrintExpr(op->args[0]) << ")";
     return true;
   } else if (op->op.same_as(tl::add2()) || op->op.same_as(tl::sub2()) ||
              op->op.same_as(tl::mul2()) || op->op.same_as(tl::fma2()) ||
@@ -3400,18 +3599,19 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     return true;
   } else if (op->op.same_as(tl::rng_init())) {
     this->need_acrand_kernel_h_ = true;
-    this->acrand_random_generator_state =
-        name_supply_->FreshName("__random_generator_state");
+    auto it = rng_state_name_map_.find(op);
+    ICHECK(it != rng_state_name_map_.end())
+        << "tl.rng_init call was not registered by the AddFunction pre-scan";
+    this->acrand_random_generator_state = it->second;
     this->acrand_random_generator_state_type =
         op->args[3].as<StringImmNode>()->value;
-    this->PrintIndent();
-    this->stream << op->args[3].as<StringImmNode>()->value << " "
-                 << this->acrand_random_generator_state << ";\n";
     this->PrintIndent();
     this->stream << "acrand_init(" << PrintExpr(op->args[0]) << ", "
                  << PrintExpr(op->args[1]) << ", " << PrintExpr(op->args[2])
                  << ", &" << this->acrand_random_generator_state << ");\n";
-    // State var is used later by rng_rand / rng_rand_float.
+    // The state var is declared at function scope (see AddFunction) so it
+    // stays visible to rng_rand / rng_rand_float even when passes split the
+    // enclosing block across __syncthreads() barriers.
     return true;
   } else if (op->op.same_as(tl::rng_rand())) {
     this->need_acrand_kernel_h_ = true;
@@ -3517,6 +3717,17 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
       os << ", " << PrintExpr(op->args[2]);
     }
     os << ")";
+    return true;
+  } else if (op->op.same_as(tl::atomic_or_elem_op())) {
+    // atomic_or_elem_op(dst_ptr, src_value[, memory_order])
+    std::string dst_ptr = PrintExpr(op->args[0]);
+    std::string src_value = PrintExpr(op->args[1]);
+    this->PrintIndent();
+    this->stream << "AtomicOr(" << dst_ptr << ", " << src_value;
+    if (op->args.size() > 2) {
+      this->stream << ", " << PrintExpr(op->args[2]);
+    }
+    this->stream << ");\n";
     return true;
   } else if (op->op.same_as(tl::atomic_min_elem_op())) {
     // atomic_min_elem_op(dst_ptr, src_value[, memory_order])
@@ -4713,6 +4924,22 @@ void CodeGenTileLangPPU::AddFunction(const GlobalVar &gvar,
     stream << ' ' << vid;
   }
   stream << ") {\n";
+  // Declare acrand states for all tl.rng_init calls at function scope.
+  // Sync-insertion passes may split the block containing rng_init across
+  // __syncthreads(), so a declaration emitted at the call site can go out
+  // of scope before later rng_rand / rng_rand_float uses.
+  rng_state_name_map_.clear();
+  tirx::PostOrderVisit(f->body, [this](const ObjectRef &n) {
+    const auto *call = n.as<CallNode>();
+    if (call == nullptr || !call->op.same_as(tl::rng_init())) {
+      return;
+    }
+    this->need_acrand_kernel_h_ = true;
+    std::string name = name_supply_->FreshName("__random_generator_state");
+    this->stream << "  " << call->args[3].as<StringImmNode>()->value << " "
+                 << name << ";\n";
+    rng_state_name_map_.emplace(call, std::move(name));
+  });
   this->PreFunctionBody(f);
   int func_scope = this->BeginScope();
   this->PrintStmt(f->body);

@@ -7,7 +7,7 @@
 #include "support/check.h"
 #include <tvm/runtime/logging.h>
 
-#include "backend/common/target_utils.h"
+#include "ppu/target_utils.h"
 #include "op/builtin.h"
 #include "op/utils.h"
 

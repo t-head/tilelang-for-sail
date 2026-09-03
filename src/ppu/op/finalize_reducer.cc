@@ -5,7 +5,7 @@
 
 #include "backend/common/op/finalize_reducer.h"
 
-#include "backend/common/target_utils.h"
+#include "ppu/target_utils.h"
 
 #include <sstream>
 

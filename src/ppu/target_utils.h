@@ -20,6 +20,9 @@ bool TargetPPUHasAsyncCopy(Target target);
 bool TargetPPUHasLdmatrix(Target target);
 bool TargetPPUHasStmatrix(Target target);
 
+bool IsPpuVectorizableFP8(DataType dtype);
+bool IsPpuVectorizableCast(DataType from_ty, DataType target_ty);
+
 } // namespace tl
 } // namespace tvm
 

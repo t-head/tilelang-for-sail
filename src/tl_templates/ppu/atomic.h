@@ -423,6 +423,22 @@ AtomicAddx2Ret(bfloat16_t *ref, src_type *val,
   }
 }
 
+// PPU has no packed v4 f16/bf16 atomic add instruction; compose from the
+// paired-lane version (same strategy as the CUDA pre-sm90 fallback).
+template <typename SrcType>
+TL_DEVICE void AtomicAddx4(half_t *ref, SrcType *val,
+                           int memory_order = int(hggc::memory_order_relaxed)) {
+  AtomicAddx2(ref, val, memory_order);
+  AtomicAddx2(ref + 2, val + 2, memory_order);
+}
+
+template <typename SrcType>
+TL_DEVICE void AtomicAddx4(bfloat16_t *ref, SrcType *val,
+                           int memory_order = int(hggc::memory_order_relaxed)) {
+  AtomicAddx2(ref, val, memory_order);
+  AtomicAddx2(ref + 2, val + 2, memory_order);
+}
+
 template <typename T> TL_DEVICE float2 ToFloat2(T *val) {
   return *reinterpret_cast<const float2 *>(val);
 }
@@ -480,4 +496,14 @@ TL_DEVICE void AtomicStore(T1 *ref, T2 value, int memory_order) {
   using NT1 = typename normalize_atomic_type<T1>::type;
   hggc::atomic_ref<NT1, hggc::thread_scope_device> aref(*ref);
   aref.store(hggc_cast<NT1>(value), hggc::memory_order(memory_order));
+}
+
+template <typename T1, typename T2>
+TL_DEVICE void AtomicOr(T1 *ref, T2 value,
+                        int memory_order = int(hggc::memory_order_relaxed)) {
+  using NT1 = typename normalize_atomic_type<T1>::type;
+  static_assert(std::is_integral_v<NT1>,
+                "AtomicOr only supports integral types");
+  hggc::atomic_ref<NT1, hggc::thread_scope_device> aref(*ref);
+  aref.fetch_or(hggc_cast<NT1>(value), hggc::memory_order(memory_order));
 }

@@ -142,7 +142,7 @@ static Layout MakeFullBankSwizzleLayout2D(int stride, int continuous,
   return Layout(Array<PrimExpr>{stride, continuous}, {tc, ts, index});
 }
 
-static Layout makeGemmABLayoutF64_Kinner(int stride, int continuous) {
+static Layout MakeGemmABLayoutF64_Kinner(int stride, int continuous) {
   // Swizzle<2, 0, 4>
   Var i = InputPlaceholder(0);
   Var j = InputPlaceholder(1);
@@ -155,7 +155,7 @@ static Layout makeGemmABLayoutF64_Kinner(int stride, int continuous) {
   return Layout(Array<PrimExpr>{stride, continuous}, {tc, ts, index});
 }
 
-static Layout makeGemmABLayoutF64_Kouter(int stride, int continuous) {
+static Layout MakeGemmABLayoutF64_Kouter(int stride, int continuous) {
   // Swizzle<2, 2, 2>
   Var i = InputPlaceholder(0);
   Var j = InputPlaceholder(1);
@@ -238,7 +238,7 @@ static Layout MakeFullBankSwizzleLayoutPPU2D(int stride, int continuous,
 // Public PPU layout functions
 // ---------------------------------------------------------------------------
 
-Layout makeGemmBLayoutPaddedPPU(int stride, int continuous, int element_size,
+Layout MakeGemmBLayoutPaddedPPU(int stride, int continuous, int element_size,
                                 bool k_inner) {
   // PPU: row/column swizzle used by cutlass-ppu Actlize shared B layouts.
   IterVar i = MakeIterVar("i", stride);
@@ -256,14 +256,14 @@ Layout makeGemmBLayoutPaddedPPU(int stride, int continuous, int element_size,
   return Layout(Array{i, j}, {i * padded + col_swizzled});
 }
 
-Layout makeGemmABLayoutPPU(int mat_stride, int mat_continuous, int continuity,
+Layout MakeGemmABLayoutPPU(int mat_stride, int mat_continuous, int continuity,
                            int element_size, bool k_inner, bool is_gemm_rs) {
   // PPU: only the GEMM RS B-shared fp16 path needs the actlize swizzle.
   if (element_size == 64) {
     if (!k_inner && continuity % 16 == 0) // float64 KxN
-      return makeGemmABLayoutF64_Kouter(mat_stride, mat_continuous);
+      return MakeGemmABLayoutF64_Kouter(mat_stride, mat_continuous);
     if (k_inner && continuity % 16 == 0) // float64 NxK
-      return makeGemmABLayoutF64_Kinner(mat_stride, mat_continuous);
+      return MakeGemmABLayoutF64_Kinner(mat_stride, mat_continuous);
     return MakeGemmABLayoutPadded(mat_stride, mat_continuous, element_size);
   }
   int vector_size = 128 / element_size;
@@ -284,7 +284,7 @@ Layout makeGemmABLayoutPPU(int mat_stride, int mat_continuous, int continuity,
                                        element_size);
   }
   if (is_gemm_rs && element_size == 16)
-    return makeGemmBLayoutPaddedPPU(mat_stride, mat_continuous, element_size,
+    return MakeGemmBLayoutPaddedPPU(mat_stride, mat_continuous, element_size,
                                     k_inner);
   if (mat_continuous % (vector_size * 2) == 0)
     return MakeQuarterBankSwizzleLayout2D(mat_stride, mat_continuous,
@@ -292,13 +292,13 @@ Layout makeGemmABLayoutPPU(int mat_stride, int mat_continuous, int continuity,
   return MakeGemmABLayoutPadded(mat_stride, mat_continuous, element_size);
 }
 
-Layout makePPUSwizzledLayout(const Buffer &buffer, bool k_inner,
+Layout MakePPUSwizzledLayout(const Buffer &buffer, bool k_inner,
                              bool allow_pad, bool is_gemm_rs) {
   // B-shared RS layout only when requested by the PPU GEMM implementation.
   auto info = GetSwizzleShapeInfoChecked(buffer);
   Layout base;
   if (allow_pad) {
-    base = makeGemmABLayoutPPU(
+    base = MakeGemmABLayoutPPU(
         static_cast<int>(info.stride), static_cast<int>(info.continuous),
         static_cast<int>(info.continuous), info.element_size, k_inner,
         is_gemm_rs);
@@ -320,7 +320,7 @@ TVM_FFI_STATIC_INIT_BLOCK() {
       .def("tl.make_ppu_swizzled_layout",
            [](const Buffer &buffer, bool k_inner, bool allow_pad,
               bool is_gemm_rs) {
-             return makePPUSwizzledLayout(buffer, k_inner, allow_pad,
+             return MakePPUSwizzledLayout(buffer, k_inner, allow_pad,
                                           is_gemm_rs);
            });
 }

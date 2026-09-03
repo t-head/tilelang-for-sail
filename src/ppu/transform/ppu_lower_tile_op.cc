@@ -26,6 +26,7 @@
 #include "../../op/utils.h"
 #include "backend/common/target_utils.h"
 #include "cuda/transform/ptx_async_copy_injector.h"
+#include "ppu/target_utils.h"
 
 #include "arith/ir_mutator_with_analyzer.h"
 #include "../../transform/common/mbarrier.h"
@@ -40,11 +41,6 @@ using namespace tirx;
 using namespace ffi;
 
 namespace {
-
-// PPU alias for shared utility function
-static inline bool IsPpuVectorizableCast(DataType from, DataType to) {
-  return IsCudaVectorizableCast(from, to);
-}
 
 static Buffer makeBufferWithLayout(const Buffer &buffer, const Layout &layout,
                                    Map<Var, Var> &var_remap) {
@@ -251,6 +247,15 @@ public:
         RemapBufferRewriter::Substitute(fptr->body, substituter.buffer_remap_);
     fptr->body =
         LayoutRemapRewriter::Substitute(fptr->body, substituter.layout_remap_);
+    // Propagate per-buffer shared-memory alignment requirements collected
+    // during lowering (swizzle-dependent copy constraints) so that
+    // MergeSharedMemoryAllocations can honor them when laying out the merged
+    // dynamic shared memory buffer.
+    if (!substituter.smem_alignment_map_.empty()) {
+      f = WithAttr(std::move(f), kSmemAlignmentMap,
+                   substituter.smem_alignment_map_);
+      fptr = f.CopyOnWrite();
+    }
     // If any tile-op copies allocated mbarriers, inject the barrier buffer
     // into the tilelang_root block with a barrier_init annotation.
     // Pipeline buffer versioning expands it for pipelining, and
@@ -1157,6 +1162,17 @@ private:
       barrier_arrive_updates_[data_var] = n;
     };
 
+    RequireSmemAlignmentCallback require_smem_alignment_callback =
+        [this](Var data_var, int alignment) {
+          String key = data_var->name_hint;
+          auto it = smem_alignment_map_.find(key);
+          int64_t prev =
+              it != smem_alignment_map_.end() ? (*it).second->value : 0;
+          if (alignment > prev) {
+            smem_alignment_map_.Set(key, IntImm(DataType::Int(32), alignment));
+          }
+        };
+
     LowerArgs lower_args;
     lower_args.target = target_;
     lower_args.thread_bounds = thread_bounds;
@@ -1172,6 +1188,7 @@ private:
     lower_args.add_workspace = callback;
     lower_args.alloc_mbarrier = mbarrier_callback;
     lower_args.update_barrier_arrive = barrier_arrive_callback;
+    lower_args.require_smem_alignment = require_smem_alignment_callback;
 
     auto lowered = tile_op->Lower(lower_args, analyzer_);
 
@@ -1519,6 +1536,10 @@ private:
   // Pending barrier arrive-count overrides from tile-op copies.
   std::unordered_map<Var, PrimExpr, ObjectPtrHash, ObjectPtrEqual>
       barrier_arrive_updates_;
+  // Per-buffer shared-memory alignment requirements (bytes) reported by op
+  // lowerings via the require_smem_alignment callback, keyed by the data Var's
+  // name hint. Written back as the kSmemAlignmentMap PrimFunc attribute.
+  Map<String, IntImm> smem_alignment_map_;
 };
 
 }  // namespace

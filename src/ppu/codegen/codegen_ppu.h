@@ -93,6 +93,8 @@ private:
   // Global acrand state
   std::string acrand_random_generator_state;
   std::string acrand_random_generator_state_type;
+  // Map from tl.rng_init call to the function-scope RNG state variable name.
+  std::unordered_map<const CallNode *, std::string> rng_state_name_map_;
 
   // whether enable fp16
   bool enable_fp16_{false};
@@ -106,18 +108,22 @@ private:
   bool enable_fp4_{false};
   // whether enable int8
   bool enable_int8_{false};
-  // whether enable sparse gemm
-  bool enable_sparse_gemm_{false};
   // whether enable warp shuffle intrinsics
   bool enable_warp_shuffle_{false};
   // whether need math_constants.h
   bool need_math_constants_h_{false};
+  // whether need tl math header (hexp/hlog/hsin/hcos fast-math macros)
+  bool need_math_h_{false};
   // whether need mma.h
   bool need_mma_h_{false};
   // whether need tl mma instruction header
   bool need_mma_instruction_h_{false};
   // whether need tl mma_sp instruction header
   bool need_mma_sp_instruction_h_{false};
+  // whether need tl intrin header (get_lane_idx/get_warp_idx*/tl_shuffle_elect)
+  bool need_intrin_h_{false};
+  // whether need tl barrier header (mbarrier_cp_async_arrive*)
+  bool need_barrier_h_{false};
   // whether need cast_smem_ptr_to_int helper function
   bool need_cast_smem_ptr_to_int_{false};
   // PPU: whether the current function uses Actlize MMA (m16n16k*)

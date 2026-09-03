@@ -66,6 +66,60 @@ bool TargetPPUHasStmatrix(Target target) {
   return false;
 }
 
+bool IsPpuVectorizableFP8(DataType dtype) {
+  // NOTE: E8M0 is a special type of FP8 which is not handled here.
+  // We only handle FP8 types which can be represented with
+  // the PPU fp8 conversion intrinsics here.
+  return dtype.is_float8_e4m3() || dtype.is_float8_e4m3fn() ||
+         dtype.is_float8_e5m2();
+}
+
+bool IsPpuVectorizableCast(DataType from_ty, DataType target_ty) {
+  // float16 -> float32
+  if (from_ty.is_float16() && target_ty.is_float() && target_ty.bits() == 32)
+    return true;
+
+  // float32 -> float16
+  if (from_ty.is_float() && from_ty.bits() == 32 && target_ty.is_float16())
+    return true;
+
+  // bfloat16 -> float32
+  if (from_ty.is_bfloat16() && target_ty.is_float() && target_ty.bits() == 32)
+    return true;
+
+  // float32 -> bfloat16
+  if (from_ty.is_float() && from_ty.bits() == 32 && target_ty.is_bfloat16())
+    return true;
+
+  // float32 -> float8 (E4M3/E5M2)
+  if (from_ty.is_float() && from_ty.bits() == 32 &&
+      IsPpuVectorizableFP8(target_ty))
+    return true;
+
+  // float8 (E4M3/E5M2) -> float32
+  if (IsPpuVectorizableFP8(from_ty) && target_ty.is_float() &&
+      target_ty.bits() == 32)
+    return true;
+
+  // float8 (E4M3/E5M2) -> float16
+  if (IsPpuVectorizableFP8(from_ty) && target_ty.is_float16())
+    return true;
+
+  // float8 (E4M3/E5M2) -> bfloat16
+  if (IsPpuVectorizableFP8(from_ty) && target_ty.is_bfloat16())
+    return true;
+
+  // float16 -> float8 (E4M3/E5M2)
+  if (from_ty.is_float16() && IsPpuVectorizableFP8(target_ty))
+    return true;
+
+  // bfloat16 -> float8 (E4M3/E5M2)
+  if (from_ty.is_bfloat16() && IsPpuVectorizableFP8(target_ty))
+    return true;
+
+  return false;
+}
+
 TVM_FFI_STATIC_INIT_BLOCK() {
   namespace refl = tvm::ffi::reflection;
   refl::GlobalDef()

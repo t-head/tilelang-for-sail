@@ -8,8 +8,12 @@ import subprocess
 import tempfile
 
 from tilelang import tvm as tvm
-from tilelang.env import TILELANG_TEMPLATE_PATH, ACTLIZE_INCLUDE_DIR
+from tilelang.env import TILELANG_TEMPLATE_PATH, ACTLIZE_INCLUDE_DIR, env
 from tvm.target import Target
+
+
+def _get_compile_timeout_seconds() -> float | None:
+    return env.get_compile_timeout_seconds()
 
 
 def _find_ppu_sdk() -> str:
@@ -203,7 +207,8 @@ def compile_ppu(
         if verbose:
             print("PPU compile command:", " ".join(cmd))
 
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=_get_compile_timeout_seconds())
         if proc.returncode != 0:
             raise RuntimeError(
                 f"hgcc compilation failed:\n{proc.stderr}\n{proc.stdout}\n"

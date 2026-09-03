@@ -13,15 +13,15 @@ namespace tvm {
 namespace tl {
 
 // PPU: padded/shared-memory layout variants for cutlass-ppu Actlize layouts.
-Layout makeGemmBLayoutPaddedPPU(int stride, int continuous, int element_size,
+Layout MakeGemmBLayoutPaddedPPU(int stride, int continuous, int element_size,
                                 bool k_inner = true);
 
-Layout makeGemmABLayoutPPU(int mat_stride, int mat_continuous, int continuity,
+Layout MakeGemmABLayoutPPU(int mat_stride, int mat_continuous, int continuity,
                            int element_size, bool k_inner = true,
                            bool is_gemm_rs = false);
 
-// PPU: Buffer-based wrapper around makeGemmABLayoutPPU.
-Layout makePPUSwizzledLayout(const tirx::Buffer &buffer, bool k_inner = true,
+// PPU: Buffer-based wrapper around MakeGemmABLayoutPPU.
+Layout MakePPUSwizzledLayout(const tirx::Buffer &buffer, bool k_inner = true,
                              bool allow_pad = true,
                              bool is_gemm_rs = false);
 

@@ -7,7 +7,7 @@
 #include "support/check.h"
 #include <tvm/runtime/logging.h>
 
-#include "backend/common/target_utils.h"
+#include "ppu/target_utils.h"
 #include "op/builtin.h"
 #include "op/utils.h"
 
@@ -127,7 +127,7 @@ bool CheckCPAsyncCopyPreconditions(const CopyNode &op) {
 
 bool CheckCPAsyncCopy(const CopyNode &op, Target target,
                       const LayoutMap &layout_map, arith::Analyzer *analyzer) {
-  if (!TargetHasAsyncCopy(target)) {
+  if (!TargetPPUHasAsyncCopy(target)) {
     return false;
   }
   if (!CheckCPAsyncCopyPreconditions(op)) {
@@ -201,7 +201,7 @@ std::string MakeAsyncUnavailableReason(const CopyNode &op, Target target) {
   std::ostringstream oss;
   if (!target.defined()) {
     oss << "T.async_copy requires a defined target.";
-  } else if (!TargetHasAsyncCopy(target)) {
+  } else if (!TargetPPUHasAsyncCopy(target)) {
     oss << "T.async_copy is only supported on targets with cp.async support "
            "(PPU0010+). Got target="
         << target;

@@ -13,7 +13,6 @@
 
 #include "atomic.h"
 #include <cute/arch/util.hpp>
-#include <cutlass/fast_math.h>
 #include <cutlass/numeric_types.h>
 #include <hggc_math_constants.h>
 
@@ -26,14 +25,6 @@ using cutlass::half_t;
 using cute::cast_smem_ptr_to_uint;
 
 using int4_t = int4;
-
-#define hexp cutlass::fast_exp
-#define hlog cutlass::fast_log
-#define hsqrt cutlass::fast_sqrt
-#define hsin cutlass::fast_sin
-#define hcos cutlass::fast_cos
-#define htanh cutlass::fast_tanh
-#define hpow powf
 
 #define uint unsigned int
 #define uchar unsigned char
@@ -97,6 +88,15 @@ TL_PATCH TL_DEVICE half_t hrsqrt(const half_t x) {
   return half_t(hrsqrt(x.to_half()));
 }
 
+// hrsqrt function for bfloat16_t
+TL_PATCH TL_DEVICE bfloat16_t hrsqrt(const bfloat16_t x) {
+  return bfloat16_t(hrsqrt(x.to_ppu_bfloat16()));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hexp(const bfloat16_t x) {
+  return bfloat16_t(hexp(x.to_ppu_bfloat16()));
+}
+
 // Pack two half values.
 TL_DEVICE unsigned __pack_half2(const half x, const half y) {
   unsigned v0 = *((unsigned short *)&x);
@@ -128,7 +128,11 @@ TL_DEVICE unsigned __pack_ppu_bfloat162(const bfloat16_t x, const bfloat16_t y) 
 // Pack four char values.
 TL_DEVICE int make_int(signed char x0, signed char x1, signed char x2,
                        signed char x3) {
-  return (x3 << 24) | (x2 << 16) | (x1 << 8) | x0;
+  const unsigned int b0 = static_cast<unsigned char>(x0);
+  const unsigned int b1 = static_cast<unsigned char>(x1);
+  const unsigned int b2 = static_cast<unsigned char>(x2);
+  const unsigned int b3 = static_cast<unsigned char>(x3);
+  return static_cast<int>((b3 << 24) | (b2 << 16) | (b1 << 8) | b0);
 }
 
 // Pack eight char values.
@@ -372,6 +376,39 @@ template <int y = 1, typename T> TL_DEVICE T pow_of_int(T x) {
   return result;
 }
 
+// Pack four 8-bit payloads (reinterpreted as raw bytes) into a 32-bit word.
+template <typename T> TL_DEVICE unsigned int pack_b8x4(T x0, T x1, T x2, T x3) {
+  return make_uint(*reinterpret_cast<unsigned char *>(&x0),
+                   *reinterpret_cast<unsigned char *>(&x1),
+                   *reinterpret_cast<unsigned char *>(&x2),
+                   *reinterpret_cast<unsigned char *>(&x3));
+}
+
+// Find the position of the offset-th set bit in `mask` relative to `base`.
+// Positive offsets scan upward starting at (and including) `base`;
+// negative offsets scan downward starting just below `base`.
+// Returns 0xFFFFFFFF when no such bit exists.
+TL_DEVICE unsigned int fns(unsigned int mask, unsigned int base, int offset) {
+  if (offset > 0) {
+    for (unsigned int pos = base; pos < 32; ++pos) {
+      if (mask & (1U << pos)) {
+        if (--offset == 0) {
+          return pos;
+        }
+      }
+    }
+  } else if (offset < 0) {
+    for (int pos = static_cast<int>(base) - 1; pos >= 0; --pos) {
+      if (mask & (1U << pos)) {
+        if (++offset == 0) {
+          return static_cast<unsigned int>(pos);
+        }
+      }
+    }
+  }
+  return 0xFFFFFFFFU;
+}
+
 // Thread partial barrier synchronization
 TL_DEVICE void __sync_thread_partial(int barrier_id = 0, int thread_count = 0) {
   asm volatile("ppu.bar.sync %0, %1;" : : "r"(barrier_id), "r"(thread_count));
@@ -539,6 +576,16 @@ TL_DEVICE __half2 fma2(__half2 a, __half2 b, __half2 c) {
   return __hfma2(a, b, c);
 }
 
+// --- fast_max / fast_min -------------------------------------------------
+
+template <typename T> TL_DEVICE T fast_max(T a, T b) { return a < b ? b : a; }
+
+template <> TL_DEVICE float fast_max(float a, float b) { return fmaxf(a, b); }
+
+template <typename T> TL_DEVICE T fast_min(T a, T b) { return b < a ? b : a; }
+
+template <> TL_DEVICE float fast_min(float a, float b) { return fminf(a, b); }
+
 // --- max2 ----------------------------------------------------------------
 
 TL_DEVICE float2 max2(float2 a, float2 b) {
@@ -602,11 +649,6 @@ TL_DEVICE __half2 abs2(__half2 a) {
 } // namespace tl
 
 using tl::tfloat32_t;
-
-namespace cutlass {
-TL_DEVICE
-bfloat16_t fast_exp(bfloat16_t x) { return ::hexp(x); }
-} // namespace cutlass
 
 //
 // Optimized type-punned warp shuffle helpers for 16-bit types
