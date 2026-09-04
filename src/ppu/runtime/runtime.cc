@@ -9,7 +9,7 @@
 #include <hggc.h>
 #include <tvm/runtime/logging.h>
 
-#include "ppu/runtime.h"
+#include "ppu/runtime/runtime.h"
 #include "support/check.h"
 
 #include <cstdint>

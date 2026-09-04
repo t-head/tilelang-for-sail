@@ -17,7 +17,7 @@
 
 #include <unordered_map>
 
-#include "ppu/runtime.h"
+#include "ppu/runtime/runtime.h"
 
 namespace tvm {
 namespace tl {
