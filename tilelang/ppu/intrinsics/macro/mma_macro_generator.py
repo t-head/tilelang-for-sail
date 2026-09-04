@@ -30,6 +30,8 @@ from ..layout.mma_layout import (
     mma_load_b_32x16_to_shared_16x32_layout,
     mma_load_a_32x8_to_shared_16x16_layout,
     ldmatrix_32x8_to_shared_16x16_layout,
+    ldmatrix_32x16_to_shared_16x32_layout_a,
+    ldmatrix_32x16_to_shared_16x32_layout_b,
     mma_store_32x8_to_shared_16x16_layout,
     # PPU-specific layout functions
     ppu_shared_16x16_to_mma_32x8_layout_trans_sr_b,
@@ -976,17 +978,27 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         config_disabled = pass_ctx.config.get(PassConfigKey.TL_DISABLE_LDMAT_SWZL.value, True)
         return config_disabled or self.ppu_arch != 15
 
-    def _ldmat_swzl_mode(self, stride) -> tuple[int, bool]:
-        """Determine the swizzle mode and whether swizzle is supported for ``stride``."""
+    def _ldmat_swzl_mode(self, stride, dtype: str) -> tuple[int, bool]:
+        """Determine the swizzle mode and whether swizzle is supported for ``stride``.
+
+        The mode is decided by the shared-memory row width in bytes:
+        64 bytes -> mode 1 (half-bank), multiples of 128 bytes -> mode 0 (full-bank).
+        """
         value = stride if isinstance(stride, int) else getattr(stride, "value", None)
-        if value == 32:
+        if value is None:
+            return 0, False
+        bytes_per_row = value * DataType(dtype).bits // 8
+        if bytes_per_row == 64:
             return 1, True
-        if value is not None and value % 64 == 0:
+        if bytes_per_row % 128 == 0:
             return 0, True
         return 0, False
 
     def ldmatrix_a(self, A_local_buf: Buffer, A_shared_buf: Buffer | BufferRegion, ki: PrimExpr, rk: PrimExpr | None = 0):
-        if DataType(self.a_dtype).bits != 16:
+        a_bits = DataType(self.a_dtype).bits
+        if a_bits not in (8, 16):
+            return self._ldmatrix_a_default(A_local_buf, A_shared_buf, ki, rk)
+        if a_bits == 8 and self.a_transposed:
             return self._ldmatrix_a_default(A_local_buf, A_shared_buf, ki, rk)
 
         warp_row_tiles = self.warp_row_tiles
@@ -1006,8 +1018,9 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         A_base1 = A_region.region[-1].min
         A_other = [r.min for r in A_region.region[:-2]]
 
-        swzl_mode, swzl_supported = self._ldmat_swzl_mode(A_buf.shape[-1])
+        swzl_mode, swzl_supported = self._ldmat_swzl_mode(A_buf.shape[-1], self.a_dtype)
         disable_ldmat_swzl = self._disable_ldmat_swzl() or not swzl_supported
+        access_extent = 16 if a_bits == 8 else 8
 
         @T.macro
         def _warp_ldmatrix_a(
@@ -1026,7 +1039,9 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
                     row_off, col_off = ppu_ldmatrix_trans_32x8_to_shared_16x16_layout(tx, 0)
                     src_indices = tuple(A_other) + (A_base0 + wk + row_off, A_base1 + wi + col_off)
                 else:
-                    if self.ppu_arch >= 15:
+                    if a_bits == 8:
+                        row_off, col_off = ldmatrix_32x16_to_shared_16x32_layout_a(tx, 0)
+                    elif self.ppu_arch >= 15:
                         row_off, col_off = ldmatrix_32x8_to_shared_16x16_layout(tx, 0)
                     else:
                         row_off, col_off = ppu_ldmatrix_32x8_to_shared_16x16_layout(tx, 0)
@@ -1035,15 +1050,15 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
                     T.ptx_ldmatrix(
                         T.bool(trans),
                         4,
-                        T.access_ptr(A_buf[src_indices], "r", extent=8),
-                        T.access_ptr(A_local_buf[i * local_size_a], "w", extent=8),
+                        T.access_ptr(A_buf[src_indices], "r", extent=access_extent),
+                        T.access_ptr(A_local_buf[i * local_size_a], "w", extent=access_extent),
                     )
                 else:
                     T.ptx_ldmatrix_swzl(
                         T.bool(trans),
                         4,
-                        T.access_ptr(A_buf[src_indices], "r", extent=8),
-                        T.access_ptr(A_local_buf[i * local_size_a], "w", extent=8),
+                        T.access_ptr(A_buf[src_indices], "r", extent=access_extent),
+                        T.access_ptr(A_local_buf[i * local_size_a], "w", extent=access_extent),
                         swzl_mode,
                         a_transposed,
                     )
@@ -1132,7 +1147,10 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         return _warp_ldmatrix_a(A_local_buf, A_region, ki, thread_binding, rk)
 
     def ldmatrix_b(self, B_local_buf: Buffer, B_shared_buf: Buffer | BufferRegion, ki: PrimExpr, rk: PrimExpr | None = 0, a_from_gemm_c: bool = False):
-        if DataType(self.b_dtype).bits != 16:
+        b_bits = DataType(self.b_dtype).bits
+        if b_bits not in (8, 16):
+            return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
+        if b_bits == 8 and not self.b_transposed:
             return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
 
         warp_col_tiles = self.warp_col_tiles
@@ -1152,7 +1170,7 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         B_other = [r.min for r in B_region.region[:-2]]
         replicate_b = self.n_dim == 16
 
-        swzl_mode, swzl_supported = self._ldmat_swzl_mode(B_buf.shape[-1])
+        swzl_mode, swzl_supported = self._ldmat_swzl_mode(B_buf.shape[-1], self.b_dtype)
         disable_ldmat_swzl = self._disable_ldmat_swzl() or not swzl_supported
 
         @T.macro
@@ -1174,7 +1192,10 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
                 )
 
                 num = 4 if replicate_b else 2
-                if self.ppu_arch >= 15 and not b_transposed:
+                access_extent = (2 * num) * (2 if b_bits == 8 else 1)
+                if b_bits == 8:
+                    row_off, col_off = ldmatrix_32x16_to_shared_16x32_layout_b(tx, 0)
+                elif self.ppu_arch >= 15 and not b_transposed:
                     row_off, col_off = ldmatrix_32x8_to_shared_16x16_layout(tx, 0)
                 else:
                     row_off, col_off = ppu_ldmatrix_32x8_to_shared_16x16_layout(tx, 0)
@@ -1191,15 +1212,15 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
                     T.ptx_ldmatrix(
                         T.bool(trans),
                         num,
-                        T.access_ptr(B_buf[src_indices], "r", extent=2 * num),
-                        T.access_ptr(B_local_buf[i * local_size_b], "w", extent=2 * num),
+                        T.access_ptr(B_buf[src_indices], "r", extent=access_extent),
+                        T.access_ptr(B_local_buf[i * local_size_b], "w", extent=access_extent),
                     )
                 else:
                     T.ptx_ldmatrix_swzl(
                         T.bool(trans),
                         num,
-                        T.access_ptr(B_buf[src_indices], "r", extent=2 * num),
-                        T.access_ptr(B_local_buf[i * local_size_b], "w", extent=2 * num),
+                        T.access_ptr(B_buf[src_indices], "r", extent=access_extent),
+                        T.access_ptr(B_local_buf[i * local_size_b], "w", extent=access_extent),
                         swzl_mode,
                         b_transposed,
                     )

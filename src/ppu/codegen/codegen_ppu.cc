@@ -2375,11 +2375,22 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     LOG(FATAL) << "PPU only supports ppu0010/ppu0015; TMA load lowering requires "
                   "ppu0015+ TMA.";
   } else if (op->op.same_as(tl::aiu_load())) {
-    ICHECK_EQ(op->args.size(), 11U)
-        << "aiu_load expects 11 args (global, shape0, shape1, stride0, "
-           "stride1, block0, block1, swizzle, smem, coord0, coord1), got "
+    ICHECK_EQ(op->args.size(), 12U)
+        << "aiu_load expects 12 args (global, shape0, shape1, stride0, "
+           "stride1, block0, block1, swizzle, smem, coord0, coord1, "
+           "element_bits), got "
         << op->args.size();
-    print_extern_call_stmt("tl::aiu_load");
+    const auto *element_bits = op->args[11].as<IntImmNode>();
+    ICHECK(element_bits != nullptr)
+        << "aiu_load element_bits must be a constant integer";
+    if (element_bits->value == 8) {
+      print_extern_call_stmt("tl::aiu_load_b8", 0, 1);
+    } else {
+      ICHECK_EQ(element_bits->value, 16)
+          << "aiu_load only supports 8-bit or 16-bit elements, got "
+          << element_bits->value;
+      print_extern_call_stmt("tl::aiu_load", 0, 1);
+    }
   } else if (op->op.same_as(tl::tma_store()) ||
              op->op.same_as(tl::tma_load_gather4()) ||
              op->op.same_as(tl::tma_store_scatter4())) {

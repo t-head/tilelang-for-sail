@@ -474,8 +474,12 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
         << global_tensor->dtype << " and " << shared_tensor->dtype;
   }
   if (!global_tensor->dtype.is_float16() &&
-      !global_tensor->dtype.is_bfloat16()) {
-    return fallback_to_normal("AIU copy only supports fp16/bf16 payloads");
+      !global_tensor->dtype.is_bfloat16() &&
+      !global_tensor->dtype.is_float8_e4m3fn() &&
+      !global_tensor->dtype.is_float8_e5m2()) {
+    return fallback_to_normal(
+        "AIU copy only supports fp16/bf16/float8_e4m3fn/float8_e5m2 "
+        "payloads");
   }
 
   auto rank = global_tensor->shape.size();
@@ -661,7 +665,7 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   smem_box.Set(cube_layout_pos[1], PrimExpr(outer_per_warp));
 
   Array<PrimExpr> args;
-  args.reserve(11);
+  args.reserve(12);
   args.push_back(global_addr);
   PrimExpr global_shape_temp = 1;
   for (size_t i = 0; i < rank; ++i) {
@@ -712,6 +716,7 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   };
   args.push_back(compute_coord(0, cube_layout_pos[1] - 1));
   args.push_back(compute_coord(cube_layout_pos[1], rank - 1));
+  args.push_back(IntImm(DataType::Int(32), global_tensor->dtype.bits()));
 
   Stmt aiu_copy = Evaluate(Call(DataType::Handle(), aiu_load(), args));
   return IfThenElse(LT(warp_id, IntImm(DataType::Int(32), participating_warps)),

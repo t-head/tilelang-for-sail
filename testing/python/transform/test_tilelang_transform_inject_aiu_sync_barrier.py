@@ -120,6 +120,31 @@ def _pipelined_gemm_kernel(block_M=128, block_N=128, block_K=64, num_stages=3):
     return main
 
 
+def _fp8_aiu_gemm_kernel(num_stages, dtype=T.float8_e4m3fn, block_k=64):
+    """FP8 GEMM used to cover AIU b8 synchronization paths."""
+
+    @T.prim_func
+    def main(
+        A: T.Tensor((128, K), dtype),
+        B: T.Tensor((128, K), dtype),
+        C: T.Tensor((128, 128), T.float32),
+    ):
+        with T.Kernel(1, threads=128):
+            A_shared = T.alloc_shared((128, block_k), dtype)
+            B_shared = T.alloc_shared((128, block_k), dtype)
+            C_local = T.alloc_fragment((128, 128), T.float32)
+
+            T.clear(C_local)
+            for ko in T.Pipelined(T.ceildiv(K, block_k), num_stages=num_stages):
+                T.copy(A[0, ko * block_k], A_shared, prefer_instruction="aiu")
+                T.copy(B[0, ko * block_k], B_shared, prefer_instruction="aiu")
+                T.gemm(A_shared, B_shared, C_local, transpose_B=True)
+
+            T.copy(C_local, C)
+
+    return main
+
+
 def _no_prefetch_kernel(block_M=128, block_N=128, block_K=64):
     """Kernel that loads H before the loop and consumes it inside without reload.
 
@@ -397,6 +422,46 @@ def test_stage_gt0_no_aiu_sync_barrier():
     assert "tl::cp_async_commit()" in source and "tl::cp_async_wait" in source, (
         "Expected both cp_async_commit and cp_async_wait in pipelined GEMM source"
     )
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+def test_fp8_stage0_has_b8_aiu_sync_barrier():
+    source = _compile_with_aiu(_fp8_aiu_gemm_kernel(num_stages=0))
+
+    assert "tl::aiu_load_b8" in source
+    assert "tl::cp_async_commit()" in source
+    assert "tl::cp_async_wait" in source
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+def test_fp8_pipeline_has_b8_aiu_sync_operations():
+    source = _compile_with_aiu(_fp8_aiu_gemm_kernel(num_stages=3))
+
+    assert "tl::aiu_load_b8" in source
+    assert "tl::cp_async_commit()" in source
+    assert "tl::cp_async_wait" in source
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+def test_fp8_e5m2_stage0_has_b8_aiu_sync_barrier():
+    source = _compile_with_aiu(
+        _fp8_aiu_gemm_kernel(num_stages=0, dtype=T.float8_e5m2)
+    )
+
+    assert "tl::aiu_load_b8" in source
+    assert "tl::cp_async_commit()" in source
+    assert "tl::cp_async_wait" in source
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+def test_fp8_e5m2_pipeline_has_b8_aiu_sync_operations():
+    source = _compile_with_aiu(
+        _fp8_aiu_gemm_kernel(num_stages=3, dtype=T.float8_e5m2)
+    )
+
+    assert "tl::aiu_load_b8" in source
+    assert "tl::cp_async_commit()" in source
+    assert "tl::cp_async_wait" in source
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)

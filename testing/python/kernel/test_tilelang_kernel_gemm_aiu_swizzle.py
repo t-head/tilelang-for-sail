@@ -158,5 +158,96 @@ def test_128b_swizzle_constraint_trigger():
         )
 
 
+def fp8_aiu_gemm_kernel(block_k, dtype):
+    """Construct an explicit FP8 AIU GEMM for one swizzle width."""
+
+    @T.prim_func
+    def main(
+        A: T.Tensor((128, block_k), dtype),
+        B: T.Tensor((128, block_k), dtype),
+        C: T.Tensor((128, 128), T.float32),
+    ):
+        with T.Kernel(1, threads=128):
+            A_shared = T.alloc_shared((128, block_k), dtype)
+            B_shared = T.alloc_shared((128, block_k), dtype)
+            C_local = T.alloc_fragment((128, 128), T.float32)
+
+            T.clear(C_local)
+            T.copy(A, A_shared, prefer_instruction="aiu")
+            T.copy(B, B_shared, prefer_instruction="aiu")
+            T.gemm(A_shared, B_shared, C_local, transpose_B=True)
+            T.copy(C_local, C)
+
+    return main
+
+
+def compile_and_verify_fp8_aiu(
+    block_k, expected_swizzle_mode, tilelang_dtype, torch_dtype
+):
+    kernel = tilelang.compile(
+        fp8_aiu_gemm_kernel(block_k, tilelang_dtype),
+        out_idx=[-1],
+        pass_configs={
+            PassConfigKey.TL_DISABLE_AIU_LOWER: False,
+            PassConfigKey.TL_DISABLE_LDMAT_SWZL: False,
+        },
+    )
+    source = kernel.get_kernel_source()
+    aiu_load_calls = [
+        line for line in source.splitlines() if "tl::aiu_load_b8(" in line
+    ]
+    assert aiu_load_calls, "Expected native b8 AIU loads in generated source"
+    for call in aiu_load_calls:
+        args = call.split("tl::aiu_load_b8(", 1)[1].split(");", 1)[0].split(",")
+        assert args[7].strip() == str(expected_swizzle_mode), call
+
+    a = torch.randn((128, block_k), device="cuda", dtype=torch.float16).to(torch_dtype)
+    b = torch.randn((128, block_k), device="cuda", dtype=torch.float16).to(torch_dtype)
+    out = kernel(a, b)
+    ref = a.float() @ b.float().T
+    rel_l2 = torch.linalg.vector_norm(out - ref) / torch.linalg.vector_norm(ref)
+    assert float(rel_l2) <= 0.02, float(rel_l2)
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+def test_fp8_e4m3fn_64b_swizzle():
+    compile_and_verify_fp8_aiu(
+        block_k=64,
+        expected_swizzle_mode=1,
+        tilelang_dtype=T.float8_e4m3fn,
+        torch_dtype=torch.float8_e4m3fn,
+    )
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+def test_fp8_e4m3fn_128b_swizzle():
+    compile_and_verify_fp8_aiu(
+        block_k=128,
+        expected_swizzle_mode=0,
+        tilelang_dtype=T.float8_e4m3fn,
+        torch_dtype=torch.float8_e4m3fn,
+    )
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+def test_fp8_e5m2_64b_swizzle():
+    compile_and_verify_fp8_aiu(
+        block_k=64,
+        expected_swizzle_mode=1,
+        tilelang_dtype=T.float8_e5m2,
+        torch_dtype=torch.float8_e5m2,
+    )
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+def test_fp8_e5m2_128b_swizzle():
+    compile_and_verify_fp8_aiu(
+        block_k=128,
+        expected_swizzle_mode=0,
+        tilelang_dtype=T.float8_e5m2,
+        torch_dtype=torch.float8_e5m2,
+    )
+
+
 if __name__ == "__main__":
     tilelang.testing.main()
