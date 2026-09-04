@@ -119,7 +119,7 @@ jobs:
           labels: BTV1P5-M890P96G
           image_url: ${{steps.artifact.outputs.oss_url}}
           cmd: export CI_TEST_PLATFORM=ppu0015; . ./install_requirements.sh; python test_tilelang.py -o test_result.xml
-          timeout: 43200
+          timeout: 50400
 
 strategy:
   fast-fail: false

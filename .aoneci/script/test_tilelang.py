@@ -93,12 +93,21 @@ class TestResult:
 
     @property
     def status_label(self) -> str:
-        if self.passed:
-            return "PASS"
-        elif self.skipped:
-            return "SKIP"
-        else:
+        # 1. 显式失败 / 错误 / 超时 → FAIL
+        if self.xml_failures > 0 or self.xml_errors > 0:
             return "FAIL"
+        if self.timed_out:
+            return "FAIL"
+        # 2. 任意 skip（含"部分 skip"和"全 skip"）优先于 PASS，
+        #    避免 returncode == 0 但存在被 pytest 跳过的用例时被误判成 PASS
+        if self.xml_skipped > 0:
+            return "SKIP"
+        if self.returncode == 5:
+            return "SKIP"
+        # 3. 兜底判定
+        if self.returncode == 0:
+            return "PASS"
+        return "FAIL"
 
 
 # ---------------------------------------------------------------------------
@@ -444,11 +453,8 @@ def merge_junit_xml(
                 except ValueError:
                     pass
 
-                # 提取所有 testcase 元素 (排除被跳过的用例)
+                # 提取所有 testcase 元素 
                 for tc in ts.findall("testcase"):
-                    # 跳过含 <skipped> 子元素的 testcase，不写入合并后的 XML
-                    if tc.find("skipped") is not None:
-                        continue
                     normalized_name = re.sub(r'[^0-9a-zA-Z]+', '_', tc.get("classname")) + "_" + tc.get("name")
                     tc.set("name", normalized_name)
                     all_testcases.append(tc)
@@ -459,7 +465,7 @@ def merge_junit_xml(
 
     # 构建最终的 XML 结构
     # tests 计数只反映非跳过的测试用例
-    merged_tests = total_tests - total_skipped
+    merged_tests = total_tests
     final_root = ET.Element("testsuites")
     merged_suite = ET.SubElement(
         final_root,
@@ -555,17 +561,17 @@ def print_summary(results: List[TestResult], output_xml: str) -> None:
             if len(name) > 120:
                 name = "..." + name[-117:]
 
-            if r.passed:
+            if status == "PASS":
                 marker = "✅"
-            elif r.skipped:
+            elif status == "SKIP":
                 marker = "⏭️"
             else:
                 marker = "❌"
             print(f"  {i:<6}{marker} {status:<5}{duration_str:>10}  {name}")
 
-            if r.passed:
+            if status == "PASS":
                 passed_count += 1
-            elif r.skipped:
+            elif status == "SKIP":
                 skipped_count += 1
             else:
                 failed_count += 1
@@ -609,6 +615,38 @@ def dump_fail_list(results: List[TestResult], output_path: str = "fail_list.json
     print(f"\n{'='*70}")
     print(f"📝 失败用例列表已保存到: {output_path}")
     print(f"   共 {len(fail_entries)} 个失败用例")
+    print(f"{'='*70}\n")
+
+
+def dump_skip_list(results: List[TestResult], output_path: str = "skip_list.json") -> None:
+    """
+    将被 pytest 跳过（含部分 skip 与全 skip）的用例输出为 JSON 文件，
+    避免它们在 fail_list / 合并 XML 里不可见。
+
+    参数:
+        results:     所有测试运行结果
+        output_path: 输出文件路径 (默认: skip_list.json)
+    """
+    skip_entries = []
+    for r in results:
+        if r.status_label != "SKIP":
+            continue
+        skip_entries.append({
+            "file_path": r.config.file_path,
+            "test_filter": r.config.test_filter or "",
+            "extra_args": list(r.config.extra_args),
+            "reason": "pytest.skip",
+            "xml_tests": r.xml_tests,
+            "xml_skipped": r.xml_skipped,
+        })
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        print(f"Skip cases list:\n{skip_entries}")
+        json.dump(skip_entries, f, indent=2, ensure_ascii=False)
+
+    print(f"\n{'='*70}")
+    print(f"📝 跳过用例列表已保存到: {output_path}")
+    print(f"   共 {len(skip_entries)} 个跳过用例（含部分 skip 文件）")
     print(f"{'='*70}\n")
 
 
@@ -729,6 +767,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # 输出失败用例列表
     dump_fail_list(results)
+
+    # 输出被 pytest 跳过的用例列表（含部分 skip 与全 skip），避免它们在产物里不可见
+    dump_skip_list(results)
 
     # Only actual failures count — skipped tests are not failures
     has_failures = any(r.failed for r in results)
