@@ -28,6 +28,8 @@ from ..layout.mma_layout import (
     mma_load_b_32x8_to_shared_16x16_layout,
     mma_load_a_32x16_to_shared_16x32_layout,
     mma_load_b_32x16_to_shared_16x32_layout,
+    mma_load_a_32x32_to_shared_16x64_layout,
+    mma_load_b_32x32_to_shared_16x64_layout,
     mma_load_a_32x8_to_shared_16x16_layout,
     ldmatrix_32x8_to_shared_16x16_layout,
     ldmatrix_32x16_to_shared_16x32_layout_a,
@@ -337,7 +339,9 @@ class TensorCoreIntrinEmitter:
             return i, j
 
         if not ldmatrix_available:
-            if DataType(a_dtype).bits == 8:
+            if DataType(a_dtype).bits == 4:
+                mma_load_layout = mma_load_a_32x32_to_shared_16x64_layout
+            elif DataType(a_dtype).bits == 8:
                 mma_load_layout = mma_load_a_32x16_to_shared_16x32_layout
             elif DataType(a_dtype).bits == 16:
                 mma_load_layout = mma_load_a_32x8_to_shared_16x16_layout
@@ -459,7 +463,9 @@ class TensorCoreIntrinEmitter:
             return i, j
 
         if not ldmatrix_available:
-            if DataType(b_dtype).bits == 8:
+            if DataType(b_dtype).bits == 4:
+                mma_load_layout = mma_load_b_32x32_to_shared_16x64_layout
+            elif DataType(b_dtype).bits == 8:
                 mma_load_layout = mma_load_b_32x16_to_shared_16x32_layout
             elif DataType(b_dtype).bits == 16:
                 mma_load_layout = mma_load_b_32x8_to_shared_16x16_layout
@@ -940,6 +946,14 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
             self.mma_prefix = "m16n16k16"
         elif k_dim == 32 and self.ppu_arch >= 15:
             self.mma_prefix = "m16n16k32"
+        elif (
+            k_dim == 64
+            and self.ppu_arch >= 15
+            and DataType(self.a_dtype).is_float4_e2m1fn()
+            and DataType(self.b_dtype).is_float4_e2m1fn()
+        ):
+            # FP4 e2m1: PPU0015_16x16x64_F32F4F4F32_TN
+            self.mma_prefix = "m16n16k64"
         else:
             raise ValueError(f"Unsupported k_dim {k_dim}")
 
@@ -1083,7 +1097,9 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
             return i, j
 
         if not ldmatrix_available:
-            if DataType(a_dtype).bits == 8:
+            if DataType(a_dtype).bits == 4:
+                mma_load_layout = mma_load_a_32x32_to_shared_16x64_layout
+            elif DataType(a_dtype).bits == 8:
                 mma_load_layout = mma_load_a_32x16_to_shared_16x32_layout
             elif DataType(a_dtype).bits == 16:
                 mma_load_layout = mma_load_a_32x8_to_shared_16x16_layout
@@ -1231,6 +1247,38 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         """Non-16-bit B loading — delegates to base class (TensorCoreIntrinEmitter) ldmatrix_b."""
         return TensorCoreIntrinEmitter.ldmatrix_b(self, B_local_buf, B_shared_buf, ki, rk)
 
+    def mma(
+        self,
+        A_local_buf: Buffer,
+        B_local_buf: Buffer,
+        C_local_buf: Buffer,
+        k_inner: PrimExpr | None = 0,
+        scale_A: Buffer | BufferRegion | None = None,
+        scale_B: Buffer | BufferRegion | None = None,
+    ):
+        """Issue PPU MMA atoms, optionally with runtime MXFP4 E8M0 scales."""
+        if (scale_A is None) != (scale_B is None):
+            raise ValueError("scale_A and scale_B must be provided together")
+
+        warp_rows = self.warp_rows
+        warp_cols = self.warp_cols
+
+        @T.macro
+        def _warp_mma(A_local_buf, B_local_buf, C_local_buf):
+            for i, j in T.grid(warp_rows, warp_cols):
+                self.mma_atom(
+                    A_local_buf,
+                    B_local_buf,
+                    C_local_buf,
+                    i,
+                    j,
+                    k_inner,
+                    scale_A,
+                    scale_B,
+                )
+
+        return _warp_mma(A_local_buf, B_local_buf, C_local_buf)
+
     def mma_atom(
         self,
         A_local_buf: Buffer,
@@ -1239,6 +1287,8 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         inst_m_idx: PrimExpr | int,
         inst_n_idx: PrimExpr | int,
         k_inner: PrimExpr | int = 0,
+        scale_A: Buffer | BufferRegion | None = None,
+        scale_B: Buffer | BufferRegion | None = None,
     ):
         warp_rows = self.warp_rows
         warp_cols = self.warp_cols
@@ -1261,24 +1311,117 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         B_offset = b_local_stride + inst_n_idx * local_size_b
         C_offset = inst_m_idx * warp_cols * local_size_out + inst_n_idx * local_size_out
 
-        @T.macro
-        def _atom_mma(A_local_buf, B_local_buf, C_local_buf):
-            T.ptx_mma(
-                accum_dtype,
-                mma_prefix,
-                "row",
-                "col",
-                a_dtype_abbrv,
-                b_dtype_abbrv,
-                accum_dtype_abbrv,
-                A_local_buf.data,
-                A_offset,
-                B_local_buf.data,
-                B_offset,
-                C_local_buf.data,
-                C_offset,
-                T.bool(False),
+        scale_operands = None
+        if scale_A is not None:
+            if self.a_dtype_abbrv != "e2m1" or self.b_dtype_abbrv != "e2m1" or self.micro_size_k != 64:
+                raise ValueError("runtime E8M0 scales are only supported for PPU FP4 m16n16k64 MMA")
+
+            if not (1 <= warp_rows <= 4 and 1 <= warp_cols <= 4):
+                raise ValueError(
+                    "PPU MXFP4 runtime scales require warp tile dimensions "
+                    "between 16 and 64 (one to four m16n16 atoms per operand selector)"
+                )
+
+            scale_A_region = self._legalize_to_buffer_region(scale_A)
+            scale_B_region = self._legalize_to_buffer_region(scale_B)
+            if not scale_A_region.region or not scale_B_region.region:
+                raise ValueError("PPU MXFP4 scale regions must have a row or column dimension")
+
+            scale_A_buf = scale_A_region.buffer
+            scale_B_buf = scale_B_region.buffer
+            scale_A_base = scale_A_region.region[-1].min
+            scale_B_base = scale_B_region.region[-1].min
+            scale_k_tiles = self.chunk // self.micro_size_k
+            thread_binding = self.get_thread_binding()
+            tx, warp_n, warp_m = self.extract_thread_binding(thread_binding)
+
+            # The PPU0015 scale collective packs the two rows/columns owned by
+            # a lane into the low/high uint16 halves of S0/S1.  Each uint16 is
+            # itself low-byte-first for the two block-32 scales.  S2/S3 select
+            # one of the four 16-row/column atom groups supplied by lane%4.
+            lane_group = tx % 4
+            lane_in_group = tx // 4
+            # All 32 lanes participate in the scale collective even when the
+            # warp tile has fewer than four atoms along an operand dimension.
+            # Redirect unused lane groups to part zero so they never read past
+            # a compact 16/32/48-element scale region.  The corresponding
+            # parts are never selected by the bounded MMA atom loops.
+            scale_A_group = T.if_then_else(lane_group < warp_rows, lane_group, 0)
+            scale_B_group = T.if_then_else(lane_group < warp_cols, lane_group, 0)
+            scale_A_index = scale_A_base + warp_m * self.warp_row_tiles + scale_A_group * 16 + lane_in_group
+            scale_B_index = scale_B_base + warp_n * self.warp_col_tiles + scale_B_group * 16 + lane_in_group
+            if scale_k_tiles == 1:
+                scale_A_prefix = tuple(r.min for r in scale_A_region.region[:-1])
+                scale_B_prefix = tuple(r.min for r in scale_B_region.region[:-1])
+                scale_A_coords = scale_A_prefix + (scale_A_index,)
+                scale_B_coords = scale_B_prefix + (scale_B_index,)
+                scale_A_coords_hi = scale_A_prefix + (scale_A_index + 8,)
+                scale_B_coords_hi = scale_B_prefix + (scale_B_index + 8,)
+            else:
+                scale_A_prefix = tuple(r.min for r in scale_A_region.region[:-2])
+                scale_B_prefix = tuple(r.min for r in scale_B_region.region[:-2])
+                scale_A_k = scale_A_region.region[-2].min + k_inner
+                scale_B_k = scale_B_region.region[-2].min + k_inner
+                scale_A_coords = scale_A_prefix + (scale_A_k, scale_A_index)
+                scale_B_coords = scale_B_prefix + (scale_B_k, scale_B_index)
+                scale_A_coords_hi = scale_A_prefix + (scale_A_k, scale_A_index + 8)
+                scale_B_coords_hi = scale_B_prefix + (scale_B_k, scale_B_index + 8)
+            scale_A_reg = T.bitwise_or(
+                T.cast(scale_A_buf[scale_A_coords], T.uint32),
+                T.shift_left(T.cast(scale_A_buf[scale_A_coords_hi], T.uint32), 16),
             )
+            scale_B_reg = T.bitwise_or(
+                T.cast(scale_B_buf[scale_B_coords], T.uint32),
+                T.shift_left(T.cast(scale_B_buf[scale_B_coords_hi], T.uint32), 16),
+            )
+            scale_operands = (scale_A_reg, scale_B_reg, inst_m_idx, inst_n_idx)
+
+        if scale_operands is None:
+
+            @T.macro
+            def _atom_mma(A_local_buf, B_local_buf, C_local_buf):
+                T.ptx_mma(
+                    accum_dtype,
+                    mma_prefix,
+                    "row",
+                    "col",
+                    a_dtype_abbrv,
+                    b_dtype_abbrv,
+                    accum_dtype_abbrv,
+                    A_local_buf.data,
+                    A_offset,
+                    B_local_buf.data,
+                    B_offset,
+                    C_local_buf.data,
+                    C_offset,
+                    T.bool(False),
+                )
+
+        else:
+            scale_a_reg, scale_b_reg, scale_a_selector, scale_b_selector = scale_operands
+
+            @T.macro
+            def _atom_mma(A_local_buf, B_local_buf, C_local_buf):
+                T.ptx_mma_scaled(
+                    accum_dtype,
+                    mma_prefix,
+                    "row",
+                    "col",
+                    a_dtype_abbrv,
+                    b_dtype_abbrv,
+                    accum_dtype_abbrv,
+                    A_local_buf.data,
+                    A_offset,
+                    B_local_buf.data,
+                    B_offset,
+                    C_local_buf.data,
+                    C_offset,
+                    T.bool(False),
+                    scale_a_reg,
+                    scale_b_reg,
+                    scale_a_selector,
+                    scale_b_selector,
+                )
 
         return _atom_mma(A_local_buf, B_local_buf, C_local_buf)
 

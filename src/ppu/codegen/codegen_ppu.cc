@@ -2032,9 +2032,13 @@ std::string CodeGenTileLangPPU::GetBufferRef(DataType t,
   const VarNode *buffer_var = buffer->data.get();
   std::ostringstream os;
   std::string vid = GetVarID(buffer_var);
-  // For fp4 packed buffers, use the packed buffer name for vector accesses
+  // fp4 packed local fragments are only declared under the packed name
+  // (fp4_e2_2_t vid_packed[...]), so every reference -- including scalar
+  // address_of used by ldmatrix destinations -- must use the packed name.
+  // (Scalar fp4 loads/stores are intercepted by tl_fp4_packed_load/store
+  // before reaching GetBufferRef, so this does not affect them.)
   auto it = fp4_packed_buffers_.find(buffer_var);
-  if (it != fp4_packed_buffers_.end() && !t.is_scalar()) {
+  if (it != fp4_packed_buffers_.end()) {
     vid = it->second;
   }
   std::string scope;
@@ -2554,7 +2558,11 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     // arg 11: C accumulator index
     // arg 12: saturate
     // arg 13: (optional) 1-bit operator (xor or and)
-    ICHECK(op->args.size() == 13U || op->args.size() == 14U);
+    // args 13..16: (PPU FP4 only) runtime S0/S1 scale registers and S2/S3
+    // selector operands.
+    ICHECK(op->args.size() == 13U || op->args.size() == 14U ||
+           op->args.size() == 17U);
+    bool has_runtime_scales = op->args.size() == 17U;
     std::string shape = Downcast<StringImm>(op->args[0])->value;
     std::string A_layout = Downcast<StringImm>(op->args[1])->value;
     std::string B_layout = Downcast<StringImm>(op->args[2])->value;
@@ -2568,27 +2576,67 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     auto dtype_a_enum = tl::codegen::ppu::tix::DTypeFromString(A_dtype);
     auto dtype_b_enum = tl::codegen::ppu::tix::DTypeFromString(B_dtype);
     auto dtype_c_enum = tl::codegen::ppu::tix::DTypeFromString(C_dtype);
+    // fp4 local fragments are only declared as "<vid>_packed" (fp4_e2_2_t[]);
+    // resolve the packed name for the MMA operand pointers.
+    if (const VarNode *a_var = op->args[6].as<VarNode>()) {
+      auto it = fp4_packed_buffers_.find(a_var);
+      if (it != fp4_packed_buffers_.end()) {
+        a_ref = it->second;
+      }
+    }
+    if (const VarNode *b_var = op->args[8].as<VarNode>()) {
+      auto it = fp4_packed_buffers_.find(b_var);
+      if (it != fp4_packed_buffers_.end()) {
+        b_ref = it->second;
+      }
+    }
     PrimExpr a_bias_expr = op->args[7];
     PrimExpr b_bias_expr = op->args[9];
     if (dtype_a_enum == tl::codegen::ppu::tix::DataType::kInt4 ||
-        dtype_a_enum == tl::codegen::ppu::tix::DataType::kUInt4) {
+        dtype_a_enum == tl::codegen::ppu::tix::DataType::kUInt4 ||
+        dtype_a_enum == tl::codegen::ppu::tix::DataType::kFloat4_e2m1fn) {
+      // 4-bit sub-byte types are packed 2 elements per byte; convert the
+      // element offset into a packed-storage offset.
       a_bias_expr = arith::Analyzer().Simplify(truncdiv(a_bias_expr, 2));
     }
     if (dtype_b_enum == tl::codegen::ppu::tix::DataType::kInt4 ||
-        dtype_b_enum == tl::codegen::ppu::tix::DataType::kUInt4) {
+        dtype_b_enum == tl::codegen::ppu::tix::DataType::kUInt4 ||
+        dtype_b_enum == tl::codegen::ppu::tix::DataType::kFloat4_e2m1fn) {
       b_bias_expr = arith::Analyzer().Simplify(truncdiv(b_bias_expr, 2));
     }
     std::string a_bias = this->PrintExpr(a_bias_expr);
     std::string b_bias = this->PrintExpr(b_bias_expr);
     auto [m, n, k] = tl::codegen::ppu::tix::ParseMMAShape(shape);
 
+    if (has_runtime_scales) {
+      ICHECK(dtype_a_enum ==
+                 tl::codegen::ppu::tix::DataType::kFloat4_e2m1fn &&
+             dtype_b_enum ==
+                 tl::codegen::ppu::tix::DataType::kFloat4_e2m1fn &&
+             m == 16 && n == 16 && k == 64)
+          << "Runtime MMA scales are only supported by PPU FP4 m16n16k64";
+    }
+
     need_mma_instruction_h_ = true;
     this->PrintIndent();
-    std::string mma_call =
-        "tl::mma_sync<(AType), (BType), (CType), (M), (N), (K), (TransA), "
-        "(TransB)>(reinterpret_cast<(CRegType)*>((C_ptr) + (C_offset)), "
-        "reinterpret_cast<const (ARegType)*>((A_ptr) + (A_offset)), "
-        "reinterpret_cast<const (BRegType)*>((B_ptr) + (B_offset)));\n";
+    std::string mma_call;
+    if (has_runtime_scales) {
+      mma_call =
+          "tl::mma_sync_scaled<(AType), (BType), (CType), (M), (N), (K), "
+          "(TransA), (TransB)>(reinterpret_cast<(CRegType)*>((C_ptr) + "
+          "(C_offset)), reinterpret_cast<const (ARegType)*>((A_ptr) + "
+          "(A_offset)), reinterpret_cast<const (BRegType)*>((B_ptr) + "
+          "(B_offset)), static_cast<uint32_t>((ScaleA)), "
+          "static_cast<uint32_t>((ScaleB)), static_cast<uint32_t>((ScaleASel)), "
+          "static_cast<uint32_t>((ScaleBSel)));\n";
+    } else {
+      mma_call =
+          "tl::mma_sync<(AType), (BType), (CType), (M), (N), (K), "
+          "(TransA), (TransB)>(reinterpret_cast<(CRegType)*>((C_ptr) + "
+          "(C_offset)), reinterpret_cast<const (ARegType)*>((A_ptr) + "
+          "(A_offset)), reinterpret_cast<const (BRegType)*>((B_ptr) + "
+          "(B_offset)));\n";
+    }
     tl::codegen::ppu::Replacer replacer;
 
     std::string AType = tl::codegen::ppu::tix::DTypeEnumToString(dtype_a_enum);
@@ -2620,6 +2668,12 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     replacer.register_rule("(B_offset)", b_bias);
     replacer.register_rule("(C_ptr)", c_ref);
     replacer.register_rule("(C_offset)", c_bias);
+    if (has_runtime_scales) {
+      replacer.register_rule("(ScaleA)", this->PrintExpr(op->args[13]));
+      replacer.register_rule("(ScaleB)", this->PrintExpr(op->args[14]));
+      replacer.register_rule("(ScaleASel)", this->PrintExpr(op->args[15]));
+      replacer.register_rule("(ScaleBSel)", this->PrintExpr(op->args[16]));
+    }
     this->stream << replacer.rewrite(mma_call);
   } else if (op->op.same_as(tl::tma_store_cluster())) {
     LOG(FATAL) << "PPU only supports ppu0010/ppu0015; TMA cluster-store lowering "

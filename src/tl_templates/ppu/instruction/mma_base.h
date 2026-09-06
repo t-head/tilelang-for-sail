@@ -65,6 +65,13 @@ struct MmaDispatcher {
     static_assert(always_false_v<std::integral_constant<int, M>>,
                   "tl::mma_sync: unsupported configuration");
   }
+
+  static TL_DEVICE void exec_scaled(CRegType *, const ARegType *,
+                                    const BRegType *, const CRegType *,
+                                    uint32_t, uint32_t, uint32_t, uint32_t) {
+    static_assert(always_false_v<std::integral_constant<int, M>>,
+                  "tl::mma_sync_scaled: unsupported configuration");
+  }
 };
 
 } // namespace detail
@@ -83,6 +90,25 @@ TL_DEVICE void mma_sync(
   static_assert(!std::is_void_v<typename Dispatcher::CRegType>,
                 "tl::mma_sync: unsupported configuration");
   Dispatcher::exec(c, a, b, c);
+}
+
+template <DataType AType, DataType BType, DataType CType, int M, int N, int K,
+          bool TransA, bool TransB, bool Saturate = false>
+TL_DEVICE void mma_sync_scaled(
+    typename detail::MmaDispatcher<AType, BType, CType, M, N, K, TransA, TransB,
+                                   Saturate>::CRegType *c,
+    const typename detail::MmaDispatcher<AType, BType, CType, M, N, K, TransA,
+                                         TransB, Saturate>::ARegType *a,
+    const typename detail::MmaDispatcher<AType, BType, CType, M, N, K, TransA,
+                                         TransB, Saturate>::BRegType *b,
+    uint32_t scale_a, uint32_t scale_b, uint32_t scale_a_selector,
+    uint32_t scale_b_selector) {
+  using Dispatcher = detail::MmaDispatcher<AType, BType, CType, M, N, K, TransA,
+                                           TransB, Saturate>;
+  static_assert(!std::is_void_v<typename Dispatcher::CRegType>,
+                "tl::mma_sync_scaled: unsupported configuration");
+  Dispatcher::exec_scaled(c, a, b, c, scale_a, scale_b, scale_a_selector,
+                          scale_b_selector);
 }
 
 } // namespace tl

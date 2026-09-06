@@ -975,6 +975,50 @@ def ptx_mma(
     )
 
 
+def ptx_mma_scaled(
+    dtype,
+    shape,
+    A_layout,
+    B_layout,
+    A_dtype,
+    B_dtype,
+    C_dtype,
+    multiplicand_a,
+    a_index,
+    multiplicand_b,
+    b_index,
+    accumulator,
+    c_index,
+    saturate,
+    scale_a,
+    scale_b,
+    scale_a_selector,
+    scale_b_selector,
+):
+    """PPU FP4 MMA intrinsic with four explicit runtime scale operands."""
+    return call_intrin(
+        dtype,
+        "tirx.ptx_mma",
+        shape,
+        A_layout,
+        B_layout,
+        A_dtype,
+        B_dtype,
+        C_dtype,
+        multiplicand_a,
+        a_index,
+        multiplicand_b,
+        b_index,
+        accumulator,
+        c_index,
+        saturate,
+        scale_a,
+        scale_b,
+        scale_a_selector,
+        scale_b_selector,
+    )
+
+
 def ptx_mma_sp(
     dtype,
     shape,

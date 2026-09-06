@@ -7,10 +7,8 @@
 #include <hggc_bf16.h>
 #include <hggc_fp8.h> // brings in enum hggcRoundMode (hgrt/hggc_device_types.h)
 
-#if defined(__HGGC_ARCH__) && (__HGGC_ARCH__ >= 100)
-
 // ============================================================================
-// FP4 core types
+// FP4 core types (host + device visible)
 // ============================================================================
 
 typedef unsigned char __hg_fp4_storage_t;
@@ -22,8 +20,10 @@ typedef enum __hg_fp4_interpretation_t {
 } __hg_fp4_interpretation_t;
 
 // ============================================================================
-// FP4 conversions
+// FP4 conversions (device only)
 // ============================================================================
+
+#if defined(__HGGC_ARCH__) && (__HGGC_ARCH__ >= 100)
 
 // double -> fp4_e2m1, round-to-nearest-even (or towards-zero), satfinite
 TL_DEVICE __hg_fp4_storage_t
@@ -236,8 +236,10 @@ __hg_cvt_fp4x2_to_halfraw2(const __hg_fp4x2_storage_t x,
   return res;
 }
 
+#endif // defined(__HGGC_ARCH__) && (__HGGC_ARCH__ >= 100)
+
 // ============================================================================
-// C++ fp4 structs
+// C++ fp4 structs (host + device visible)
 // ============================================================================
 
 struct __HGGC_ALIGN__(1) __hg_fp4_e2m1 {
@@ -245,6 +247,7 @@ struct __HGGC_ALIGN__(1) __hg_fp4_e2m1 {
 
   __hg_fp4_e2m1() = default;
 
+#if defined(__HGGC_ARCH__) && (__HGGC_ARCH__ >= 100)
   // Constructor from float, satfinite + round-to-nearest-even
   TL_DEVICE explicit __hg_fp4_e2m1(const float f) {
     __x = __hg_cvt_float_to_fp4(f, __HG_E2M1, hggcRoundNearest);
@@ -260,6 +263,7 @@ struct __HGGC_ALIGN__(1) __hg_fp4_e2m1 {
     const __half_raw raw = __hg_cvt_fp4_to_halfraw(__x, __HG_E2M1);
     return __half2float(*reinterpret_cast<const __half *>(&raw));
   }
+#endif // __HGGC_ARCH__
 };
 
 struct __HGGC_ALIGN__(1) __hg_fp4x2_e2m1 {
@@ -269,7 +273,7 @@ struct __HGGC_ALIGN__(1) __hg_fp4x2_e2m1 {
 };
 
 // ============================================================================
-// tilelang FP4 wrappers
+// tilelang FP4 wrappers (host + device visible)
 // ============================================================================
 
 // Wrapper for __hg_fp4_e2m1 with implicit conversions
@@ -284,6 +288,7 @@ struct fp4_e2_t {
   // Constructor from storage type
   TL_DEVICE fp4_e2_t(__hg_fp4_storage_t x) : __x(x) {}
 
+#if defined(__HGGC_ARCH__) && (__HGGC_ARCH__ >= 100)
   // Constructor from float
   TL_DEVICE explicit fp4_e2_t(float x) {
     __hg_fp4_e2m1 tmp(x);
@@ -309,6 +314,7 @@ struct fp4_e2_t {
 
   // Implicit conversion to __half
   TL_DEVICE operator __half() const { return __half(float(*this)); }
+#endif // __HGGC_ARCH__
 };
 
 // Tag for tcgen05 unpacked FP4 shared-memory layout. The hardware atom carries
@@ -435,8 +441,10 @@ TL_DEVICE fp4_e2_32_t make_fp4_e2_32_t(
 }
 
 // ============================================================================
-// FP4 <-> Half Precision Conversions
+// FP4 <-> Half/Float/Double/BFloat16 Conversions (device only)
 // ============================================================================
+
+#if defined(__HGGC_ARCH__) && (__HGGC_ARCH__ >= 100)
 
 // fp4_e2m1 -> half
 TL_DEVICE __half __tl_cvt_fp4_to_half(const __hg_fp4_storage_t src) {
@@ -551,8 +559,10 @@ __tl_cvt_bfloat162_to_fp4x2(const __ppu_bfloat162 src) {
   return __hg_cvt_bfloat16raw2_to_fp4x2(raw, __HG_E2M1, hggcRoundNearest);
 }
 
+#endif // defined(__HGGC_ARCH__) && (__HGGC_ARCH__ >= 100)
+
 // ============================================================================
-// FP4 Packed Buffer Access Helpers
+// FP4 Packed Buffer Access Helpers (host + device visible)
 // ============================================================================
 // These helpers are used for accessing individual fp4 elements from packed
 // fp4_e2_2_t storage, where each byte stores 2 fp4 values.
@@ -575,5 +585,3 @@ TL_DEVICE void tl_fp4_packed_store(fp4_e2_2_t *packed, int idx, fp4_e2_t val) {
     packed[idx >> 1].set_x(val);
   }
 }
-
-#endif

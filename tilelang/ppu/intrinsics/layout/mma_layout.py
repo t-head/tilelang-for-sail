@@ -193,6 +193,32 @@ def mma_load_b_32x8_to_shared_16x16_layout(thread_id, local_id):
     return row, col
 
 
+def mma_load_a_32x32_to_shared_16x64_layout(thread_id, local_id):
+    """FP4 (e2m1) A fragment load layout for the m16n16k64 MMA.
+
+    The packed byte stream of an fp4 m16k64 tile is layout-identical to an
+    int8 m16k32 tile (per ACTLIZE traits: fp4 gemm is treated as int8 gemm),
+    so each packed byte follows mma_load_a_32x16_to_shared_16x32_layout and
+    the nibble index selects the even/odd fp4 element along K.
+    """
+    byte_id, nibble = local_id // 2, local_id % 2
+    row = 8 * (byte_id % 8 // 4) + (thread_id // 4)
+    col = (16 * (byte_id // 8) + (thread_id % 4) * 4 + (byte_id % 4)) * 2 + nibble
+    return row, col
+
+
+def mma_load_b_32x32_to_shared_16x64_layout(thread_id, local_id):
+    """FP4 (e2m1) B fragment load layout for the m16n16k64 MMA.
+
+    Same packing argument as the A variant: bytes follow the int8 n16k32
+    layout, nibble index selects the even/odd fp4 element along K.
+    """
+    byte_id, nibble = local_id // 2, local_id % 2
+    row = 8 * (byte_id // 8) + (thread_id // 4)
+    col = (16 * (byte_id % 8 // 4) + (thread_id % 4) * 4 + (byte_id % 4)) * 2 + nibble
+    return row, col
+
+
 def shared_16x16_to_mma_32x8_smoothlayout(i, j):
     return (i * 2 + j // 8, j % 8)
 
