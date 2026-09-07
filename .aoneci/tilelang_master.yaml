@@ -1,8 +1,8 @@
 triggers:
   merge_request:
     target-branches:
-      - dev
-name: "dev CI"
+      - master
+name: "master CI"
 params:
   cuda_versions:
     description: '多个cuda版本'
