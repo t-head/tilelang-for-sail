@@ -2618,7 +2618,6 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     }
 
     need_mma_instruction_h_ = true;
-    this->PrintIndent();
     std::string mma_call;
     if (has_runtime_scales) {
       mma_call =
@@ -2674,6 +2673,7 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
       replacer.register_rule("(ScaleASel)", this->PrintExpr(op->args[15]));
       replacer.register_rule("(ScaleBSel)", this->PrintExpr(op->args[16]));
     }
+    this->PrintIndent();
     this->stream << replacer.rewrite(mma_call);
   } else if (op->op.same_as(tl::tma_store_cluster())) {
     LOG(FATAL) << "PPU only supports ppu0010/ppu0015; TMA cluster-store lowering "

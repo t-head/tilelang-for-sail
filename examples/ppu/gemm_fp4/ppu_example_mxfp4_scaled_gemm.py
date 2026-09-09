@@ -125,12 +125,12 @@ def check_kernel_source(num_stages, block_K=64):
     print(source, flush=True)
 
 
-def run_scaled_case(num_stages, scale_name, a_scale, b_scale, a_packed, b_packed, M, N, K, block_K=64):
+def run_scaled_case(num_stages, scale_name, a_scale, b_scale, a_packed, b_packed, M, N, K, block_K=64, block_M=128, block_N=128):
     """Run a single (num_stages, scale) MXFP4 scaled-GEMM case."""
     device = torch.device("cuda")
     kernel = matmul_scaled.compile(
         M=M, N=N, K=K,
-        block_M=128, block_N=128, block_K=block_K,
+        block_M=block_M, block_N=block_N, block_K=block_K,
         num_stages=num_stages,
     )
     result = kernel(a_packed, b_packed, a_scale.to(device), b_scale.to(device))
@@ -139,6 +139,20 @@ def run_scaled_case(num_stages, scale_name, a_scale, b_scale, a_packed, b_packed
     reference = (ref_a @ ref_b.T).to(torch.bfloat16)
     torch.testing.assert_close(result.cpu(), reference, rtol=2e-2, atol=5e-1)
     print(f"All check passed. (num_stages={num_stages}, case={scale_name})", flush=True)
+
+
+def run_warp_tile_case(M, N, block_M, block_N, K=64, block_K=64, num_stages=0, scale_name="random"):
+    """Run an MXFP4 case whose warp tile is not the default 4x4 atoms.
+
+    Covers scale-collector group splitting (warp tiles wider than four
+    m16n16 atoms along M or N) and lane-group redirect (fewer than four
+    atom groups along an operand dimension).
+    """
+    device = torch.device("cuda")
+    a_packed, b_packed = _gen_fp4_inputs((M, K), (N, K), device)
+    scale_cases = {name: (a_scale, b_scale) for name, a_scale, b_scale in make_scale_cases(M, N, K // 64)}
+    a_scale, b_scale = scale_cases[scale_name]
+    run_scaled_case(num_stages, scale_name, a_scale, b_scale, a_packed, b_packed, M, N, K, block_K, block_M, block_N)
 
 
 def main():
@@ -150,6 +164,18 @@ def main():
         check_kernel_source(num_stages)
         for name, a_scale, b_scale in make_scale_cases(M, N, K // 64):
             run_scaled_case(num_stages, name, a_scale, b_scale, a_packed, b_packed, M, N, K)
+
+    # Non-4x4-atom warp tiles: scale-collector group splitting (>4 atoms
+    # along M or N) and lane-group redirect (<4 groups).
+    for m, n, bm, bn in [
+        (256, 64, 256, 64),  # warp tile 128x32: 8x2 atoms, split along M
+        (64, 256, 64, 256),  # warp tile 32x128: 2x8 atoms, split along N
+        (64, 64, 64, 64),    # warp tile 32x32: 2x2 atoms, redirect only
+    ]:
+        for num_stages in (0, 2):
+            run_warp_tile_case(m, n, bm, bn, num_stages=num_stages)
+    # Group splitting combined with a multi-atom K tile (2-D scale regions).
+    run_warp_tile_case(256, 64, 256, 64, K=128, block_K=128, num_stages=2)
 
 
 if __name__ == "__main__":

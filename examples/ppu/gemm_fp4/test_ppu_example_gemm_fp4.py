@@ -92,5 +92,34 @@ def test_mxfp4_scaled_gemm_rejects_subatom_k():
         )
 
 
+# ---------------------------------------------------------------------------
+# MXFP4 scaled GEMM – non-4x4-atom warp tiles (3 shapes x 2 stages = 6 cases)
+# Covers scale-collector group splitting (>4 atoms along M/N) and the
+# lane-group redirect path (<4 groups along an operand dimension).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("M,N,block_M,block_N", [
+    (256, 64, 256, 64),   # warp tile 128x32: 8x2 atoms, split along M
+    (64, 256, 64, 256),   # warp tile 32x128: 2x8 atoms, split along N
+    (64, 64, 64, 64),     # warp tile 32x32: 2x2 atoms, redirect only
+    (192, 64, 192, 64),   # warp tile 96x32: 6x2 atoms, A partial chunk
+    (64, 192, 64, 192),   # warp tile 32x96: 2x6 atoms, B partial chunk
+])
+@pytest.mark.parametrize("num_stages", [0, 2])
+@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
+def test_mxfp4_scaled_gemm_warp_tiles(M, N, block_M, block_N, num_stages):
+    ppu_example_mxfp4_scaled_gemm.run_warp_tile_case(
+        M, N, block_M, block_N, K=64, block_K=64, num_stages=num_stages)
+
+
+@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
+def test_mxfp4_scaled_gemm_warp_split_multi_k():
+    """Group splitting combined with a multi-atom K tile (2-D scale regions)."""
+    ppu_example_mxfp4_scaled_gemm.run_warp_tile_case(
+        256, 64, 256, 64, K=128, block_K=128, num_stages=2)
+
+
 if __name__ == "__main__":
     tilelang.testing.main()

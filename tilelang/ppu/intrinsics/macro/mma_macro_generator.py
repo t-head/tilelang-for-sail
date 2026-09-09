@@ -1316,12 +1316,6 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
             if self.a_dtype_abbrv != "e2m1" or self.b_dtype_abbrv != "e2m1" or self.micro_size_k != 64:
                 raise ValueError("runtime E8M0 scales are only supported for PPU FP4 m16n16k64 MMA")
 
-            if not (1 <= warp_rows <= 4 and 1 <= warp_cols <= 4):
-                raise ValueError(
-                    "PPU MXFP4 runtime scales require warp tile dimensions "
-                    "between 16 and 64 (one to four m16n16 atoms per operand selector)"
-                )
-
             scale_A_region = self._legalize_to_buffer_region(scale_A)
             scale_B_region = self._legalize_to_buffer_region(scale_B)
             if not scale_A_region.region or not scale_B_region.region:
@@ -1341,15 +1335,31 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
             # one of the four 16-row/column atom groups supplied by lane%4.
             lane_group = tx % 4
             lane_in_group = tx // 4
-            # All 32 lanes participate in the scale collective even when the
-            # warp tile has fewer than four atoms along an operand dimension.
-            # Redirect unused lane groups to part zero so they never read past
-            # a compact 16/32/48-element scale region.  The corresponding
-            # parts are never selected by the bounded MMA atom loops.
-            scale_A_group = T.if_then_else(lane_group < warp_rows, lane_group, 0)
-            scale_B_group = T.if_then_else(lane_group < warp_cols, lane_group, 0)
-            scale_A_index = scale_A_base + warp_m * self.warp_row_tiles + scale_A_group * 16 + lane_in_group
-            scale_B_index = scale_B_base + warp_n * self.warp_col_tiles + scale_B_group * 16 + lane_in_group
+            # Warp tiles wider than four atoms along an operand dimension are
+            # handled in chunks of four atom groups: each chunk re-arms the
+            # scale registers with its own 64-row/column band and the atom
+            # selects its part modulo four.  Within each chunk, all 32 lanes
+            # participate in the scale collective even when the chunk covers
+            # fewer than four atom groups; redirect unused lane groups to the
+            # chunk's first group so they never read past a compact scale
+            # region.  The redirected parts are never selected by the bounded
+            # MMA atom loops.
+            if warp_rows <= 4:
+                scale_A_chunk = 0
+                scale_A_selector = inst_m_idx
+            else:
+                scale_A_chunk = inst_m_idx // 4 * 4
+                scale_A_selector = inst_m_idx % 4
+            if warp_cols <= 4:
+                scale_B_chunk = 0
+                scale_B_selector = inst_n_idx
+            else:
+                scale_B_chunk = inst_n_idx // 4 * 4
+                scale_B_selector = inst_n_idx % 4
+            scale_A_group = T.if_then_else(lane_group < warp_rows - scale_A_chunk, lane_group, 0)
+            scale_B_group = T.if_then_else(lane_group < warp_cols - scale_B_chunk, lane_group, 0)
+            scale_A_index = scale_A_base + warp_m * self.warp_row_tiles + (scale_A_chunk + scale_A_group) * 16 + lane_in_group
+            scale_B_index = scale_B_base + warp_n * self.warp_col_tiles + (scale_B_chunk + scale_B_group) * 16 + lane_in_group
             if scale_k_tiles == 1:
                 scale_A_prefix = tuple(r.min for r in scale_A_region.region[:-1])
                 scale_B_prefix = tuple(r.min for r in scale_B_region.region[:-1])
@@ -1374,7 +1384,7 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
                 T.cast(scale_B_buf[scale_B_coords], T.uint32),
                 T.shift_left(T.cast(scale_B_buf[scale_B_coords_hi], T.uint32), 16),
             )
-            scale_operands = (scale_A_reg, scale_B_reg, inst_m_idx, inst_n_idx)
+            scale_operands = (scale_A_reg, scale_B_reg, scale_A_selector, scale_B_selector)
 
         if scale_operands is None:
 
