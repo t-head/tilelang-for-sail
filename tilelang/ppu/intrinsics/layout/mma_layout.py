@@ -44,6 +44,22 @@ def ldmatrix_32x16_to_shared_16x32_layout_b(thread_id, local_id):
     return row, col
 
 
+def ldmatrix_32x16_to_shared_16x64_layout_a(thread_id, local_id):
+    """FP4 swzl A: byte layout identical to 8-bit ldmatrix_32x16,
+    columns doubled for 4-bit packing (1 byte = 2 fp4 elements)."""
+    row = thread_id % 16
+    col = (local_id + (thread_id // 16) * 16) * 2
+    return row, col
+
+
+def ldmatrix_32x16_to_shared_16x64_layout_b(thread_id, local_id):
+    """FP4 swzl B: byte layout identical to 8-bit ldmatrix_32x16,
+    columns doubled for 4-bit packing."""
+    row = (thread_id // 16) * 8 + (thread_id % 8)
+    col = (local_id + 16 * ((thread_id % 16) // 8)) * 2
+    return row, col
+
+
 def mma_store_32x8_to_shared_16x16_layout(thread_id, local_id):
     row = 8 * (local_id % 4 // 2) + (thread_id // 4)
     col = 8 * (local_id // 4) + (thread_id % 4) * 2 + (local_id % 2)

@@ -50,46 +50,57 @@ def _gen_fp4_inputs(A_shape, B_shape, device):
     return a_packed.to(device), b_packed.to(device)
 
 
-@tilelang.jit(pass_configs={
+def _make_matmul(pass_configs=None):
+    @tilelang.jit(pass_configs=pass_configs)
+    def matmul(A, B, block_M, block_N, block_K, num_stages, trans_A, trans_B, dtype=T.float4_e2m1fn, accum_dtype=T.float32):
+        M, N, K = T.const("M, N, K")
+
+        A: T.Tensor(((K, M) if trans_A else (M, K)), dtype)
+        B: T.Tensor(((N, K) if trans_B else (K, N)), dtype)
+        C = T.empty((M, N), accum_dtype)
+
+        with T.Kernel(T.ceildiv(N, block_N), T.ceildiv(M, block_M), threads=128) as (bx, by):
+            A_shared = T.alloc_shared(((block_K, block_M) if trans_A else (block_M, block_K)), dtype)
+            B_shared = T.alloc_shared(((block_N, block_K) if trans_B else (block_K, block_N)), dtype)
+            C_local = T.alloc_fragment((block_M, block_N), accum_dtype)
+
+            T.clear(C_local)
+            for k in T.Pipelined(T.ceildiv(K, block_K), num_stages=num_stages):
+                if trans_A:
+                    T.copy(A[k * block_K, by * block_M], A_shared)
+                else:
+                    T.copy(A[by * block_M, k * block_K], A_shared)
+                if trans_B:
+                    T.copy(B[bx * block_N, k * block_K], B_shared)
+                else:
+                    T.copy(B[k * block_K, bx * block_N], B_shared)
+                T.gemm(A_shared, B_shared, C_local, trans_A, trans_B)
+
+            T.copy(C_local, C[by * block_M, bx * block_N])
+
+        return C
+    return matmul
+
+
+# AIU bulk copy and ldmat.swzl both enabled
+matmul = _make_matmul(pass_configs={
     PassConfigKey.TL_DISABLE_AIU_LOWER: False,
     PassConfigKey.TL_DISABLE_LDMAT_SWZL: False,
 })
-def matmul(A, B, block_M, block_N, block_K, num_stages, trans_A, trans_B, dtype=T.float4_e2m1fn, accum_dtype=T.float32):
-    M, N, K = T.const("M, N, K")
 
-    A: T.Tensor(((K, M) if trans_A else (M, K)), dtype)
-    B: T.Tensor(((N, K) if trans_B else (K, N)), dtype)
-    C = T.empty((M, N), accum_dtype)
-
-    with T.Kernel(T.ceildiv(N, block_N), T.ceildiv(M, block_M), threads=128) as (bx, by):
-        A_shared = T.alloc_shared(((block_K, block_M) if trans_A else (block_M, block_K)), dtype)
-        B_shared = T.alloc_shared(((block_N, block_K) if trans_B else (block_K, block_N)), dtype)
-        C_local = T.alloc_fragment((block_M, block_N), accum_dtype)
-
-        T.clear(C_local)
-        for k in T.Pipelined(T.ceildiv(K, block_K), num_stages=num_stages):
-            if trans_A:
-                T.copy(A[k * block_K, by * block_M], A_shared)
-            else:
-                T.copy(A[by * block_M, k * block_K], A_shared)
-            if trans_B:
-                T.copy(B[bx * block_N, k * block_K], B_shared)
-            else:
-                T.copy(B[k * block_K, bx * block_N], B_shared)
-            T.gemm(A_shared, B_shared, C_local, trans_A, trans_B)
-
-        T.copy(C_local, C[by * block_M, bx * block_N])
-
-    return C
+# Uses default pass_configs (TL_DISABLE_LDMAT_SWZL=True, swzl disabled)
+matmul_default = _make_matmul()
 
 
-def run_case(M, N, K, block_M, block_N, block_K, num_stages, trans_A, trans_B):
+def run_case(M, N, K, block_M, block_N, block_K, num_stages, trans_A, trans_B, kernel_func=None):
+    if kernel_func is None:
+        kernel_func = matmul
     layout = f"{'T' if trans_A else 'N'}{'T' if trans_B else 'N'}"
     print(f"\n{'=' * 60}", flush=True)
     print(f"Testing layout={layout} num_stages={num_stages}", flush=True)
     print(f"{'=' * 60}", flush=True)
 
-    kernel = matmul.compile(
+    compiled = kernel_func.compile(
         M=M, N=N, K=K, block_M=block_M, block_N=block_N, block_K=block_K,
         num_stages=num_stages, trans_A=trans_A, trans_B=trans_B)
     print("kernel compiled.", flush=True)
@@ -99,7 +110,7 @@ def run_case(M, N, K, block_M, block_N, block_K, num_stages, trans_A, trans_B):
     b_shape = (N, K) if trans_B else (K, N)
     a_packed, b_packed = _gen_fp4_inputs(a_shape, b_shape, device)
 
-    c = kernel(a_packed, b_packed)
+    c = compiled(a_packed, b_packed)
 
     a_f32 = _dequant_fp4(a_packed.cpu())
     b_f32 = _dequant_fp4(b_packed.cpu())
@@ -108,15 +119,14 @@ def run_case(M, N, K, block_M, block_N, block_K, num_stages, trans_A, trans_B):
     torch.testing.assert_close(c.cpu(), ref_c, rtol=1e-2, atol=1e-2)
     print(f"All check passed. (layout={layout}, num_stages={num_stages})", flush=True)
 
-    profiler = kernel.get_profiler()
+    profiler = compiled.get_profiler()
     latency = profiler.do_bench(input_tensors=[a_packed, b_packed])
     print(f"tilelang Latency: {latency}ms", flush=True)
 
 
 def main():
     M = N = K = 256
-    block_M = block_N = 128
-    block_K = 64
+    block_M = block_N = block_K = 128
 
     for trans_A, trans_B in [
         (False, False),

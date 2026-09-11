@@ -119,7 +119,8 @@ bool CheckAiuLoad(const CopyNode &op, Target target) {
          op.src->dtype == op.dst->dtype &&
          (op.src->dtype.is_float16() || op.src->dtype.is_bfloat16() ||
           op.src->dtype.is_float8_e4m3fn() ||
-          op.src->dtype.is_float8_e5m2());
+          op.src->dtype.is_float8_e5m2() ||
+          op.src->dtype.is_float4_e2m1fn());
 }
 
 bool CheckCPAsyncCopyPreconditions(const CopyNode &op) {
@@ -329,8 +330,8 @@ CopyInstSelection SelectCopyInstForLowering(const CopyNode &op,
     return facts.can_aiu_load
                ? Supported(CopyInst::kAiuLoad)
                : Unsupported("T.copy prefer_instruction=\"aiu\" requires a PPU "
-                             "AIU-capable fp16/bf16/float8_e4m3fn/float8_e5m2 "
-                             "global->shared copy with matching dtype.");
+                             "AIU-capable fp16/bf16/float8_e4m3fn/float8_e5m2/"
+                             "float4_e2m1fn global->shared copy with matching dtype.");
   }
 
   if (facts.prefer_instruction == PreferredCopyInstruction::kSync) {

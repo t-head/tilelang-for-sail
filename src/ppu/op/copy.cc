@@ -450,7 +450,7 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
       explicit_aiu = str->value == "aiu";
     }
   }
-  auto fallback_to_normal = [&](const char *reason) {
+  auto fallback_to_normal = [&](const std::string &reason) {
     if (explicit_aiu) {
       LOG(FATAL) << "T.copy prefer_instruction=\"aiu\" could not be honored: "
                  << reason << ", src=" << op.src->name
@@ -476,10 +476,10 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   if (!global_tensor->dtype.is_float16() &&
       !global_tensor->dtype.is_bfloat16() &&
       !global_tensor->dtype.is_float8_e4m3fn() &&
-      !global_tensor->dtype.is_float8_e5m2()) {
+      !global_tensor->dtype.is_float8_e5m2() &&
+      !global_tensor->dtype.is_float4_e2m1fn()) {
     return fallback_to_normal(
-        "AIU copy only supports fp16/bf16/float8_e4m3fn/float8_e5m2 "
-        "payloads");
+        "AIU copy only supports fp16/bf16/fp8/fp4 payloads");
   }
 
   auto rank = global_tensor->shape.size();
@@ -606,30 +606,68 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   int outer_box_dim_value = static_cast<int>(*outer_box_dim);
   int thread_extent_value = static_cast<int>(*thread_extent);
 
-  int instruction_dim = inner_box_dim_value;
-  if (swizzle_mode == SwizzleMode::Swizzle64B()) {
-    instruction_dim = AiuElementsForBytes(64, shared_tensor->dtype);
-  } else if (swizzle_mode == SwizzleMode::Swizzle128B()) {
-    instruction_dim = AiuElementsForBytes(128, shared_tensor->dtype);
+  // FP4 sub-byte: AIU .b8 requires row width >= 64B (minimum swizzle granularity).
+  // FP4 with block_K < 128 -> row_bytes < 64 -> fallback to SIMT copy.
+  int dtype_bits = global_tensor->dtype.bits();
+  bool is_sub_byte = (dtype_bits < 8);
+  if (is_sub_byte) {
+    int64_t row_bytes = static_cast<int64_t>(inner_box_dim_value) * dtype_bits / 8;
+    if (row_bytes < 64) {
+      return fallback_to_normal(
+          "AIU sub-byte dtype row width " + std::to_string(row_bytes) +
+          "B < 64B minimum swizzle granularity");
+    }
   }
-  if (instruction_dim > 256) {
+  // Sub-byte: shape_0 and coord_0 are FloorDiv'd by packing_factor; reject
+  // values that are not exactly divisible to avoid silent truncation.
+  if (is_sub_byte) {
+    int pf = 8 / dtype_bits;
+    if (auto* shape_imm = global_shape[0].as<IntImmNode>()) {
+      if (shape_imm->value % pf != 0) {
+        return fallback_to_normal(
+            "sub-byte inner extent not divisible by packing factor");
+      }
+    } else if (!analyzer->CanProveEqual(FloorMod(global_shape[0], pf), 0)) {
+      return fallback_to_normal(
+          "sub-byte inner extent not divisible by packing factor");
+    }
+    if (auto* coord_imm = global_coords[0].as<IntImmNode>()) {
+      if (coord_imm->value % pf != 0) {
+        return fallback_to_normal(
+            "sub-byte inner offset not divisible by packing factor");
+      }
+    } else if (!analyzer->CanProveEqual(FloorMod(global_coords[0], pf), 0)) {
+      return fallback_to_normal(
+          "sub-byte inner offset not divisible by packing factor");
+    }
+  }
+
+  // instruction_dim_elems: always in elements (for IR-level addressing and splits).
+  // For sub-byte types, hardware .b8 args are in bytes; convert when pushing args.
+  int instruction_dim_elems = inner_box_dim_value;
+  if (swizzle_mode == SwizzleMode::Swizzle64B()) {
+    instruction_dim_elems = AiuElementsForBytes(64, shared_tensor->dtype);
+  } else if (swizzle_mode == SwizzleMode::Swizzle128B()) {
+    instruction_dim_elems = AiuElementsForBytes(128, shared_tensor->dtype);
+  }
+  if (instruction_dim_elems > 256) {
     ICHECK(inner_box_dim_value % 256 == 0)
         << "inner_box_dim: " << inner_box_dim_value
         << " is not divisible by 256";
-    instruction_dim = 256;
+    instruction_dim_elems = 256;
   }
-  ICHECK(inner_box_dim_value % instruction_dim == 0)
+  ICHECK(inner_box_dim_value % instruction_dim_elems == 0)
       << "inner_box_dim: " << inner_box_dim_value
-      << " is not divisible by instruction_dim: " << instruction_dim;
+      << " is not divisible by instruction_dim: " << instruction_dim_elems;
 
   int64_t inner_box_bytes =
-      AiuBytesFromElements(instruction_dim, shared_tensor->dtype);
+      AiuBytesFromElements(instruction_dim_elems, shared_tensor->dtype);
   int max_swizzle_bytes = swizzle_mode == SwizzleMode::Swizzle64B() ? 64 : 128;
   if (inner_box_bytes > max_swizzle_bytes) {
     return fallback_to_normal("AIU inner box exceeds swizzle byte width");
   }
 
-  int inner_splits = inner_box_dim_value / instruction_dim;
+  int inner_splits = inner_box_dim_value / instruction_dim_elems;
   int num_warps = std::max(1, thread_extent_value / 32);
   int target_outer_splits = std::max(1, num_warps / inner_splits);
   int outer_splits = 1;
@@ -661,8 +699,12 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
     participating_warps = inner_splits * outer_splits;
   }
 
-  smem_box.Set(0, PrimExpr(instruction_dim));
+  smem_box.Set(0, PrimExpr(instruction_dim_elems));
   smem_box.Set(cube_layout_pos[1], PrimExpr(outer_per_warp));
+
+  // For sub-byte types (e.g. FP4), hardware .b8 args are in bytes.
+  // packing_factor converts element count to byte count: bytes = elems / packing_factor.
+  int packing_factor = is_sub_byte ? (8 / dtype_bits) : 1;
 
   Array<PrimExpr> args;
   args.reserve(12);
@@ -671,7 +713,13 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   for (size_t i = 0; i < rank; ++i) {
     global_shape_temp = global_shape_temp * global_shape[i];
     if (i == cube_layout_pos[1] - 1) {
-      args.push_back(global_shape_temp);
+      // shape_0: for sub-byte types, convert elements to bytes for .b8 instruction
+      if (is_sub_byte) {
+        args.push_back(FloorDiv(global_shape_temp,
+                                IntImm(DataType::Int(32), packing_factor)));
+      } else {
+        args.push_back(global_shape_temp);
+      }
       global_shape_temp = 1;
     } else if (i == rank - 1) {
       args.push_back(global_shape_temp);
@@ -679,7 +727,8 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   }
   args.push_back(global_stride[0]);
   args.push_back(global_stride[cube_layout_pos[1]]);
-  args.push_back(smem_box[0]);
+  // block_0: for sub-byte types, convert elements to bytes for .b8 instruction
+  args.push_back(PrimExpr(instruction_dim_elems / packing_factor));
   args.push_back(smem_box[cube_layout_pos[1]]);
   args.push_back(swizzle);
 
@@ -695,13 +744,13 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
       FloorDiv(warp_id, IntImm(DataType::Int(32), inner_splits));
   PrimExpr shared_addr = shared_tensor.access_ptr(
       2, DataType::Handle(), 1,
-      shared_offset + warp_inner_idx * (instruction_dim * outer_box_dim_value) +
-          warp_outer_idx * (instruction_dim * outer_per_warp),
+      shared_offset + warp_inner_idx * (instruction_dim_elems * outer_box_dim_value) +
+          warp_outer_idx * (instruction_dim_elems * outer_per_warp),
       total_elements);
   args.push_back(shared_addr);
 
   global_coords.Set(0,
-                    global_coords[0] + instruction_dim * warp_inner_idx);
+                    global_coords[0] + instruction_dim_elems * warp_inner_idx);
   global_coords.Set(cube_layout_pos[1],
                     global_coords[cube_layout_pos[1]] +
                         outer_per_warp * warp_outer_idx);
@@ -714,7 +763,12 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
     }
     return result;
   };
-  args.push_back(compute_coord(0, cube_layout_pos[1] - 1));
+  // coord_0: for sub-byte types, convert elements to bytes for .b8 instruction
+  PrimExpr coord_0 = compute_coord(0, cube_layout_pos[1] - 1);
+  if (is_sub_byte) {
+    coord_0 = FloorDiv(coord_0, IntImm(DataType::Int(32), packing_factor));
+  }
+  args.push_back(coord_0);
   args.push_back(compute_coord(cube_layout_pos[1], rank - 1));
   args.push_back(IntImm(DataType::Int(32), global_tensor->dtype.bits()));
 

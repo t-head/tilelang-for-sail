@@ -35,6 +35,36 @@ def test_gemm_fp4(trans_A, trans_B, num_stages):
 
 
 # ---------------------------------------------------------------------------
+# FP4 (e2m1) GEMM – block_K=128 with/without swzl pass_config
+# ---------------------------------------------------------------------------
+
+@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
+def test_gemm_fp4_block_k128_with_swzl():
+    """block_K=128 with swzl pass_config: fp4 128*4/8=64B -> swzl_mode=1."""
+    M = N = K = 256
+    ppu_example_gemm_fp4.run_case(
+        M, N, K,
+        block_M=128, block_N=128, block_K=128,
+        num_stages=2, trans_A=False, trans_B=True,
+        kernel_func=ppu_example_gemm_fp4.matmul,
+    )
+
+
+@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
+def test_gemm_fp4_block_k128_without_swzl():
+    """block_K=128, swzl disabled: fp4 ldmatrix emitted as plain tix_ldmatrix_x4."""
+    M = N = K = 256
+    ppu_example_gemm_fp4.run_case(
+        M, N, K,
+        block_M=128, block_N=128, block_K=128,
+        num_stages=2, trans_A=False, trans_B=True,
+        kernel_func=ppu_example_gemm_fp4.matmul_default,
+    )
+
+
+# ---------------------------------------------------------------------------
 # MXFP4 scaled GEMM – kernel source sanity check (2 stages x 3 K tiles = 6 cases)
 # ---------------------------------------------------------------------------
 
