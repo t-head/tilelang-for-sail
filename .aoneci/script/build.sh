@@ -7,7 +7,7 @@ set -e
 
 # build tilelang
 cd $AONE_CI_SOURCE/tilelang
-python -m build
+NO_VERSION_LABEL=OFF NO_GIT_VERSION=1 python -m build --wheel
 
 export build_output=$AONE_CI_SOURCE/output
 mkdir -p ${build_output}
