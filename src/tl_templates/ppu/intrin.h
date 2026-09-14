@@ -24,6 +24,13 @@ TL_DEVICE int linear_thread_idx_in_block() {
 
 } // namespace detail
 
+// Fallback: elect lane 0 in each warp
+namespace cute {
+TL_DEVICE bool elect_one_sync() {
+  return (detail::linear_thread_idx_in_block() % 32) == 0;
+}
+} // namespace cute
+
 TL_DEVICE int get_lane_idx(int warp_size = detail::default_warp_size()) {
   warp_size = warp_size > 0 ? warp_size : detail::default_warp_size();
   return detail::linear_thread_idx_in_block() % warp_size;
