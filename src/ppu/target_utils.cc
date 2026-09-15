@@ -14,7 +14,6 @@
 
 namespace tvm {
 namespace tl {
-namespace {
 
 int GetPPUArchInt(Target target) {
   if (!TargetIsPPU(target))
@@ -31,8 +30,6 @@ int GetPPUArchInt(Target target) {
       << "arch version suffix must be a number";
   return std::stoi(suffix);
 }
-
-} // namespace
 
 bool TargetIsPPU(Target target) {
   return target->GetTargetDeviceType() == kDLPPU;

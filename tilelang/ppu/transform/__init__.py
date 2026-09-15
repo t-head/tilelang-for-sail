@@ -27,6 +27,11 @@ def LowerLDGSTG():
     return _ffi_api.LowerLDGSTG()  # type: ignore
 
 
+def PackSubwordWarpShuffle():
+    """Fuse proven scalar FP8/INT8 relayouts into 32-bit warp shuffles."""
+    return _ffi_api.PackSubwordWarpShuffle()  # type: ignore
+
+
 def MarkPpuSyncCalls(have_pdl: bool = False):
     """MarkPpuSyncCalls."""
     # PPU: call the independently registered PPU transform implementation.
@@ -82,6 +87,7 @@ __all__ = [
     "LowerL2Persistent",
     "LowerTileOp",
     "AnnotateChainedGemm",
+    "PackSubwordWarpShuffle",
     "MarkPpuSyncCalls",
     "PersistThreadblock",
     "ReorderAIULoads",

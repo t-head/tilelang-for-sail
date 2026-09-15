@@ -152,6 +152,10 @@ def PPUPassPipelineBody(mod: IRModule, target: Target) -> IRModule:
     mod = tilelang.transform.UnrollLoop()(mod)
     mod = s_tir.transform.RenormalizeSplitPattern()(mod)
     mod = tirx.transform.Simplify()(mod)
+    # @PPU-specific: combine proven scalar subword relayouts into packed
+    # uint32 warp shuffles.
+    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(mod)
+    mod = tirx.transform.Simplify()(mod)
     mod = tirx.transform.RemoveNoOp()(mod)
     mod = s_tir.transform.HoistIfThenElse()(mod)
 

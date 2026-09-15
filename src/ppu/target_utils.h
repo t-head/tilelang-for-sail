@@ -13,6 +13,7 @@ namespace tvm {
 namespace tl {
 
 bool TargetIsPPU(Target target);
+int GetPPUArchInt(Target target);
 
 int TargetPPUGetWarpSize(Target target);
 bool TargetHasAiuCopy(Target target);
