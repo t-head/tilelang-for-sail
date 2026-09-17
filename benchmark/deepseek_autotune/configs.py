@@ -168,8 +168,8 @@ def get_mhc_post_configs():
 def get_nsa_decode_configs():
     """Tunable configs for NSA decode kernel."""
     iter_params = dict(
-        num_stages=[1, 2, 3],
-        threads=[128, 256],
+        num_stages=[0, 1, 2, 3],
+        threads=[32, 64],
     )
     return with_aiu_lower_tuning([
         {k: v for k, v in zip(iter_params, values)}

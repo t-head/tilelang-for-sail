@@ -1,7 +1,7 @@
 """Shared utilities for DeepSeek autotune benchmarks.
 
 Includes reference implementations, input tensor constructors, FLOPs helpers,
-and ncu/acu profiling utilities for collecting cycle metrics.
+and ncu/acu profiling utilities for collecting cycle and tensor-core metrics.
 """
 
 import os
@@ -168,14 +168,28 @@ def bench_ref(fn, warmup=5, rep=20):
     return do_bench(fn, warmup=warmup, rep=rep)
 
 
+def _format_ratio(numerator, denominator):
+    """Format a TileLang/Ref ratio string, e.g. ``"0.854x"``.
+
+    Profiling bugs (e.g. acu reporting 0 cycles/TC) turn the ratio into a
+    0/0 division.  Return ``"Invalid"`` in that case instead of crashing or
+    printing a misleading number.
+    """
+    if denominator:
+        return f"{numerator / denominator:.3f}x"
+    return "Invalid"
+
+
 def print_benchmark_summary(name, config_str, tilelang_latency, tilelang_tflops,
                             ref_latency, ref_tflops, ref_name, best_config,
-                            tilelang_cycles=None,
-                            ref_cycles=None):
+                            tilelang_cycles=None, tilelang_tc=None,
+                            ref_cycles=None, ref_tc=None):
     """Print a tabulate grid summary for a single benchmark configuration.
 
-    When cycle profiling data is provided, that metric is appended to the
-    same table instead of being printed separately.
+    When cycle/tensor-core profiling data is provided, those metrics are
+    appended to the same table instead of being printed separately.
+    Mirrors the per-result table format used in
+    benchmark/flash_attention_autotune/compare_bench.py.
     """
     from tabulate import tabulate
 
@@ -183,18 +197,22 @@ def print_benchmark_summary(name, config_str, tilelang_latency, tilelang_tflops,
     print("-" * 60)
     print(f"tilelang_best_config: {best_config}")
 
-    ratio_latency = tilelang_latency / ref_latency if ref_latency > 0 else float("nan")
-    ratio_tflops = tilelang_tflops / ref_tflops if ref_tflops > 0 else float("nan")
-
     table_data = [
         ["Metric", "TileLang", ref_name, "Ratio (TL/Ref)"],
-        ["Latency (ms)", f"{tilelang_latency:.4f}", f"{ref_latency:.4f}", f"{ratio_latency:.3f}x"],
-        ["TFlops", f"{tilelang_tflops:.2f}", f"{ref_tflops:.2f}", f"{ratio_tflops:.3f}x"],
+        ["Latency (ms)", f"{tilelang_latency:.4f}", f"{ref_latency:.4f}",
+         _format_ratio(tilelang_latency, ref_latency)],
+        ["TFlops", f"{tilelang_tflops:.2f}", f"{ref_tflops:.2f}",
+         _format_ratio(tilelang_tflops, ref_tflops)],
     ]
     if tilelang_cycles is not None and ref_cycles is not None:
-        ratio_cycles = tilelang_cycles / ref_cycles if ref_cycles > 0 else float("nan")
         table_data.append(
-            ["Cycles", f"{tilelang_cycles:,.0f}", f"{ref_cycles:,.0f}", f"{ratio_cycles:.3f}x"]
+            ["Cycles", f"{tilelang_cycles:,.0f}", f"{ref_cycles:,.0f}",
+             _format_ratio(tilelang_cycles, ref_cycles)]
+        )
+    if tilelang_tc is not None and ref_tc is not None:
+        table_data.append(
+            ["TC Efficiency", f"{tilelang_tc:.2f}", f"{ref_tc:.2f}",
+             _format_ratio(tilelang_tc, ref_tc)]
         )
     print(tabulate(table_data, headers="firstrow", tablefmt="grid"))
 
@@ -205,7 +223,7 @@ def print_benchmark_summary(name, config_str, tilelang_latency, tilelang_tflops,
 #
 # Mirrors benchmark/flash_attention_autotune/utils.py: builds ncu (GPU) or
 # acu (PPU) commands, runs the target script as a subprocess, and parses the
-# resulting log to extract SM/CE cycle counts.
+# resulting log to extract SM/CE cycle counts and tensor-core efficiency.
 
 
 def inject_pass_configs_from_env(kernel_func):
@@ -252,7 +270,8 @@ def read_cycle_from_nculog(filename, framework="tilelang", kernel_filters=None,
                            exclude_kernel_filters=None, verbose=True):
     """Parse an ncu/acu ``--page=details`` log file.
 
-    Extracts per-kernel cycle counts (``__cycles_active.max``).
+    Extracts per-kernel cycle counts (``__cycles_active.max``) and tensor-core
+    efficiency (``pct_of_peak_sustained_active``).
 
     Args:
         filename: Path to the profiler log.
@@ -264,7 +283,8 @@ def read_cycle_from_nculog(filename, framework="tilelang", kernel_filters=None,
         verbose: Print matched kernels for debugging filter correctness.
 
     Returns:
-        ``cycle_sum`` – total matched cycles.
+        ``(cycle_sum, tc_avg)`` – total matched cycles and cycle-weighted
+        tensor-core efficiency.
     """
     # Match kernel name lines in ncu/acu --page=details logs.
     # Both ncu and acu emit lines like:
@@ -273,17 +293,24 @@ def read_cycle_from_nculog(filename, framework="tilelang", kernel_filters=None,
     # "kernel", so we match on the ", Device <n>" suffix instead.
     kernel_pattern = r",\s*Device\s+\d+"
     cycles_pattern = "__cycles_active.max"
+    tc_pattern = "pct_of_peak_sustained_active"
     kernel_list = []
     cycles_list = []
+    tc_list = []
     with open(filename, newline="") as log_file:
         for line in log_file.read().split("\n"):
             if re.search(kernel_pattern, line):
                 kernel_list.append(line.strip())
             if re.search(cycles_pattern, line):
                 cycles_list.append(int(line.strip().split()[-1]))
+            if re.search(tc_pattern, line):
+                tc_list.append(float(line.strip().split()[-1]))
 
     assert len(kernel_list) == len(cycles_list), (
         f"kernel/cycle mismatch: {len(kernel_list)} vs {len(cycles_list)}"
+    )
+    assert len(kernel_list) == len(tc_list), (
+        f"kernel/tc mismatch: {len(kernel_list)} vs {len(tc_list)}"
     )
 
     if kernel_filters is None and framework == "tilelang":
@@ -296,26 +323,29 @@ def read_cycle_from_nculog(filename, framework="tilelang", kernel_filters=None,
 
     matched = []
     cycle_sum = 0
-    for op, cycle in zip(kernel_list, cycles_list):
+    tc_weighted_sum = 0.0
+    for op, cycle, tc in zip(kernel_list, cycles_list, tc_list):
         include = True
         if kernel_filters:
             include = _match_any(op, kernel_filters)
         if include and exclude_kernel_filters and _match_any(op, exclude_kernel_filters):
             include = False
         if include:
-            matched.append((op, cycle))
+            matched.append((op, cycle, tc))
             cycle_sum += cycle
+            tc_weighted_sum += tc * cycle
 
     if verbose:
         print(f"Matched {framework} kernels from {os.path.basename(filename)}:")
-        for op, cycle in matched:
-            print(f"  cycles={cycle:>12,}, kernel={op[:180]}")
+        for op, cycle, tc in matched:
+            print(f"  cycles={cycle:>12,}, tc={tc:>8.2f}, kernel={op[:180]}")
 
     if cycle_sum == 0:
         print("Not valid profiling log or no matching kernels found!")
-        return 0
+        return 0, 0
 
-    return cycle_sum
+    tc_avg = tc_weighted_sum / cycle_sum
+    return cycle_sum, tc_avg
 
 
 def get_device_type() -> str:
@@ -329,9 +359,15 @@ def get_device_type() -> str:
 def get_metrics_string(dev: str = "gpu") -> str:
     """Return the profiler metrics string for the given device type."""
     if dev == "gpu":
-        return "sm__cycles_active.max"
+        return (
+            "sm__cycles_active.max,"
+            "sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active"
+        )
     else:
-        return "ce__cycles_active.max"
+        return (
+            "ce__cycles_active.max,"
+            "cu__inst_executed_pipe_tensor_fp16.avg.pct_of_peak_sustained_active"
+        )
 
 
 def setup_ppu_env():
@@ -349,7 +385,7 @@ def run_cycle_on_device(
     kernel_filters=None,
     exclude_kernel_filters=None,
 ):
-    """Run a Python script under ncu/acu and return ``cycle``.
+    """Run a Python script under ncu/acu and return ``(cycle, tc)``.
 
     Args:
         script_path: Path to the benchmark script to profile.
@@ -361,11 +397,11 @@ def run_cycle_on_device(
         exclude_kernel_filters: Optional substrings of kernel names to exclude.
 
     Returns:
-        ``cycle`` – total cycles.
+        ``(cycle, tc)`` – total cycles and cycle-weighted tensor-core efficiency.
     """
     run_cmd(f"rm -f {log_file}")
 
-    profiler = "ncu" if dev == "gpu" else "ASIGHT_FEATURE_INSTRUCTION_COUNT=0 acu"
+    profiler = "ncu" if dev == "gpu" else "acu"
     metrics = get_metrics_string(dev)
     args_str = " ".join(str(a) for a in script_args)
 
@@ -376,32 +412,34 @@ def run_cycle_on_device(
     )
     run_cmd(cmd)
 
-    cycle = read_cycle_from_nculog(
+    cycle, tc = read_cycle_from_nculog(
         log_file, framework=framework,
         kernel_filters=kernel_filters,
         exclude_kernel_filters=exclude_kernel_filters,
     )
-    return cycle
+    return cycle, tc
 
 
 def print_cycle_summary(name, config_str, tilelang_latency, tilelang_tflops,
-                         tilelang_cycle, ref_latency, ref_tflops,
-                         ref_name, best_config, ref_cycle=0):
-    """Print a summary table that includes cycles for both TileLang and the reference."""
+                         tilelang_cycle, tilelang_tc, ref_latency, ref_tflops,
+                         ref_name, best_config, ref_cycle=0, ref_tc=0):
+    """Print a summary table that includes cycles and tensor-core efficiency
+    for both TileLang and the reference."""
     from tabulate import tabulate
 
     print(f"\n[{name}] {config_str}")
     print("-" * 70)
     print(f"tilelang_best_config: {best_config}")
 
-    ratio_latency = tilelang_latency / ref_latency if ref_latency > 0 else float("nan")
-    ratio_tflops = tilelang_tflops / ref_tflops if ref_tflops > 0 else float("nan")
-    ratio_cycle = tilelang_cycle / ref_cycle if ref_cycle > 0 else float("nan")
-
     table_data = [
         ["Metric", "TileLang", ref_name, "Ratio (TL/Ref)"],
-        ["Latency (ms)", f"{tilelang_latency:.4f}", f"{ref_latency:.4f}", f"{ratio_latency:.3f}x"],
-        ["TFlops", f"{tilelang_tflops:.2f}", f"{ref_tflops:.2f}", f"{ratio_tflops:.3f}x"],
-        ["Cycles", f"{tilelang_cycle:,.0f}", f"{ref_cycle:,.0f}", f"{ratio_cycle:.3f}x"],
+        ["Latency (ms)", f"{tilelang_latency:.4f}", f"{ref_latency:.4f}",
+         _format_ratio(tilelang_latency, ref_latency)],
+        ["TFlops", f"{tilelang_tflops:.2f}", f"{ref_tflops:.2f}",
+         _format_ratio(tilelang_tflops, ref_tflops)],
+        ["Cycles", f"{tilelang_cycle:,.0f}", f"{ref_cycle:,.0f}",
+         _format_ratio(tilelang_cycle, ref_cycle)],
+        ["TC Efficiency", f"{tilelang_tc:.2f}", f"{ref_tc:.2f}",
+         _format_ratio(tilelang_tc, ref_tc)],
     ]
     print(tabulate(table_data, headers="firstrow", tablefmt="grid"))

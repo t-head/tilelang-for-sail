@@ -5,7 +5,7 @@ import re
 import ast
 import os
 import gc
-from utils import run_fa_cycle_on_device, run_tilelang_cycle_on_device
+from utils import run_fa_cycle_on_device, run_tilelang_cycle_on_device, format_ratio
 from tabulate import tabulate
 
 from kernels.example_mha_fwd_bshd import main as tilelang_mha_fwd_bshd_main
@@ -207,11 +207,11 @@ def run_comparison(batch, heads, seq_len, head_dim, groups, causal, algo="mha", 
     del Q, K, V, dO
     gc.collect()
     torch.cuda.empty_cache()
-    fa_cycle = run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode,
+    fa_cycle, fa_tc = run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode,
                            "./cycle.log", dev=dev)
     gc.collect()
     torch.cuda.empty_cache()
-    tilelang_cycle = run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode,
+    tilelang_cycle, tilelang_tc = run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode,
                            tilelang_best_config, "./cycle.log", dev=dev)
 
     # Print summary
@@ -226,11 +226,13 @@ def run_comparison(batch, heads, seq_len, head_dim, groups, causal, algo="mha", 
         table_data = [
             ["Metric", "Tilelang", "Flash-2", "Ratio (T/Flash)"],
             ["Latency (ms)", f"{results['tilelang_latency_ms']:.4f}", f"{results['flash_latency_ms']:.4f}",
-             f"{results['tilelang_latency_ms']/results['flash_latency_ms']:.3f}x"],
+             format_ratio(results["tilelang_latency_ms"], results["flash_latency_ms"])],
             ["TFlops", f"{results['tilelang_tflops']:.2f}", f"{results['flash_tflops']:.2f}",
-             f"{results['tilelang_tflops']/results['flash_tflops']:.3f}x"],
+             format_ratio(results["tilelang_tflops"], results["flash_tflops"])],
             ["cycles", f"{tilelang_cycle:,.0f}", f"{fa_cycle:,.0f}",
-             f"{tilelang_cycle / fa_cycle:.3f}x"]
+             format_ratio(tilelang_cycle, fa_cycle)],
+            ["tc", f"{tilelang_tc}", f"{fa_tc}",
+             format_ratio(tilelang_tc, fa_tc)]
         ]
         print(tabulate(table_data, headers="firstrow", tablefmt="grid"))
     else:
@@ -420,14 +422,13 @@ if __name__ == "__main__":
     for r in all_results:
         if (isinstance(r.get("tilelang_latency_ms"), (int, float)) and
             isinstance(r.get("flash_latency_ms"), (int, float))):
-            speedup = r["flash_latency_ms"] / r["tilelang_latency_ms"]
             summary_data.append([
                 r["config"],
                 f"{r['tilelang_latency_ms']:.4f}",
                 f"{r['flash_latency_ms']:.4f}",
                 f"{r['tilelang_tflops']:.2f}",
                 f"{r['flash_tflops']:.2f}",
-                f"{speedup:.3f}x",
+                format_ratio(r["flash_latency_ms"], r["tilelang_latency_ms"]),
             ])
             success_count += 1
 

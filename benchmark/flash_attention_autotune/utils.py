@@ -3,6 +3,19 @@ import csv
 import subprocess
 import re
 
+
+def format_ratio(numerator, denominator):
+    """Format a TileLang/Flash-2 ratio string, e.g. ``"0.854x"``.
+
+    Profiling bugs (e.g. acu reporting 0 cycles/TC) turn the ratio into a
+    0/0 division.  Return ``"Invalid"`` in that case instead of crashing or
+    printing a misleading number.
+    """
+    if denominator:
+        return f"{numerator / denominator:.3f}x"
+    return "Invalid"
+
+
 def run_cmd(cmd: str, timeout=None, stdout=subprocess.PIPE, stderr=subprocess.PIPE):
     print(f"Run command: {cmd}, timeout: {timeout}")
     ret = subprocess.run(args=cmd, timeout=timeout, shell=True, stdout=stdout, stderr=stderr, encoding="utf-8")
@@ -37,42 +50,58 @@ def inject_pass_configs_from_env(kernel_func):
 def read_cycle_from_nculog(filename, mode, framwork):
     kernel_pattern = r"(.*)kernel(.*)Device(.*)"
     cycles_pattern = "__cycles_active.max"
+    tc_pattern = "pct_of_peak_sustained_active"
     kernel_list = []
     cycles_list = []
+    tc_list = []
     with open(filename, newline='') as log_file:
         for line in log_file.read().split("\n"):
             if re.search(kernel_pattern, line):
                 kernel_list.append(line.strip())
             if re.search(cycles_pattern, line):
                 cycles_list.append(int(line.strip().split()[-1]))
+            if re.search(tc_pattern, line):
+                tc_list.append(float(line.strip().split()[-1]))
+    # print(kernel_list)
+    # print(cycles_list)
+    # print(tc_list)
     assert(len(kernel_list) == len(cycles_list))
+    assert(len(kernel_list) == len(tc_list))
     op_cycles = dict()
     cycle_sum = 0
+    tc_sum = 0
     for i in range(len(kernel_list)):
         op = kernel_list[i]
         cycle = cycles_list[i]
         op_cycles[op] = cycle
+        # if "fwd" in op.lower() or "mla" in op.lower(): # flashmla ppu / triton / flashinfer
+        #     fwd_cycle_sum += cycle
+        #     fwd_tc_sum += tc_list[i]
         if framwork == "flash-2":
             if "fwd" in mode:
                 if "flash_fwd" in op.lower():
                     cycle_sum += cycle
+                    tc_sum += tc_list[i]
             elif "bwd" in mode:
                 if "flash_bwd" in op.lower():
                     cycle_sum += cycle
+                    tc_sum += tc_list[i]
         elif framwork == "tilelang":
             if "fwd" in mode:
                 if "main_kernel" in op.lower():
                     cycle_sum += cycle
+                    tc_sum += tc_list[i]
             elif "bwd" in mode:
                 if "flash_bwd_kernel" in op.lower():
                     cycle_sum = cycle
+                    tc_sum = tc_list[i]
     # calculate statistics data
     if cycle_sum != 0:
         # fwd unit case
-        return cycle_sum, op_cycles
+        return cycle_sum, tc_sum, op_cycles
     else:
         print("Not valid CSV file!")
-        return 0, []
+        return 0, 0, []
         #exit(-1)
 
 def run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode,
@@ -93,7 +122,7 @@ def run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo
         run_local: Whether to save results to output_file
     """
     output_lines = list()
-    headers = ["casename","cycle","cmd","detail"]
+    headers = ["casename","cycle","tc efficiency", "cmd","detail"]
 
     # Build case name
     causal_str = "causal" if causal else "noncausal"
@@ -104,7 +133,8 @@ def run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo
     run_cmd(cmd)
 
     # Get metrics based on device
-    metrics_string = "sm__cycles_active.max" if dev == "gpu" else "ce__cycles_active.max"
+    metrics_string = "sm__cycles_active.max,sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active" if dev == "gpu" else \
+                     "ce__cycles_active.max,cu__inst_executed_pipe_tensor_fp16.avg.pct_of_peak_sustained_active"
     mode = mode.split('_')[0]
 
     # Build the command to run run_flash.py
@@ -113,7 +143,7 @@ def run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo
           --batch {} --heads {} --seq_len {} --head_dim {} \
           --groups {} --{} --algo {} --mode {} \
           2>&1 | tee -a {}'.format(
-        "ncu" if dev == "gpu" else "ASIGHT_FEATURE_INSTRUCTION_COUNT=0 acu",
+        "ncu" if dev == "gpu" else "acu",
         metrics_string,
         batch,
         heads,
@@ -126,14 +156,14 @@ def run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo
         log_file)
 
     run_cmd(cmd)
-    cycle, detail = read_cycle_from_nculog(log_file, mode, "flash-2")
-    output_lines.append([case_name.replace(",", "_"), str(cycle), str(cmd), str(detail)])
+    cycle, tc, detail = read_cycle_from_nculog(log_file, mode, "flash-2")
+    output_lines.append([case_name.replace(",", "_"), str(cycle), str(tc), str(cmd), str(detail)])
 
     dirname = os.path.dirname(output_file)
     cmd = f"mkdir -p {dirname}"
     run_cmd(cmd)
 
-    return cycle
+    return cycle, tc
 
     # if len(output_lines) == 1:
     #     with open("local.log", "w") as f:
@@ -178,7 +208,7 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
         run_local: Whether to save results to output_file
     """
     output_lines = list()
-    headers = ["casename","cycle","cmd","detail"]
+    headers = ["casename","cycle","tc efficiency", "cmd","detail"]
 
     # Build case name
     causal_str = "causal" if causal else "noncausal"
@@ -201,7 +231,8 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
         os.environ.pop("TILELANG_PASS_CONFIGS", None)
 
     # Get metrics based on device
-    metrics_string = "sm__cycles_active.max" if dev == "gpu" else "ce__cycles_active.max"
+    metrics_string = "sm__cycles_active.max,sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active" if dev == "gpu" else \
+                     "ce__cycles_active.max,cu__inst_executed_pipe_tensor_fp16.avg.pct_of_peak_sustained_active"
     fn = algo + "_" + mode
     filename = "example_" + fn + ".py"
 
@@ -211,7 +242,7 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
               --page=details python ./kernels/{} \
               --batch {} --heads {} --seq_len {} --dim {} \
               --{} --block_M {} --block_N {} --num_stages {} --threads {} 2>&1 | tee -a {}'.format(
-            "ncu" if dev == "gpu" else "ASIGHT_FEATURE_INSTRUCTION_COUNT=0 acu",
+            "ncu" if dev == "gpu" else "acu",
             metrics_string,
             filename,
             batch,
@@ -230,7 +261,7 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
               --page=details python ./kernels/{} \
               --batch {} --heads {} --seq_q {} --seq_kv {} --dim {} \
               --{} --block_M {} --block_N {} --num_stages {} --threads {} 2>&1 | tee -a {}'.format(
-            "ncu" if dev == "gpu" else "ASIGHT_FEATURE_INSTRUCTION_COUNT=0 acu",
+            "ncu" if dev == "gpu" else "acu",
             metrics_string,
             filename,
             batch,
@@ -250,7 +281,7 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
               --page=details python ./kernels/{} \
               --batch {} --heads {} --seq_len {} --dim {} \
               --{} --groups {} --block_M {} --block_N {} --num_stages {} --threads {} 2>&1 | tee -a {}'.format(
-            "ncu" if dev == "gpu" else "ASIGHT_FEATURE_INSTRUCTION_COUNT=0 acu",
+            "ncu" if dev == "gpu" else "acu",
             metrics_string,
             filename,
             batch,
@@ -270,7 +301,7 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
               --page=details python ./kernels/{} \
               --batch {} --h {} --n_ctx {} --d_head {} \
               --{} --block_M {} --block_N {} --num_stages {} --threads {} 2>&1 | tee -a {}'.format(
-            "ncu" if dev == "gpu" else "ASIGHT_FEATURE_INSTRUCTION_COUNT=0 acu",
+            "ncu" if dev == "gpu" else "acu",
             metrics_string,
             filename,
             batch,
@@ -289,7 +320,7 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
               --page=details python ./kernels/{} \
               --batch {} --h {} --n_ctx {} --d_head {} \
               --{} --block_M {} --block_N {} --num_stages {} --threads {} 2>&1 | tee -a {}'.format(
-            "ncu" if dev == "gpu" else "ASIGHT_FEATURE_INSTRUCTION_COUNT=0 acu",
+            "ncu" if dev == "gpu" else "acu",
             metrics_string,
             filename,
             batch,
@@ -308,7 +339,7 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
               --page=details python ./kernels/{} \
               --batch {} --h {} --n_ctx {} --d_head_qk {} --d_head_v {} \
               --{} --groups {} --block_M {} --block_N {} --num_stages {} --threads {} 2>&1 | tee -a {}'.format(
-            "ncu" if dev == "gpu" else "ASIGHT_FEATURE_INSTRUCTION_COUNT=0 acu",
+            "ncu" if dev == "gpu" else "acu",
             metrics_string,
             filename,
             batch,
@@ -325,14 +356,14 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
             log_file)
 
     run_cmd(cmd)
-    cycle, detail = read_cycle_from_nculog(log_file, mode, "tilelang")
-    output_lines.append([case_name.replace(",", "_"), str(cycle), str(cmd), str(detail)])
+    cycle, tc, detail = read_cycle_from_nculog(log_file, mode, "tilelang")
+    output_lines.append([case_name.replace(",", "_"), str(cycle), str(tc), str(cmd), str(detail)])
 
     dirname = os.path.dirname(output_file)
     cmd = f"mkdir -p {dirname}"
     run_cmd(cmd)
 
-    return cycle
+    return cycle, tc
     # if len(output_lines) == 1:
     #     with open("local.log", "w") as f:
     #         writer = csv.writer(f)

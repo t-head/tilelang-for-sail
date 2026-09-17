@@ -24,7 +24,7 @@ _arch = hgcc.get_target_compute_version()
 _compute_version = hgcc.parse_compute_version(_arch)
 
 
-# Set to '1' to also collect acu/ncu cycle numbers.
+# Set to '1' to also collect acu/ncu cycle and tensor-core utilisation numbers.
 PROFILE_CYCLES = os.environ.get("TILELANG_PROFILE_CYCLES", "1") == "1"
 # Device for cycle profiling: auto-detected if None.
 PROFILE_DEV = os.environ.get("TILELANG_PROFILE_DEV", None)
@@ -130,20 +130,20 @@ def _pass_configs_inject(config, obj_path):
 
 
 def _maybe_profile(kernel_script, ref_script):
-    """Run acu/ncu profiling if TILELANG_PROFILE_CYCLES=1 and return cycles.
+    """Run acu/ncu profiling if TILELANG_PROFILE_CYCLES=1 and return (cycles, tc) tuples.
 
-    Returns (tilelang_cycles, ref_cycles). When profiling is disabled both
-    values are None so callers can omit the metrics.
+    Returns (tilelang_cycles, tilelang_tc, ref_cycles, ref_tc). When profiling
+    is disabled all four values are None so callers can omit the metrics.
     """
     if not PROFILE_CYCLES:
-        return None, None
-    tilelang_cycles = profile_python_script(
+        return None, None, None, None
+    tilelang_cycles, tilelang_tc = profile_python_script(
         kernel_script, dev=PROFILE_DEV, timeout=300
     )
-    ref_cycles = profile_python_script(
+    ref_cycles, ref_tc = profile_python_script(
         ref_script, dev=PROFILE_DEV, timeout=300
     )
-    return tilelang_cycles, ref_cycles
+    return tilelang_cycles, tilelang_tc, ref_cycles, ref_tc
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +191,7 @@ def test_matmul(m, n, k, with_roller=False):
             torch.cuda.synchronize()
         run()
     """)
-    tl_cycles, ref_cycles = _maybe_profile(kernel_script, ref_script)
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(kernel_script, ref_script)
 
     print_benchmark_summary(
         "MatMul",
@@ -199,8 +199,8 @@ def test_matmul(m, n, k, with_roller=False):
         result.latency, tilelang_tflops,
         result.ref_latency if result.ref_latency is not None else 0.0, ref_tflops,
         "Reference", result.config,
-        tilelang_cycles=tl_cycles,
-        ref_cycles=ref_cycles,
+        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles, ref_tc=ref_tc,
     )
 
 
@@ -252,7 +252,7 @@ def test_matmul_intrinsic(m, n, k, with_roller=False):
             torch.cuda.synchronize()
         run()
     """)
-    tl_cycles, ref_cycles = _maybe_profile(kernel_script, ref_script)
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(kernel_script, ref_script)
 
     print_benchmark_summary(
         "MatMul Intrinsic",
@@ -260,8 +260,8 @@ def test_matmul_intrinsic(m, n, k, with_roller=False):
         result.latency, tilelang_tflops,
         result.ref_latency if result.ref_latency is not None else 0.0, ref_tflops,
         "Reference", result.config,
-        tilelang_cycles=tl_cycles,
-        ref_cycles=ref_cycles,
+        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles, ref_tc=ref_tc,
     )
 
 
@@ -320,7 +320,7 @@ def test_matmul_sp(m, n, k, accum_dtype="float"):
             torch.cuda.synchronize()
         run()
     """)
-    tl_cycles, ref_cycles = _maybe_profile(kernel_script, ref_script)
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(kernel_script, ref_script)
 
     print_benchmark_summary(
         "MatMul SP",
@@ -328,8 +328,8 @@ def test_matmul_sp(m, n, k, accum_dtype="float"):
         result.latency, tilelang_tflops,
         result.ref_latency if result.ref_latency is not None else 0.0, ref_tflops,
         "Reference", result.config,
-        tilelang_cycles=tl_cycles,
-        ref_cycles=ref_cycles,
+        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles, ref_tc=ref_tc,
     )
 
 
@@ -381,7 +381,7 @@ def test_matmul_rs(m, n, k, with_roller=False):
             torch.cuda.synchronize()
         run()
     """)
-    tl_cycles, ref_cycles = _maybe_profile(kernel_script, ref_script)
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(kernel_script, ref_script)
 
     print_benchmark_summary(
         "MatMul RS",
@@ -389,8 +389,8 @@ def test_matmul_rs(m, n, k, with_roller=False):
         result.latency, tilelang_tflops,
         result.ref_latency if result.ref_latency is not None else 0.0, ref_tflops,
         "Reference", result.config,
-        tilelang_cycles=tl_cycles,
-        ref_cycles=ref_cycles,
+        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles, ref_tc=ref_tc,
     )
 
 
@@ -442,7 +442,7 @@ def test_matmul_sr(m, n, k, with_roller=False):
             torch.cuda.synchronize()
         run()
     """)
-    tl_cycles, ref_cycles = _maybe_profile(kernel_script, ref_script)
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(kernel_script, ref_script)
 
     print_benchmark_summary(
         "MatMul SR",
@@ -450,8 +450,8 @@ def test_matmul_sr(m, n, k, with_roller=False):
         result.latency, tilelang_tflops,
         result.ref_latency if result.ref_latency is not None else 0.0, ref_tflops,
         "Reference", result.config,
-        tilelang_cycles=tl_cycles,
-        ref_cycles=ref_cycles,
+        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles, ref_tc=ref_tc,
     )
 
 
