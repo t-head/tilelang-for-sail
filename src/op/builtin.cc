@@ -302,21 +302,6 @@ TIR_DEFINE_TL_BUILTIN(ptx_ldmatrix)
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque));
 
-TIR_DEFINE_TL_BUILTIN(aiu_load)
-    .set_num_inputs(-1)
-    .set_attr<TCallEffectKind>("TCallEffectKind",
-                               Integer(CallEffectKind::kOpaque));
-
-TIR_DEFINE_TL_BUILTIN(ptx_ldmatrix_swzl)
-    .set_num_inputs(6)
-    .set_attr<TCallEffectKind>("TCallEffectKind",
-                               Integer(CallEffectKind::kOpaque));
-
-TIR_DEFINE_TL_BUILTIN(ppu_to_uniform_b32)
-    .set_num_inputs(1)
-    .set_attr<TCallEffectKind>("TCallEffectKind",
-                               Integer(CallEffectKind::kPure));
-
 TIR_DEFINE_TL_BUILTIN(ptx_stmatrix)
     .set_num_inputs(-1)
     .set_attr<TCallEffectKind>("TCallEffectKind",
@@ -828,6 +813,21 @@ TIR_DEFINE_TL_BUILTIN(tma_store_cluster)
     .set_num_inputs(5)
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque));
+
+TIR_DEFINE_TL_BUILTIN(ppu_aiu_load)
+    .set_num_inputs(10)
+    .set_attr<TCallEffectKind>("TCallEffectKind",
+                               Integer(CallEffectKind::kOpaque));
+
+TIR_DEFINE_TL_BUILTIN(tix_ldmatrix_swzl)
+    .set_num_inputs(6)
+    .set_attr<TCallEffectKind>("TCallEffectKind",
+                               Integer(CallEffectKind::kOpaque));
+
+TIR_DEFINE_TL_BUILTIN(ppu_to_uniform_b32)
+    .set_num_inputs(1)
+    .set_attr<TCallEffectKind>("TCallEffectKind",
+                               Integer(CallEffectKind::kPure));
 
 } // namespace tl
 } // namespace tvm

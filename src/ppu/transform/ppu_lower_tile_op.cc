@@ -813,7 +813,7 @@ private:
   }
 
   PrimExpr VisitExpr_(const tirx::CallNode *op) final {
-    if (op->op.same_as(tl::aiu_load())) {
+    if (op->op.same_as(tl::ppu_aiu_load())) {
       // PPU AIU copy encodes shared swizzle in the instruction operands, so
       // access-pointer lowering should only follow buffer remapping.
       in_aiu_context_ = true;
@@ -884,7 +884,7 @@ private:
     }
 
     // PPU: support tsm.ld.swzl
-    if (op->op.same_as(tl::ptx_ldmatrix_swzl())) {
+    if (op->op.same_as(tl::tix_ldmatrix_swzl())) {
       is_ptx_ = true;
       auto call = Downcast<Call>(IRMutatorWithAnalyzer::VisitExpr_(op));
       is_ptx_ = false;

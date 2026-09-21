@@ -1034,7 +1034,7 @@ struct TileLangThreadSyncPlanner : public ConstrVisitor {
     // unnecessary barriers between aiu_load writes and ptx_ldmatrix reads.
     auto is_aiu_load = [&]() {
       if (auto opt = op->op.as<Op>()) {
-        return opt.value().same_as(tl::aiu_load());
+        return opt.value().same_as(tl::ppu_aiu_load());
       }
       return false;
     }();

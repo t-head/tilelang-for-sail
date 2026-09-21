@@ -283,32 +283,12 @@ TL_DEVICE void store_global_128_conditional(void *ptr, uint4 value, bool pred) {
   global_store<uint4, 16>(ptr, value, pred);
 }
 
-TL_DEVICE void aiu_load(void const *global_ptr, uint32_t shape_0, uint32_t shape_1,
-                        uint32_t stride_0, uint32_t stride_1,
-                        uint32_t block_0, uint32_t block_1,
-                        uint32_t swzl_mode, void const *const smem_ptr,
-                        int32_t const &crd0, int32_t const &crd1) {
-  uint32_t smem_int_ptr = smem_ptr_to_uint(smem_ptr);
-  asm volatile("ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.swzl.b16"
-               " [%0], [%1], "
-               "{%2, %3, %4}, "
-               "{%5, %6, %7}, "
-               "{%8, %9}, "
-               "{%10, %11, %12}, %13;"
-               ::"r"(smem_int_ptr), "l"((void const *)(global_ptr)),
-               "r"(shape_0), "r"(shape_1), "r"(1),
-               "r"(block_0), "r"(block_1), "r"(1),
-               "r"(stride_0 * shape_0), "r"(stride_1 * shape_1),
-               "r"(crd0), "r"(crd1), "r"(0),
-               "r"(swzl_mode));
-}
-
-TL_DEVICE void aiu_load_b8(void const *global_ptr, uint32_t shape_0,
-                           uint32_t shape_1, uint32_t stride_0,
-                           uint32_t stride_1, uint32_t block_0,
-                           uint32_t block_1, uint32_t swzl_mode,
-                           void const *const smem_ptr, int32_t const &crd0,
-                           int32_t const &crd1) {
+TL_DEVICE void aiu_load(void const *smem_ptr, void const *global_ptr,
+                        uint32_t dim_c, uint32_t dim_w,
+                        uint32_t cube_c, uint32_t cube_w,
+                        uint32_t stride_w_bytes,
+                        int32_t start_c, int32_t start_w,
+                        uint32_t swzl_mode) {
   uint32_t smem_int_ptr = smem_ptr_to_uint(smem_ptr);
   asm volatile("ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.swzl.b8"
                " [%0], [%1], "
@@ -317,10 +297,10 @@ TL_DEVICE void aiu_load_b8(void const *global_ptr, uint32_t shape_0,
                "{%8, %9}, "
                "{%10, %11, %12}, %13;"
                ::"r"(smem_int_ptr), "l"((void const *)(global_ptr)),
-               "r"(shape_0), "r"(shape_1), "r"(1),
-               "r"(block_0), "r"(block_1), "r"(1),
-               "r"(stride_0 * shape_0), "r"(stride_1 * shape_1),
-               "r"(crd0), "r"(crd1), "r"(0),
+               "r"(dim_c), "r"(dim_w), "r"(1),
+               "r"(cube_c), "r"(cube_w), "r"(1),
+               "r"(dim_c), "r"(stride_w_bytes * dim_w),
+               "r"(start_c), "r"(start_w), "r"(0),
                "r"(swzl_mode));
 }
 

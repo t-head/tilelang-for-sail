@@ -1,5 +1,5 @@
 /*!
- * \brief Wrap threadIdx variables in aiu_load and ptx_ldmatrix_swzl address
+ * \brief Wrap threadIdx variables in aiu_load and tix_ldmatrix_swzl address
  * arguments with ppu_to_uniform_b32.
  * \file inject_ppu_uniform.cc
  */
@@ -62,8 +62,8 @@ private:
   }
 
   PrimExpr VisitExpr_(const CallNode *op) final {
-    if (op->op.same_as(tl::aiu_load()) ||
-        op->op.same_as(tl::ptx_ldmatrix_swzl())) {
+    if (op->op.same_as(tl::ppu_aiu_load()) ||
+        op->op.same_as(tl::tix_ldmatrix_swzl())) {
       // Wrap threadIdx in all arguments with ppu_to_uniform_b32
       Array<PrimExpr> new_args;
       new_args.reserve(op->args.size());

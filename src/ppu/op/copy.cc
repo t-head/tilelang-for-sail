@@ -702,41 +702,28 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   smem_box.Set(0, PrimExpr(instruction_dim_elems));
   smem_box.Set(cube_layout_pos[1], PrimExpr(outer_per_warp));
 
-  // For sub-byte types (e.g. FP4), hardware .b8 args are in bytes.
-  // packing_factor converts element count to byte count: bytes = elems / packing_factor.
-  int packing_factor = is_sub_byte ? (8 / dtype_bits) : 1;
-
-  Array<PrimExpr> args;
-  args.reserve(12);
-  args.push_back(global_addr);
-  PrimExpr global_shape_temp = 1;
-  for (size_t i = 0; i < rank; ++i) {
-    global_shape_temp = global_shape_temp * global_shape[i];
-    if (i == cube_layout_pos[1] - 1) {
-      // shape_0: for sub-byte types, convert elements to bytes for .b8 instruction
-      if (is_sub_byte) {
-        args.push_back(FloorDiv(global_shape_temp,
-                                IntImm(DataType::Int(32), packing_factor)));
-      } else {
-        args.push_back(global_shape_temp);
+  // Compute shape_0 (inner dim, in elements) and shape_1 (outer dim, in rows).
+  PrimExpr shape_0_elements;
+  PrimExpr shape_1_rows;
+  {
+    PrimExpr acc = 1;
+    for (size_t i = 0; i < rank; ++i) {
+      acc = acc * global_shape[i];
+      if (i == cube_layout_pos[1] - 1) {
+        shape_0_elements = acc;
+        acc = 1;
+      } else if (i == rank - 1) {
+        shape_1_rows = acc;
       }
-      global_shape_temp = 1;
-    } else if (i == rank - 1) {
-      args.push_back(global_shape_temp);
     }
   }
-  args.push_back(global_stride[0]);
-  args.push_back(global_stride[cube_layout_pos[1]]);
-  // block_0: for sub-byte types, convert elements to bytes for .b8 instruction
-  args.push_back(PrimExpr(instruction_dim_elems / packing_factor));
-  args.push_back(smem_box[cube_layout_pos[1]]);
-  args.push_back(swizzle);
 
   PrimExpr total_elements = 1;
   for (auto e : smem_box) {
     total_elements *= e;
   }
 
+  // Warp partitioning (unchanged).
   PrimExpr warp_id = FloorDiv(lower_args.thread_var, IntImm(DataType::Int(32), 32));
   PrimExpr warp_inner_idx =
       FloorMod(warp_id, IntImm(DataType::Int(32), inner_splits));
@@ -747,8 +734,8 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
       shared_offset + warp_inner_idx * (instruction_dim_elems * outer_box_dim_value) +
           warp_outer_idx * (instruction_dim_elems * outer_per_warp),
       total_elements);
-  args.push_back(shared_addr);
 
+  // Coordinate computation (in elements).
   global_coords.Set(0,
                     global_coords[0] + instruction_dim_elems * warp_inner_idx);
   global_coords.Set(cube_layout_pos[1],
@@ -763,16 +750,28 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
     }
     return result;
   };
-  // coord_0: for sub-byte types, convert elements to bytes for .b8 instruction
-  PrimExpr coord_0 = compute_coord(0, cube_layout_pos[1] - 1);
-  if (is_sub_byte) {
-    coord_0 = FloorDiv(coord_0, IntImm(DataType::Int(32), packing_factor));
-  }
-  args.push_back(coord_0);
-  args.push_back(compute_coord(cube_layout_pos[1], rank - 1));
-  args.push_back(IntImm(DataType::Int(32), global_tensor->dtype.bits()));
+  PrimExpr coord_0_elements = compute_coord(0, cube_layout_pos[1] - 1);
+  PrimExpr coord_1_rows = compute_coord(cube_layout_pos[1], rank - 1);
 
-  Stmt aiu_copy = Evaluate(Call(DataType::Handle(), aiu_load(), args));
+  // Build 10-parameter byte-mode args for ppu_aiu_load.
+  // C-dimension params (dim_c, cube_c, start_c) are in bytes;
+  // W-dimension params (dim_w, cube_w, start_w) are in rows.
+  DataType dtype = global_tensor->dtype;
+  Array<PrimExpr> args;
+  args.reserve(10);
+  args.push_back(shared_addr);                                            // [0] smem_ptr
+  args.push_back(global_addr);                                            // [1] gmem_ptr
+  args.push_back(AiuBytesFromElements(shape_0_elements, dtype));          // [2] dim_c (bytes)
+  args.push_back(shape_1_rows);                                           // [3] dim_w (rows)
+  args.push_back(AiuBytesFromElements(PrimExpr(instruction_dim_elems),
+                                      dtype));                            // [4] cube_c (bytes)
+  args.push_back(smem_box[cube_layout_pos[1]]);                           // [5] cube_w (rows)
+  args.push_back(global_stride[cube_layout_pos[1]]);                      // [6] stride_w_bytes
+  args.push_back(AiuBytesFromElements(coord_0_elements, dtype));          // [7] start_c (bytes)
+  args.push_back(coord_1_rows);                                           // [8] start_w (rows)
+  args.push_back(swizzle);                                                // [9] swzl_mode
+
+  Stmt aiu_copy = Evaluate(Call(DataType::Handle(), ppu_aiu_load(), args));
   return IfThenElse(LT(warp_id, IntImm(DataType::Int(32), participating_warps)),
                     aiu_copy);
 }

@@ -304,7 +304,6 @@ ptx_tcgen05_mma_ss = _dtype_forward(_tir_op.ptx_tcgen05_mma_ss)
 ptx_tcgen05_mma_ts = _dtype_forward(_tir_op.ptx_tcgen05_mma_ts)
 ptx_tcgen05_mma_blockscaled_ss = _dtype_forward(_tir_op.ptx_tcgen05_mma_blockscaled_ss)
 ptx_ldmatrix = _tir_op.ptx_ldmatrix
-ptx_ldmatrix_swzl = _tir_op.ptx_ldmatrix_swzl  # PPU: ld swizzle
 ptx_cp_async = _dtype_forward(_tir_op.ptx_cp_async)
 ptx_cp_async_bulk = _dtype_forward(_tir_op.ptx_cp_async_bulk)
 mma_store = _dtype_forward(_tir_op.mma_store)
@@ -316,6 +315,9 @@ tvm_mfma = _dtype_forward(_tir_op.tvm_mfma)
 tvm_mfma_store = _dtype_forward(_tir_op.tvm_mfma_store)
 tvm_rdna_wmma = _dtype_forward(_tir_op.tvm_rdna_wmma)
 tvm_rdna_wmma_store = _dtype_forward(_tir_op.tvm_rdna_wmma_store)
+
+tix_ldmatrix_swzl = _tir_op.tix_ldmatrix_swzl  # PPU: ld swizzle
+ppu_aiu_load = _tir_op.ppu_aiu_load
 
 
 # ---------------------------------------------------------------------------

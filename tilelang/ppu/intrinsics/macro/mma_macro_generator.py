@@ -1077,7 +1077,7 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
                         T.access_ptr(A_local_buf[i * local_size_a], "w", extent=access_extent),
                     )
                 else:
-                    T.ptx_ldmatrix_swzl(
+                    T.tix_ldmatrix_swzl(
                         T.bool(trans),
                         4,
                         T.access_ptr(A_buf[src_indices], "r", extent=access_extent),
@@ -1243,7 +1243,7 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
                         T.access_ptr(B_local_buf[i * local_size_b], "w", extent=access_extent),
                     )
                 else:
-                    T.ptx_ldmatrix_swzl(
+                    T.tix_ldmatrix_swzl(
                         T.bool(trans),
                         num,
                         T.access_ptr(B_buf[src_indices], "r", extent=access_extent),

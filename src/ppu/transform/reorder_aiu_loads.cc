@@ -33,7 +33,7 @@ using namespace ffi;
 
 /*!
  * \brief Extract the dst buffer VarNode from an aiu_load call.
- * arg[8] is tvm_access_ptr(type, buffer_data_var, offset, extent, mask).
+ * arg[0] is tvm_access_ptr(type, buffer_data_var, offset, extent, mask).
  * Returns nullptr if extraction fails.
  */
 static const VarNode *ExtractAIULoadDstVar(const Stmt &stmt) {
@@ -41,8 +41,8 @@ static const VarNode *ExtractAIULoadDstVar(const Stmt &stmt) {
   PostOrderVisit(stmt, [&](const ObjectRef &node) {
     if (result) return;
     if (auto *call = node.as<CallNode>()) {
-      if (call->op.same_as(tl::aiu_load()) && call->args.size() > 8) {
-        if (auto *access_call = call->args[8].as<CallNode>()) {
+      if (call->op.same_as(tl::ppu_aiu_load()) && call->args.size() > 0) {
+        if (auto *access_call = call->args[0].as<CallNode>()) {
           if (access_call->op.same_as(builtin::tvm_access_ptr()) &&
               access_call->args.size() > 1) {
             if (auto *var = access_call->args[1].as<VarNode>()) {
@@ -65,7 +65,7 @@ static bool IsAIULoadStmt(const Stmt &stmt) {
   PostOrderVisit(stmt, [&](const ObjectRef &node) {
     if (found) return;
     if (auto *call = node.as<CallNode>()) {
-      if (call->op.same_as(tl::aiu_load())) {
+      if (call->op.same_as(tl::ppu_aiu_load())) {
         found = true;
       }
     }

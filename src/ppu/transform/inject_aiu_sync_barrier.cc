@@ -46,7 +46,7 @@ bool ContainsAIULoad(const Stmt &stmt) {
   bool found = false;
   PostOrderVisit(stmt, [&](const ObjectRef &node) {
     if (auto *call = node.as<CallNode>()) {
-      if (call->op.same_as(tl::aiu_load())) {
+      if (call->op.same_as(tl::ppu_aiu_load())) {
         found = true;
       }
     }
@@ -246,8 +246,8 @@ private:
     PostOrderVisit(stmt, [&](const ObjectRef &node) {
       if (found) return;
       if (auto *call = node.as<CallNode>()) {
-        if (call->op.same_as(tl::aiu_load()) && call->args.size() > 8) {
-          if (auto *access_call = call->args[8].as<CallNode>()) {
+        if (call->op.same_as(tl::ppu_aiu_load()) && call->args.size() > 0) {
+          if (auto *access_call = call->args[0].as<CallNode>()) {
             if (access_call->op.same_as(builtin::tvm_access_ptr()) &&
                 access_call->args.size() > 1) {
               if (auto *var = access_call->args[1].as<VarNode>()) {
@@ -270,7 +270,7 @@ private:
     int count = 0;
     PostOrderVisit(stmt, [&](const ObjectRef &node) {
       if (auto *call = node.as<CallNode>()) {
-        if (call->op.same_as(tl::aiu_load())) {
+        if (call->op.same_as(tl::ppu_aiu_load())) {
           ++count;
         }
       }
@@ -282,16 +282,16 @@ private:
    * \brief Collect per-aiu_load PendingGroups from a statement.
    * Each aiu_load call creates a separate PendingGroup (since each has its
    * own commit). Groups are appended in program order (PostOrderVisit).
-   * arg[8] is tvm_access_ptr(type, buffer_data_var, offset, extent, mask).
+   * arg[0] is tvm_access_ptr(type, buffer_data_var, offset, extent, mask).
    * We extract buffer_data_var (arg[1] of tvm_access_ptr).
    */
   void CollectAIUDstGroups(const Stmt &stmt,
                            std::vector<PendingGroup> *groups) {
     PostOrderVisit(stmt, [&](const ObjectRef &node) {
       if (auto *call = node.as<CallNode>()) {
-        if (call->op.same_as(tl::aiu_load()) && call->args.size() > 8) {
+        if (call->op.same_as(tl::ppu_aiu_load()) && call->args.size() > 0) {
           PendingGroup group;
-          PrimExpr dst = call->args[8];
+          PrimExpr dst = call->args[0];
           // dst should be tvm_access_ptr(type, buffer_data, offset, extent, mask)
           if (auto *access_call = dst.as<CallNode>()) {
             if (access_call->op.same_as(builtin::tvm_access_ptr()) &&
