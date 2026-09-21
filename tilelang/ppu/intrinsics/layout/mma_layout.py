@@ -331,6 +331,18 @@ def ppu_ldmatrix_trans_32x8_to_shared_16x16_layout(thread_id, local_id):
     return row, col
 
 
+def ppu_ldmatrix_32x16_to_shared_16x32_layout_s8_a(thread_id, local_id):
+    """PPU0010 INT8 A layout.
+
+    Elementwise equivalent to ``ldmatrix_32x16_to_shared_16x32_layout_b``;
+    keep the two mappings synchronized. The separate name documents the tc01
+    A-fragment contract at its call site.
+    """
+    row = (thread_id // 16) * 8 + (thread_id % 8)
+    col = local_id + 16 * ((thread_id % 16) // 8)
+    return row, col
+
+
 def ppu_mma_store_32x8_to_shared_16x16_layout(thread_id, local_id):
     row = thread_id // 4 + 8 * (local_id // 4)
     col = thread_id % 4 + 4 * (local_id % 4)

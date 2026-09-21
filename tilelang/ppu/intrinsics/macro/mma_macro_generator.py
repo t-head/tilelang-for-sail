@@ -42,6 +42,7 @@ from ..layout.mma_layout import (
     ppu_ldmatrix_32x4_to_shared_16x8_layout_a,
     ppu_ldmatrix_32x8_to_shared_16x16_layout,
     ppu_ldmatrix_trans_32x8_to_shared_16x16_layout,
+    ppu_ldmatrix_32x16_to_shared_16x32_layout_s8_a,
     ppu_mma_store_32x8_to_shared_16x16_layout,
     ppu_mma_load_a_32x4_to_shared_16x8_layout,
     ppu_shared_16x8_to_mma_32x4_layout_sr_a,
@@ -942,11 +943,24 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         super().__init__(*args, **kwargs)
 
     def _initialize_mma_prefix(self, k_dim: int = 16):
+        a_dtype = DataType(self.a_dtype)
+        b_dtype = DataType(self.b_dtype)
+        accum_dtype = DataType(self.accum_dtype)
+        is_ppu0010_int8 = (
+            self.ppu_arch == 10
+            and a_dtype == DataType("int8")
+            and b_dtype == DataType("int8")
+            and accum_dtype == DataType("int32")
+            and not self.a_transposed
+        )
         if k_dim == 8:
             self.mma_prefix = "m16n16k8"
         elif k_dim == 16:
             self.mma_prefix = "m16n16k16"
-        elif k_dim == 32 and self.ppu_arch >= 15 and not DataType(self.a_dtype).is_float4_e2m1fn():
+        elif k_dim == 32 and (
+            is_ppu0010_int8
+            or (self.ppu_arch >= 15 and not DataType(self.a_dtype).is_float4_e2m1fn())
+        ):
             self.mma_prefix = "m16n16k32"
         elif (
             k_dim == 64
@@ -1011,7 +1025,14 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         return 0, False
 
     def ldmatrix_a(self, A_local_buf: Buffer, A_shared_buf: Buffer | BufferRegion, ki: PrimExpr, rk: PrimExpr | None = 0):
-        a_bits = DataType(self.a_dtype).bits
+        a_dtype = DataType(self.a_dtype)
+        a_bits = a_dtype.bits
+        is_ppu0010_int8 = (
+            self.ppu_arch == 10
+            and a_dtype == DataType("int8")
+            and DataType(self.b_dtype) == DataType("int8")
+            and DataType(self.accum_dtype) == DataType("int32")
+        )
         if a_bits not in (4, 8, 16):
             return self._ldmatrix_a_default(A_local_buf, A_shared_buf, ki, rk)
         if a_bits in (4, 8) and self.a_transposed:
@@ -1062,6 +1083,8 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
                 else:
                     if a_bits == 4:
                         row_off, col_off = ldmatrix_32x16_to_shared_16x64_layout_a(tx, 0)
+                    elif is_ppu0010_int8:
+                        row_off, col_off = ppu_ldmatrix_32x16_to_shared_16x32_layout_s8_a(tx, 0)
                     elif a_bits == 8:
                         row_off, col_off = ldmatrix_32x16_to_shared_16x32_layout_a(tx, 0)
                     elif self.ppu_arch >= 15:

@@ -43,7 +43,7 @@ TL_DEVICE void tix_ldmatrix_x4(void const *const smem_ptr,
 #if defined(__HGGC_ARCH__)
   asm volatile(
 #if __HGGC_ARCH__ == 100
-      "ppu.tc01.ex.ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n"
+      "ppu.tc01.ex.ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0, %1, %2, %3}, [%4];\n"
 #elif __HGGC_ARCH__ == 150
       "ppu.tc02.ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n"
 #endif

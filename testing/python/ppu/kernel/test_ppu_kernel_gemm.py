@@ -5,6 +5,8 @@ layout variants with all PPU-supported dtypes (float16, bfloat16, int8,
 tfloat32, float32, float8 e4m3/e5m2) and NN/TN/NT transpose combinations.
 """
 
+import pytest
+
 from tilelang import tvm as tvm
 import tilelang
 import tilelang.testing
@@ -96,6 +98,7 @@ def run_gemm(
     num_stages=0,
     num_threads=128,
     b_in_dtype=None,
+    expected_source_counts=None,
 ):
     program = matmul(
         M,
@@ -115,6 +118,10 @@ def run_gemm(
     )
 
     kernel = tilelang.compile(program, out_idx=[2])
+    if expected_source_counts is not None:
+        source = kernel.get_kernel_source()
+        for snippet, expected_count in expected_source_counts.items():
+            assert source.count(snippet) == expected_count
     profiler = kernel.get_profiler()
 
     def ref_program(A, B):
@@ -286,6 +293,53 @@ def test_ppu_gemm_i8i8i32_nn():
         128,
         64,
     )
+
+
+@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_eq(1, 0)
+def test_ppu10_gemm_i8i8i32_m16n16k32_nt():
+    run_gemm(
+        16,
+        16,
+        32,
+        False,
+        True,
+        T.int8,
+        T.int32,
+        T.int32,
+        16,
+        16,
+        32,
+        num_stages=0,
+        num_threads=32,
+        expected_source_counts={
+            "tl::tix_ldmatrix_x4(": 2,
+            "tl::tix_ldmatrix_x4_native_ppu10(": 0,
+        },
+    )
+
+
+@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_eq(1, 0)
+@pytest.mark.parametrize("trans_B", [False, True])
+def test_ppu10_gemm_i8i8i32_m16n16k32_transposed_a_rejected(trans_B):
+    program = matmul(
+        16,
+        16,
+        32,
+        16,
+        16,
+        32,
+        True,
+        trans_B,
+        T.int8,
+        T.int32,
+        T.int32,
+        num_stages=0,
+        threads=32,
+    )
+    with pytest.raises(ValueError, match="Unsupported k_dim 32"):
+        tilelang.compile(program, out_idx=[2])
 
 
 @tilelang.testing.requires_ppu
