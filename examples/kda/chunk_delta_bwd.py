@@ -1,7 +1,7 @@
 # Reference: fla/ops/common/chunk_delta_h.py
 import tilelang
 import tilelang.language as T
-from tilelang.autotuner import autotune
+from kda_autotune import autotune
 
 from FLA_KDA.fla_chunk_delta import chunk_gated_delta_rule_bwd_dhu
 from FLA_KDA.cumsum import chunk_local_cumsum

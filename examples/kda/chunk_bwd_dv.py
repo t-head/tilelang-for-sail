@@ -1,6 +1,6 @@
 import tilelang
 import tilelang.language as T
-from tilelang.autotuner import autotune
+from kda_autotune import autotune
 import sys  # noqa: F401
 
 from FLA_KDA.fla_chunk_o import chunk_bwd_dv_local

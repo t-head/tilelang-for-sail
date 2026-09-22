@@ -26,6 +26,9 @@ bool TargetIsMetal(Target target) {
 bool TargetIsCPU(Target target) {
   return target->GetTargetDeviceType() == kDLCPU;
 }
+bool TargetIsPPU(Target target) {
+  return target->GetTargetDeviceType() == kDLPPU;
+}
 
 int GetArchInt(Target target) {
   auto s = target->GetAttr<String>("arch");
@@ -35,6 +38,20 @@ int GetArchInt(Target target) {
   ICHECK_EQ(arch_str.compare(0, 3, "sm_"), 0)
       << "arch string must start with sm_";
   return std::stoi(arch_str.substr(3));
+}
+
+int GetPPUArchInt(Target target) {
+  auto s = target->GetAttr<String>("arch");
+  ICHECK(s.has_value());
+  const std::string arch_str = s.value();
+  size_t pos = arch_str.rfind('_');
+  ICHECK(pos != std::string::npos && pos + 1 < arch_str.size())
+      << "arch string must contain '_' followed by a version number";
+  const std::string suffix = arch_str.substr(pos + 1);
+  ICHECK(!suffix.empty() &&
+         suffix.find_first_not_of("0123456789") == std::string::npos)
+      << "arch version suffix must be a number";
+  return std::stoi(suffix);
 }
 
 bool TargetIsVolta(Target target) {
@@ -126,11 +143,16 @@ bool TargetHasAsyncCopy(Target target) {
     } else {
       return false;
     }
+  } else if (TargetIsPPU(target)) {
+    return true;
   }
 
   return false;
 }
 bool TargetHasLdmatrix(Target target) {
+  if (TargetIsPPU(target)) {
+    return true;
+  }
   if (!TargetIsCuda(target))
     return false;
   int arch = GetArchInt(target);
@@ -155,6 +177,13 @@ bool TargetHasBulkCopy(Target target) {
     return false;
   int arch = GetArchInt(target);
   return arch >= 90;
+}
+
+bool TargetHasAiuCopy(Target target) {
+  if (!TargetIsPPU(target))
+    return false;
+  int arch = GetPPUArchInt(target);
+  return arch == 15;
 }
 
 bool TargetIsCuTeDSL(Target target) {
@@ -308,6 +337,8 @@ TVM_FFI_STATIC_INIT_BLOCK() {
   refl::GlobalDef()
       .def("tl.TargetIsCuda",
            [](Target target) { return TargetIsCuda(target); })
+      .def("tl.TargetIsPPU",
+           [](Target target) { return TargetIsPPU(target); })
       .def("tl.TargetIsRocm",
            [](Target target) { return TargetIsRocm(target); })
       .def("tl.TargetIsMetal",
@@ -336,6 +367,8 @@ TVM_FFI_STATIC_INIT_BLOCK() {
            [](Target target) { return TargetHasStmatrix(target); })
       .def("tl.TargetHasBulkCopy",
            [](Target target) { return TargetHasBulkCopy(target); })
+      .def("tl.TargetHasAiuCopy",
+           [](Target target) { return TargetHasAiuCopy(target); })
       .def("tl.TargetGetRDNAGeneration",
            [](Target target) { return TargetGetRDNAGeneration(target); })
       .def("tl.TargetGetWarpSize",

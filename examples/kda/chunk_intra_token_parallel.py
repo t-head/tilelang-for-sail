@@ -1,6 +1,6 @@
 import tilelang
 import tilelang.language as T
-from tilelang.autotuner import autotune
+from kda_autotune import autotune
 import torch
 import torch.nn.functional as F
 from FLA_KDA.fla_chunk_intra_token_parallel import chunk_kda_fwd_intra_token_parallel

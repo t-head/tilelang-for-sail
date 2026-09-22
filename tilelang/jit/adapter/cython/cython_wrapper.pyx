@@ -7,6 +7,13 @@ from libc.stdint cimport int64_t, uintptr_t
 from libc.stdlib cimport malloc, free
 from tvm import tirx
 
+# Sub-byte packed dtypes are physically stored as int8/uint8 tensors in torch.
+_SUB_BYTE_PACKED_DTYPES = set()
+for _attr_name in ("float4_e2m1fn_x2",):
+    _torch_dt = getattr(torch, _attr_name, None)
+    if _torch_dt is not None:
+        _SUB_BYTE_PACKED_DTYPES.add(_torch_dt)
+
 cdef class CythonKernelWrapper:
     # Class attributes to store kernel configuration and library reference
     cdef:
@@ -96,6 +103,8 @@ cdef class CythonKernelWrapper:
         for param, (buffer_idx, torch_dtype) in self.buffer_dtype_map.items():
             tensor = tensor_list[buffer_idx]
             if isinstance(tensor, torch.Tensor) and tensor.dtype != torch_dtype:
+                if torch_dtype in _SUB_BYTE_PACKED_DTYPES and tensor.dtype in (torch.int8, torch.uint8):
+                    continue
                 raise ValueError(
                     f"Buffer dtype mismatch for parameter {param}: "
                     f"expected {torch_dtype}, got {tensor.dtype}"
@@ -116,10 +125,25 @@ cdef class CythonKernelWrapper:
                     f"got {tensor.dim()}"
                 )
 
+            # Sub-byte packed dtypes: only the last dim is packed (physical = logical // pack factor).
+            sub_byte_pack_factor = 1
+            if self.buffer_dtype_map is not None:
+                _dtype_entry = self.buffer_dtype_map.get(param)
+                if _dtype_entry is not None:
+                    _, _torch_dtype = _dtype_entry
+                    if _torch_dtype in _SUB_BYTE_PACKED_DTYPES:
+                        sub_byte_pack_factor = 2
+
+            last_dim = tensor.dim() - 1
+
             # Check each dimension
             for shape_idx, expected_shape in shape_list:
+                if expected_shape == -1:
+                    continue
                 actual_shape = tensor.shape[shape_idx]
-                if expected_shape != -1 and actual_shape != expected_shape:
+                if sub_byte_pack_factor > 1 and shape_idx == last_dim:
+                    expected_shape = expected_shape // sub_byte_pack_factor
+                if actual_shape != expected_shape:
                     raise ValueError(
                         f"Static shape mismatch for parameter {param}: "
                         f"expected {expected_shape} at index {shape_idx}, "
@@ -132,6 +156,19 @@ cdef class CythonKernelWrapper:
             if not isinstance(tensor, torch.Tensor):
                 # otherwise, maybe torch.data_ptr() for T.ptr inputs
                 continue
+
+            # Sub-byte packed dtypes: only non-last-dim strides are packed;
+            # the last-dim stride is 1 in both views and needs no scaling.
+            sub_byte_pack_factor = 1
+            if self.buffer_dtype_map is not None:
+                _dtype_entry = self.buffer_dtype_map.get(param)
+                if _dtype_entry is not None:
+                    _, _torch_dtype = _dtype_entry
+                    if _torch_dtype in _SUB_BYTE_PACKED_DTYPES:
+                        sub_byte_pack_factor = 2
+
+            last_dim = tensor.dim() - 1
+
             for stride_idx, expected_stride in strides_list:
                 # Ensure the stride index is within the valid range of tensor dimensions
                 # (stride_idx should be less than the number of dimensions of the tensor)
@@ -139,6 +176,8 @@ cdef class CythonKernelWrapper:
                 if tensor.shape[stride_idx] == 1:
                     continue
                 actual_stride = tensor.stride(stride_idx)
+                if sub_byte_pack_factor > 1 and stride_idx != last_dim:
+                    expected_stride = expected_stride // sub_byte_pack_factor
                 if actual_stride != expected_stride:
                     raise ValueError(
                         f"Static stride mismatch for parameter {param}: "
@@ -192,16 +231,28 @@ cdef class CythonKernelWrapper:
         for i in range(len(self.params)):
             if i in self.result_idx:
                 dtype = self.param_dtypes[i]
+                # Sub-byte packed outputs are allocated with the packed (halved) last dim.
+                out_sub_byte_pack_factor = 2 if dtype in _SUB_BYTE_PACKED_DTYPES else 1
                 shape = []
+                last_dim_idx = len(self.param_shapes[i]) - 1
                 # Now working with native Python list, no FFI calls needed
-                for s in self.param_shapes[i]:
+                for dim_idx, s in enumerate(self.param_shapes[i]):
                     if isinstance(s, tirx.Var):
                         for key in self.dynamic_symbolic_map:
                             if(str(s) == str(key)):
-                                ref_id, ref_tensor_idx, ref_shape_idx, _stride_scale = self.dynamic_symbolic_map[key]
-                                shape.append(tensor_list[ref_tensor_idx].shape[ref_shape_idx])
+                                ref_id, ref_tensor_idx, ref_shape_idx, ref_scale = self.dynamic_symbolic_map[key]
+                                if ref_id == 0:
+                                    dim_value = tensor_list[ref_tensor_idx].shape[ref_shape_idx] * ref_scale
+                                else:
+                                    dim_value = tensor_list[ref_tensor_idx].stride(ref_shape_idx) * ref_scale
+                                if dim_idx == last_dim_idx and out_sub_byte_pack_factor > 1:
+                                    dim_value = dim_value // out_sub_byte_pack_factor
+                                shape.append(dim_value)
                     else:  # Already converted to Python int during initialization
-                        shape.append(s)
+                        if dim_idx == last_dim_idx and out_sub_byte_pack_factor > 1:
+                            shape.append(s // out_sub_byte_pack_factor)
+                        else:
+                            shape.append(s)
 
                 if device is None:
                     device = self._infer_output_device(inputs)
@@ -267,7 +318,7 @@ cdef class CythonKernelWrapper:
         # Add dynamic dimension values to kernel arguments
         for _, (ref_id, buffer_idx, shape_idx, stride_scale) in self.dynamic_symbolic_map.items():
             if ref_id == 0:
-                call_args.append(ctypes.c_int64(tensor_list[buffer_idx].shape[shape_idx]))
+                call_args.append(ctypes.c_int64(tensor_list[buffer_idx].shape[shape_idx] * stride_scale))
             else:
                 call_args.append(ctypes.c_int64(tensor_list[buffer_idx].stride(shape_idx) * stride_scale))
 

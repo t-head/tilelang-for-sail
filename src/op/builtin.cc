@@ -23,6 +23,7 @@ TVM_REGISTER_PASS_CONFIG_OPTION(kDisableWarpSpecialized, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableThreadStorageSync, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kConfigIndexBitwidth, Integer);
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableTMALower, Bool);
+TVM_REGISTER_PASS_CONFIG_OPTION(kDisableAIULower, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kEnableAggressiveSharedMemoryMerge, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableSharedMemoryReuse, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kForceLetInline, Bool);
@@ -32,6 +33,7 @@ TVM_REGISTER_PASS_CONFIG_OPTION(kPtxasRegisterUsageLevel, Integer);
 TVM_REGISTER_PASS_CONFIG_OPTION(kEnablePTXASVerboseOutput, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableVectorize256, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kEnableAsyncCopy, Bool);
+TVM_REGISTER_PASS_CONFIG_OPTION(kDisableLdmatSwzl, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kEnableVectorizePlannerVerbose, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableWGMMA, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableShuffleElect, Bool);
@@ -290,6 +292,21 @@ TIR_DEFINE_TL_BUILTIN(ptx_ldmatrix)
     .set_num_inputs(4)
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque));
+
+TIR_DEFINE_TL_BUILTIN(aiu_load)
+    .set_num_inputs(-1)
+    .set_attr<TCallEffectKind>("TCallEffectKind",
+                               Integer(CallEffectKind::kOpaque));
+
+TIR_DEFINE_TL_BUILTIN(ptx_ldmatrix_swzl)
+    .set_num_inputs(6)
+    .set_attr<TCallEffectKind>("TCallEffectKind",
+                               Integer(CallEffectKind::kOpaque));
+
+TIR_DEFINE_TL_BUILTIN(ppu_to_uniform_b32)
+    .set_num_inputs(1)
+    .set_attr<TCallEffectKind>("TCallEffectKind",
+                               Integer(CallEffectKind::kPure));
 
 TIR_DEFINE_TL_BUILTIN(ptx_stmatrix)
     .set_num_inputs(-1)
