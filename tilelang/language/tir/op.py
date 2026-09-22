@@ -975,6 +975,50 @@ def ptx_mma(
     )
 
 
+def ptx_mma_scaled(
+    dtype,
+    shape,
+    A_layout,
+    B_layout,
+    A_dtype,
+    B_dtype,
+    C_dtype,
+    multiplicand_a,
+    a_index,
+    multiplicand_b,
+    b_index,
+    accumulator,
+    c_index,
+    saturate,
+    scale_a,
+    scale_b,
+    scale_a_selector,
+    scale_b_selector,
+):
+    """PPU FP4 MMA intrinsic with four explicit runtime scale operands."""
+    return call_intrin(
+        dtype,
+        "tirx.ptx_mma",
+        shape,
+        A_layout,
+        B_layout,
+        A_dtype,
+        B_dtype,
+        C_dtype,
+        multiplicand_a,
+        a_index,
+        multiplicand_b,
+        b_index,
+        accumulator,
+        c_index,
+        saturate,
+        scale_a,
+        scale_b,
+        scale_a_selector,
+        scale_b_selector,
+    )
+
+
 def ptx_mma_sp(
     dtype,
     shape,
@@ -1501,6 +1545,24 @@ def ptx_ldmatrix(trans, num, src_access_ptr, dst_access_ptr):
         num,
         src_access_ptr,
         dst_access_ptr,
+    )
+
+
+def ptx_ldmatrix_swzl(trans, num, src_access_ptr, dst_access_ptr, swzl_mode, trans_block=False):
+    """PPU ldmatrix intrinsic using swizzled bulk tensor load.
+
+    This follows the v0.1.11 access-pointer style used by ``ptx_ldmatrix`` and
+    adds the PPU1.5 swizzle mode and block-transpose flag.
+    """
+    return tvm.tirx.call_intrin(
+        "handle",
+        tvm.tirx.op.Op.get("tl.ptx_ldmatrix_swzl"),
+        trans,
+        num,
+        src_access_ptr,
+        dst_access_ptr,
+        swzl_mode,
+        trans_block,
     )
 
 

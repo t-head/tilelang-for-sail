@@ -229,6 +229,7 @@ class Profiler:
         quantiles: list[float] | None = None,
         return_mode: Literal["min", "max", "mean", "median"] = "mean",
         dynamic_symbolic_constraints: dict[str, int] | None = None,
+        early_stop_baseline: float | None = None,
     ) -> float:
         """Benchmarks the execution time of a given function.
 
@@ -266,6 +267,7 @@ class Profiler:
             quantiles=quantiles,
             backend=backend,
             return_mode=return_mode,
+            early_stop_baseline=early_stop_baseline,
         )
 
     @property

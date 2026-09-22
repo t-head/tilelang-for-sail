@@ -90,6 +90,54 @@ def run_atomic_addx2(M, N, block_M, block_N, dtype=T.float16):
 
 
 @tilelang.jit
+def atomic_add_mixed_dtype_program(N, src_dtype, dst_dtype):
+    @T.prim_func
+    def atomic_add(Src: T.Tensor((N,), src_dtype), Out: T.Tensor((N,), dst_dtype)):
+        with T.Kernel(1, threads=1):
+            frag = T.alloc_fragment((N,), src_dtype)
+            for i in T.Parallel(N):
+                frag[i] = Src[i]
+            for i in T.Parallel(N):
+                T.atomic_add(Out[i], frag[i])
+
+    return atomic_add
+
+
+def run_atomic_add_mixed_dtype(N, src_dtype, dst_dtype):
+    kernel = atomic_add_mixed_dtype_program(N, src_dtype, dst_dtype)
+
+    src = torch.arange(1, N + 1, dtype=getattr(torch, src_dtype)).cuda()
+    out = torch.zeros(N, dtype=getattr(torch, dst_dtype)).cuda()
+    kernel(src, out)
+    assert "AtomicAddx2" in kernel.get_kernel_source()
+    torch.testing.assert_close(out, src.to(getattr(torch, dst_dtype)), atol=1e-2, rtol=1e-2)
+
+
+@tilelang.jit
+def atomic_addx2_mixed_dtype_program(M, N, block_M, block_N, src_dtype, dst_dtype):
+    @T.prim_func
+    def atomic_addx2(A: T.Tensor((M, N), src_dtype), B: T.Tensor((M, N), dst_dtype)):
+        with T.Kernel(T.ceildiv(M, block_M), T.ceildiv(N, block_N), threads=32) as (bx, by):
+            for i, j in T.Parallel(block_M, block_N // 2):
+                idx_i = bx * block_M + i
+                idx_j = by * block_N + j * 2
+                T.atomic_addx2(B[idx_i, idx_j], A[idx_i, idx_j])
+
+    return atomic_addx2
+
+
+def run_atomic_addx2_mixed_dtype(M, N, block_M, block_N, src_dtype, dst_dtype):
+    kernel = atomic_addx2_mixed_dtype_program(M, N, block_M, block_N, src_dtype, dst_dtype)
+
+    A = torch.randn(M, N, dtype=getattr(torch, src_dtype)).cuda()
+    B = torch.zeros(M, N, dtype=getattr(torch, dst_dtype)).cuda()
+    ref_B = A.to(getattr(torch, dst_dtype))
+    kernel(A, B)
+    assert "AtomicAddx2" in kernel.get_kernel_source()
+    torch.testing.assert_close(B, ref_B, atol=1e-2, rtol=1e-2)
+
+
+@tilelang.jit
 def atomic_different_memory_orders_program(M, N, block_M, block_N, dtype=T.float32):
     @T.prim_func
     def atomic_different_orders(
@@ -274,6 +322,16 @@ def test_atomic_addx2_float():
     run_atomic_addx2(32, 64, 8, 16, dtype=T.float32)
 
 
+def test_atomic_add_mixed_dtype_fp16():
+    run_atomic_add_mixed_dtype(8, T.float32, T.float16)
+    run_atomic_addx2_mixed_dtype(32, 64, 8, 16, T.float32, T.float16)
+
+
+def test_atomic_add_mixed_dtype_bf16():
+    run_atomic_add_mixed_dtype(8, T.float32, T.bfloat16)
+    run_atomic_addx2_mixed_dtype(32, 64, 8, 16, T.float32, T.bfloat16)
+
+
 @tilelang.testing.requires_cuda
 def test_atomic_different_memory_orders():
     run_atomic_different_memory_orders(32, 32, 8, 8, dtype=T.float32)
@@ -397,6 +455,43 @@ def run_tile_atomic_add_scalar(dtype=T.float32):
     ref_program(A, ref_B)
     kernel(A, B)
     torch.testing.assert_close(B, ref_B, atol=1e-3, rtol=1e-3)
+
+
+# ======================= Vectorized atomic add with dtype mismatch =======================
+# Regression test: atomic_add from an fp32 fragment into an fp16 global buffer.
+# The loop vectorizer lowers this to AtomicAddx2; without an explicit cast the
+# fp32 bit pattern gets reinterpreted as half2, producing NaNs in the output.
+
+
+@tilelang.jit
+def atomic_add_dtype_mismatch_program(K, M, N, block_M, block_N, dtype=T.float16):
+    @T.prim_func
+    def atomic_add_dtype_mismatch(A: T.Tensor((K, M, N), dtype), B: T.Tensor((M, N), dtype)):
+        with T.Kernel(T.ceildiv(M, block_M), T.ceildiv(N, block_N), K, threads=32) as (bx, by, bz):
+            A_shared = T.alloc_shared((block_M, block_N), dtype)
+            dq = T.alloc_fragment((block_M, block_N), T.float32)
+
+            T.copy(A[bz, bx * block_M : (bx + 1) * block_M, by * block_N : (by + 1) * block_N], A_shared)
+            for i, j in T.Parallel(block_M, block_N):
+                dq[i, j] = A_shared[i, j] * T.float32(2.0)
+            for i, j in T.Parallel(block_M, block_N):
+                T.atomic_add(B[bx * block_M + i, by * block_N + j], dq[i, j])
+
+    return atomic_add_dtype_mismatch
+
+
+def run_atomic_add_dtype_mismatch(K, M, N, block_M, block_N, dtype=T.float16):
+    kernel = atomic_add_dtype_mismatch_program(K, M, N, block_M, block_N, dtype=dtype)
+
+    A = torch.randn(K, M, N, dtype=getattr(torch, dtype)).cuda()
+    B = torch.zeros(M, N, dtype=getattr(torch, dtype)).cuda()
+    # Emulate fp32 accumulation cast to fp16 on each atomic add, like the kernel
+    ref_B = B.clone()
+    for k in range(K):
+        ref_B += (A[k].float() * 2.0).to(getattr(torch, dtype))
+
+    kernel(A, B)
+    torch.testing.assert_close(B, ref_B, atol=1e-2, rtol=1e-2)
 
 
 def test_tile_atomic_add():
@@ -619,6 +714,10 @@ def test_tile_atomic_min():
 
 def test_tile_atomic_max_expr():
     run_tile_atomic_max_expr(128, 128, 32, 32)
+
+
+def test_atomic_add_dtype_mismatch():
+    run_atomic_add_dtype_mismatch(4, 128, 128, 32, 32)
 
 
 if __name__ == "__main__":

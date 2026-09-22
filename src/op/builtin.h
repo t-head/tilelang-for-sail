@@ -93,6 +93,8 @@ static constexpr const char *kConfigIndexBitwidth = "tl.config_index_bitwidth";
 // Deprecated pass config, temporarily re-enabled. Prevents plain T.copy()
 // from auto-lowering to TMA store. Will be removed in v0.1.10.
 static constexpr const char *kDisableTMALower = "tl.disable_tma_lower";
+// PPU: disables PPU AIU global->swizzled-shared bulk copy lowering.
+static constexpr const char *kDisableAIULower = "tl.disable_aiu_lower";
 static constexpr const char *kEnableAggressiveSharedMemoryMerge =
     "tl.enable_aggressive_shared_memory_merge";
 static constexpr const char *kDisableSharedMemoryReuse =
@@ -105,6 +107,7 @@ static constexpr const char *kEnablePTXASVerboseOutput =
     "tl.enable_ptxas_verbose_output";
 static constexpr const char *kDisableVectorize256 = "tl.disable_vectorize_256";
 static constexpr const char *kEnableAsyncCopy = "tl.enable_async_copy";
+static constexpr const char *kDisableLdmatSwzl = "tl.disable_ldmat_swzl";
 static constexpr const char *kEnableVectorizePlannerVerbose =
     "tl.enable_vectorize_planner_verbose";
 static constexpr const char *kDisableWGMMA = "tl.disable_wgmma";
@@ -358,6 +361,16 @@ TVM_DLL const Op &tma_load_gather4();
 TVM_DLL const Op &tma_store_scatter4();
 
 /*!
+ * \brief PPU AIU intrinsic for loading global tensor tiles into swizzled shared memory.
+ *
+ * aiu_load(global_data, shape_0, shape_1, stride_0, stride_1, block_0,
+ *          block_1, swizzle_mode, shared_addr, coord_0, coord_1,
+ *          element_bits)
+ *
+ */
+TVM_DLL const Op &aiu_load();
+
+/*!
  * \brief tvm intrinsics for barrier initialization fence
  *
  * ptx_fence_barrier_init()
@@ -490,6 +503,23 @@ TVM_DLL const Op &ptx_mma_sm70();
  *
  */
 TVM_DLL const Op &ptx_ldmatrix();
+
+/*!
+ * \brief PPU ldmatrix intrinsic using swizzled bulk tensor load.
+ *
+ * ptx_ldmatrix_swzl(transposed, num, shared_addr, local_addr, swzl_mode,
+ *                   trans_block)
+ *
+ */
+TVM_DLL const Op &ptx_ldmatrix_swzl();
+
+/*!
+ * \brief PPU intrinsic for converting a value to uniform b32.
+ *
+ * ppu_to_uniform_b32(value)
+ *
+ */
+TVM_DLL const Op &ppu_to_uniform_b32();
 
 /*!
  * \brief tvm intrinsics for stmatrix

@@ -22,7 +22,7 @@ from tilelang.env import TILELANG_TEMPLATE_PATH
 from tilelang.utils.target import target_get_mcpu
 from tilelang.contrib.hip_resource_info import filter_and_record
 
-from .utils import is_cpu_target, is_cuda_target, is_hip_target
+from .utils import is_cpu_target, is_cuda_target, is_hip_target, is_ppu_target
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +113,46 @@ class LibraryGenerator:
                 "-I" + CUTLASS_INCLUDE_DIR,
             ]
 
+        elif is_ppu_target(target):
+            from tilelang.env import ACTLIZE_INCLUDE_DIR
+            # PPU: compile device source and host wrapper into one shared
+            # library with hgcc (same model as the HIP hipcc path).
+            src = tempfile.NamedTemporaryFile(mode="w", suffix=".hg", delete=False)  # noqa: SIM115
+            libpath = src.name.replace(".hg", ".so")
+            target_arch = get_target_arch(get_target_compute_version(target))
+            target_arch_int = int(target_arch)
+            ppu_arch = "ppu_15" if target_arch_int >= 15 else "ppu_10"
+
+            ppu_sdk = os.environ.get("PPU_SDK")
+            if not ppu_sdk:
+                raise RuntimeError(
+                    "PPU_SDK environment variable is not set. "
+                    "Please source the PPU SDK envsetup.sh (e.g. source $PPU_SDK/envsetup.sh ppu)"
+                )
+            hgcc = os.path.join(ppu_sdk, "bin", "hgcc")
+
+            command = [
+                hgcc,
+                "-x",
+                "hg",
+                "-shared",
+                "-std=c++20",
+                "-O3",
+                "-lineinfo",
+                "-Xcompiler",
+                "-fPIC",
+                f"-arch={ppu_arch}",
+                src.name,
+            ]
+            ppu_sdk_inc = os.path.join(ppu_sdk, "include")
+            if os.path.isdir(ppu_sdk_inc):
+                command += ["-I" + ppu_sdk_inc]
+            ppu_target_inc = os.path.join(ppu_sdk, "targets", "x86_64-linux", "include")
+            if os.path.isdir(ppu_target_inc):
+                command += ["-I" + ppu_target_inc]
+            # actlize (hard dependency for PPU backend)
+            command += ["-I" + ACTLIZE_INCLUDE_DIR]
+
         elif is_hip_target(target):
             from tilelang.env import COMPOSABLE_KERNEL_INCLUDE_DIR, TILELANG_HIP_SAVE_TEMP_FILES
 
@@ -176,7 +216,7 @@ class LibraryGenerator:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             )
-        if is_hip_target(target):
+        if is_hip_target(target) or is_ppu_target(target):
             run_kwargs.setdefault("stdout", subprocess.PIPE)
             run_kwargs.setdefault("stderr", subprocess.STDOUT)
 

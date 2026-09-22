@@ -3,7 +3,7 @@
 import sys  # noqa: F401
 import tilelang
 import tilelang.language as T
-from tilelang.autotuner import autotune
+from kda_autotune import autotune
 
 # Add your fla repository path to sys.path
 # Currently we use the fla repository from the flash-linear-attention project at commit id f03cb3ae
