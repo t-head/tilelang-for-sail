@@ -563,13 +563,16 @@ jobs:
             # ---- Setup test environment ----
             cd /workspace
             ln -sf source tilelang
-            cp source/.github/scripts/*_skip.json .
+            cp source/.github/scripts/*_skip.json source/
 
             # Map board type to AoneCI platform name
             case "$BOARD_TYPE" in
               "OAM-810E") export CI_TEST_PLATFORM=ppu0010 ;;
               "ZW-M890P") export CI_TEST_PLATFORM=ppu0015 ;;
-              *) export CI_TEST_PLATFORM=ppu0015 ;;
+              *)
+                echo "ERROR: Unknown BOARD_TYPE '$BOARD_TYPE'; no CI_TEST_PLATFORM mapping. Refusing to run to avoid using the wrong board's skip list." >&2
+                exit 1
+                ;;
             esac
 
             echo "Board: $BOARD_TYPE -> Platform: $CI_TEST_PLATFORM"

@@ -820,8 +820,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             if stop_event.is_set():
                 for pending in future_map:
                     pending.cancel()
-            # 传播 worker 内的意外异常
-            future.result()
+            # 早停取消的未开始任务会抛 CancelledError，属正常流程需忽略，
+            # 以便继续合并 JUnit、输出结果；其余异常仍向上传播暴露真实 worker 错误
+            try:
+                future.result()
+            except concurrent.futures.CancelledError:
+                continue
 
     if args.maxfail > 0 and stop_event.is_set():
         print(f"\n🛑 已达到 --maxfail={args.maxfail} 真实失败阈值，提前停止调度新用例")
