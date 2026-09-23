@@ -13,6 +13,7 @@ from .utils import (
     is_cuda_target,
     is_hip_target,
     is_cpu_target,
+    is_ppu_target,
     get_annotated_mod,
     pythonic_expr,
     parse_function_call_args,
@@ -55,6 +56,14 @@ PREDEF_ATTRIBUTE_SET_DYNAMIC_MEMORY_HIP = """
         return -1;
     }}
     return 0;
+"""
+
+PREDEF_ATTRIBUTE_SET_DYNAMIC_MEMORY_PPU = """
+    hggcError_t result_{0} = hggcFuncSetAttribute((const void*){0}, hggcFuncAttributeMaxDynamicSharedMemorySize, {1});
+    if (result_{0} != hggcSuccess) {{
+        snprintf(error_buf, ERROR_BUF_SIZE, "Failed to set the allowed dynamic shared memory size to %d with error: %s", {1}, hggcGetErrorString(result_{0}));
+        return -1;
+    }}
 """
 
 PREDEF_INIT_FUNC = """
@@ -216,6 +225,8 @@ class TLCUDASourceWrapper:
         "float8_e4m3": "fp8_e4_t",
         "float8_e4m3fn": "fp8_e4_t",
         "float8_e5m2": "fp8_e5_t",
+        "float4_e2m1fn": "fp4_e2_t",
+        "float4_e2m1fnx2": "fp4_e2_2_t",
         "float64": "double",
         "int64": "int64_t",
         "int32": "int",
@@ -681,6 +692,8 @@ class TLHIPSourceWrapper(TLCUDASourceWrapper):
         "float8_e5m2fnuz": "fp8_e5_t",
         "float8_e4m3fnuz": "fp8_e4_t",
         "e4m3fnuz_float8": "fp8_e4_t",
+        "float4_e2m1fn": "fp4_e2_t",
+        "float4_e2m1fnx2": "fp4_e2_2_t",
         "float64": "double",
         "int64": "int64_t",
         "int32": "int",
@@ -728,6 +741,65 @@ class TLHIPSourceWrapper(TLCUDASourceWrapper):
 
     def get_stream_type(self) -> dict[str, str]:
         return {"name": "stream=hipStreamDefault", "type": "hipStream_t"}
+
+
+class TLPPUSourceWrapper(TLCUDASourceWrapper):
+    """
+    A wrapper class for the TileLang PPU backend (HGGC).
+
+    The generated host code is compiled by hgcc together with the device
+    source into a single shared library (same model as HIP), so only the
+    host-visible runtime API names differ from CUDA: kernels are launched
+    with the <<<>>> syntax and the dynamic shared-memory attribute is set
+    through the HGGC runtime. TMA descriptor encoding and L2 persistent
+    cache setup rely on the CUDA driver/runtime and are not emitted here.
+    """
+
+    def __init__(
+        self,
+        scheduled_ir_module: IRModule,
+        source: str,
+        target: Target,
+        device_mod: IRModule | None = None,
+        host_mod: IRModule | None = None,
+        pass_configs: dict[str, Any] | None = None,
+    ):
+        super().__init__(scheduled_ir_module, source, target, device_mod, host_mod, pass_configs)
+
+    def parse_source_information(self):
+        super().parse_source_information()
+        # PPU: TMA descriptor encoding (cuTensorMapEncode*) and the L2
+        # persistent-cache window are CUDA-only host APIs; PPU device code
+        # handles them in-kernel, so the host wrapper must not emit them.
+        self.tma_descriptor_args = None
+        self.l2_persistent_map = {}
+
+    def get_kernel_launch_code(self, function_name, grid_str, block_str, smem_str, call_args, cluster_dims):
+        # hgcc supports the <<<>>> launch syntax (same as HIP).
+        return f"\t{function_name}<<<{grid_str}, {block_str}, {smem_str}, stream>>>({call_args});\n"
+
+    def get_init_func(self):
+        # Set the dynamic shared memory attribute through the HGGC runtime.
+        call_str = """"""
+        for function_name, dynamic_smem_buf in self.dynamic_smem_buf.items():
+            if dynamic_smem_buf is not None:
+                call_str += PREDEF_ATTRIBUTE_SET_DYNAMIC_MEMORY_PPU.format(function_name, dynamic_smem_buf)
+        init_funcs = PREDEF_INIT_FUNC.format(call_str)
+        return init_funcs
+
+    def get_stream_type(self) -> dict[str, str]:
+        return {"name": "stream=hggcStreamDefault", "type": "hggcStream_t"}
+
+    def update_lib_code(self, code: str):
+        lib_code = super().update_lib_code(code)
+        # hgcc registers every device-side global (including actlize's
+        # CUTE_INLINE_CONSTANT objects such as cute::product and cute::_)
+        # from auto-generated host registration code. Those declarations
+        # only reach the host translation unit through the arch-guarded
+        # template chain (gemm_smXX.h is guarded by __HGGC_ARCH__), so
+        # force-include the cute umbrella header to keep them visible in
+        # the host pass.
+        return "#include <cute/tensor.hpp>\n" + lib_code
 
 
 class TLCPUSourceWrapper:
@@ -978,6 +1050,8 @@ class TLWrapper(BaseWrapper):
             wrapper_class = TLCPUSourceWrapper
         elif is_metal_target(self.target):
             wrapper_class = TLMetalSourceWrapper
+        elif is_ppu_target(self.target):
+            wrapper_class = TLPPUSourceWrapper
         else:
             raise ValueError(f"Unsupported platform: {self.arch.platform}")
         wrapper = wrapper_class(
@@ -1005,6 +1079,10 @@ class TLPyWrapper(TLWrapper):
             from tilelang.jit.adapter.nvrtc import TLNVRTCSourceWrapper
 
             wrapper_class = TLNVRTCSourceWrapper
+        elif is_ppu_target(self.target):
+            from tilelang.jit.adapter.nvrtc import TLPPUNVRTCSourceWrapper
+
+            wrapper_class = TLPPUNVRTCSourceWrapper
         else:
             raise ValueError(f"Unsupported target for NVRTC backend: {self.target}")
         wrapper = wrapper_class(

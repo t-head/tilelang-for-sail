@@ -16,7 +16,7 @@ from tvm.relax import TensorType
 from tilelang.jit.adapter.base import BaseKernelAdapter, CachedTextSource
 from tilelang.jit.adapter.wrapper import TLWrapper
 from tilelang.jit.adapter.libgen import LibraryGenerator
-from tilelang.jit.adapter.utils import is_cuda_target, is_hip_target, is_cpu_target, is_metal_target
+from tilelang.jit.adapter.utils import is_cuda_target, is_hip_target, is_cpu_target, is_metal_target, is_ppu_target
 from tilelang.backend.target import determine_target
 from tilelang.utils.language import retrieve_func_from_module
 
@@ -219,8 +219,9 @@ class CythonKernelAdapter(BaseKernelAdapter):
         Maps symbolic variables to their corresponding (id, buffer_index, dimension, stride_scale)
         for runtime shape resolution.
         id represents shape or stride, 0 represents shape, 1 represents stride.
-        stride_scale compensates for sub-byte dtypes (e.g. float4_e2m1fn) where torch strides
-        are in storage units but the kernel expects logical element strides.
+        stride_scale converts physical torch values to logical element units for
+        sub-byte dtypes (e.g. float4_e2m1fn): only the last-dim shape and
+        non-last-dim strides are packed; the last-dim stride is 1 in both views.
         """
         func = self.prim_func
         params = func.params
@@ -229,16 +230,22 @@ class CythonKernelAdapter(BaseKernelAdapter):
         for i, param in enumerate(params):
             if param in buffer_map:
                 buffer = buffer_map[param]
+                element_bits = buffer.dtype.bits * buffer.dtype.lanes
+                sub_byte_pack_factor = 8 // element_bits if element_bits < 8 else 1
+                last_dim = len(buffer.shape) - 1
                 for j, shape in enumerate(buffer.shape):
                     if isinstance(shape, tirx.Var) and (shape not in dynamic_symbolic_map) and (shape not in params):
-                        dynamic_symbolic_map[shape] = (0, i, j, 1)
+                        shape_scale = sub_byte_pack_factor if j == last_dim else 1
+                        dynamic_symbolic_map[shape] = (0, i, j, shape_scale)
         for i, param in enumerate(params):
             if param in buffer_map:
                 buffer = buffer_map[param]
                 element_bits = buffer.dtype.bits * buffer.dtype.lanes
-                stride_scale = 8 // element_bits if element_bits < 8 else 1
+                sub_byte_pack_factor = 8 // element_bits if element_bits < 8 else 1
+                last_dim = len(buffer.strides) - 1
                 for j, stride in enumerate(buffer.strides):
                     if isinstance(stride, tirx.Var) and (stride not in dynamic_symbolic_map) and (stride not in params):
+                        stride_scale = sub_byte_pack_factor if j != last_dim else 1
                         dynamic_symbolic_map[stride] = (1, i, j, stride_scale)
         return dynamic_symbolic_map
 
@@ -319,7 +326,7 @@ class CythonKernelAdapter(BaseKernelAdapter):
         buffer_map = func.buffer_map
         buffer_device_map = {}
         device = None
-        if is_cuda_target(self.target) or is_hip_target(self.target):
+        if is_cuda_target(self.target) or is_hip_target(self.target) or is_ppu_target(self.target):
             device = torch.device("cuda")
         elif is_cpu_target(self.target):
             device = torch.device("cpu")

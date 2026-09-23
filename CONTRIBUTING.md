@@ -1,9 +1,10 @@
-# Contributing
+# Contributing — TileLang PPU Edition
 
-That would be awesome if you want to contribute something to TileLang!
+That would be awesome if you want to contribute something to TileLang PPU!
 
 ## Table of Contents  <!-- omit in toc --> <!-- markdownlint-disable heading-increment -->
 
+- [Branch Strategy](#branch-strategy)
 - [Report Bugs](#report-bugs)
 - [Ask Questions](#ask-questions)
 - [Submit Pull Requests](#submit-pull-requests)
@@ -14,6 +15,12 @@ That would be awesome if you want to contribute something to TileLang!
 - [Test Locally](#test-locally)
 - [Build Wheels](#build-wheels)
 - [Documentation](#documentation)
+
+## Branch Strategy
+
+- **`master`** — The main development branch. All day-to-day development and integration happen here.
+- **`v0.1.11`, `v0.1.12`, `v0.1.13`, ...** — Version branches tracking upstream TileLang release tags. Each branch carries the PPU adaptation for a specific upstream version and remains open to continued development and commits.
+- **`<type>/xxx`** — Working branches, named after the change type: `feat/xxx`, `fix/xxx`, `refactor/xxx`, `docs/xxx`, etc. Branch off from `master` or the relevant version branch, and open a merge request when ready.
 
 ## Report Bugs
 

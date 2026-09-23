@@ -1028,6 +1028,25 @@ struct TileLangThreadSyncPlanner : public ConstrVisitor {
       return;
     }
 
+    // Mark PPU aiu_load as async copy context. aiu_load is semantically an
+    // async bulk copy (requires commit+wait before data is visible), same as
+    // cp.async/tma_load. Without this, ThreadSync conservatively inserts
+    // unnecessary barriers between aiu_load writes and ptx_ldmatrix reads.
+    auto is_aiu_load = [&]() {
+      if (auto opt = op->op.as<Op>()) {
+        return opt.value().same_as(tl::ppu_aiu_load());
+      }
+      return false;
+    }();
+    if (is_aiu_load) {
+      cp_async_depth_++;
+      for (const auto &a : op->args) {
+        this->VisitExpr(a);
+      }
+      cp_async_depth_--;
+      return;
+    }
+
     // Mark the pointer argument of atomic ops as atomic so the sync planner
     // doesn't insert barriers between atomics.
     auto is_atomic_op = [&]() {

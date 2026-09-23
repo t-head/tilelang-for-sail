@@ -10,6 +10,8 @@ from functools import lru_cache
 ROOT = Path(__file__).parent
 
 base_version = (ROOT / "VERSION").read_text().strip()
+# PPU backend version suffix
+PPU_VERSION = "1.0.0"
 # When installing a sdist,
 # the installed version needs to match the sdist version,
 # so pip will complain when we install `tilelang-0.1.6.post2+gitxxxx.tar.gz`.
@@ -58,6 +60,9 @@ def dynamic_metadata(field: str, settings: dict[str, object] | None = None) -> s
         backend = None
         if _read_cmake_bool(os.environ.get("NO_TOOLCHAIN_VERSION")):
             pass
+        elif _read_cmake_bool(os.environ.get("USE_PPU", "ON")):
+            # PPU backend (this fork defaults to PPU)
+            backend = "ppu"
         elif platform.system() == "Darwin":
             # only on macosx_11_0_arm64, not necessary
             # backend = 'metal'
@@ -78,6 +83,10 @@ def dynamic_metadata(field: str, settings: dict[str, object] | None = None) -> s
                 backend = "cuda"
         if backend:
             exts.append(backend)
+
+        # Add PPU version after backend label
+        if backend == "ppu":
+            exts.append(PPU_VERSION)
 
         # Add build date if TILELANG_BUILD_WHEEL_WITH_DATE is set
         if _read_cmake_bool(os.environ.get("TILELANG_BUILD_WHEEL_WITH_DATE")):

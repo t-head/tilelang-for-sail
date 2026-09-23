@@ -294,6 +294,7 @@ call_llvm_intrin = _dtype_forward(_tir_op.call_llvm_intrin)
 call_llvm_pure_intrin = _dtype_forward(_tir_op.call_llvm_pure_intrin)
 call_pure_extern = _dtype_forward(_tir_op.call_pure_extern)
 ptx_mma = _dtype_forward(_tir_op.ptx_mma)
+ptx_mma_scaled = _dtype_forward(_tir_op.ptx_mma_scaled)
 ptx_mma_sp = _dtype_forward(_tir_op.ptx_mma_sp)
 ptx_wgmma_ss = _dtype_forward(_tir_op.ptx_wgmma_ss)
 ptx_wgmma_rs = _dtype_forward(_tir_op.ptx_wgmma_rs)
@@ -314,6 +315,9 @@ tvm_mfma = _dtype_forward(_tir_op.tvm_mfma)
 tvm_mfma_store = _dtype_forward(_tir_op.tvm_mfma_store)
 tvm_rdna_wmma = _dtype_forward(_tir_op.tvm_rdna_wmma)
 tvm_rdna_wmma_store = _dtype_forward(_tir_op.tvm_rdna_wmma_store)
+
+tix_ldmatrix_swzl = _tir_op.tix_ldmatrix_swzl  # PPU: ld swizzle
+ppu_aiu_load = _tir_op.ppu_aiu_load
 
 
 # ---------------------------------------------------------------------------

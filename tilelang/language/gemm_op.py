@@ -31,6 +31,8 @@ def _gemm_impl(
     k_pack: int = 1,
     wg_wait: int = 0,
     mbar: BarrierType | None = None,
+    scale_A: BufferLikeType | None = None,
+    scale_B: BufferLikeType | None = None,
     annotations: dict | None = None,
 ) -> tirx.PrimExpr:
     """Shared GEMM implementation.
@@ -55,6 +57,10 @@ def _gemm_impl(
     B = legalize_arguments(B)
     C = legalize_arguments(C)
     mbar = legalize_arguments(mbar) if mbar is not None else None
+    if (scale_A is None) != (scale_B is None):
+        raise ValueError("scale_A and scale_B must be provided together")
+    scale_A = legalize_arguments(scale_A) if scale_A is not None else None
+    scale_B = legalize_arguments(scale_B) if scale_B is not None else None
 
     # Normalize A/B/C to BufferRegion for shape/stride/offset analysis
     A_region = to_buffer_region(A)
@@ -120,9 +126,7 @@ def _gemm_impl(
     # The C++ side checks if arg 16 is a BufferLoadNode before using it,
     # so a non-BufferLoad value will be correctly ignored.
     mbar_arg = mbar if mbar is not None else tirx.const(0, dtype="int32")
-    return tirx.call_intrin(
-        "handle",
-        tirx.op.Op.get(op_key),
+    args = [
         A_arg,
         B_arg,
         C_arg,
@@ -142,6 +146,43 @@ def _gemm_impl(
         mbar_arg,
         C_coords[0],
         C_coords[1],
+    ]
+    if scale_A is not None:
+        scale_A_region = to_buffer_region(scale_A)
+        scale_B_region = to_buffer_region(scale_B)
+        scale_A_shape = retrieve_shape(scale_A_region)
+        scale_B_shape = retrieve_shape(scale_B_region)
+        assert len(scale_A_shape) in (1, 2) and len(scale_B_shape) in (1, 2), (
+            "PPU MXFP4 T.gemm scales must be one-dimensional for a K=64 tile "
+            "or two-dimensional [K/64, M/N] regions for a larger K tile"
+        )
+        assert len(scale_A_shape) == len(scale_B_shape), (
+            "PPU MXFP4 scale_A and scale_B regions must have the same rank"
+        )
+        if len(scale_A_shape) == 1:
+            assert prim_expr_equal(K, 64), (
+                "One-dimensional PPU MXFP4 scales are only valid for a K=64 tile; "
+                "use [K/64, M/N] scale regions for larger K tiles"
+            )
+        else:
+            assert prim_expr_equal(scale_A_shape[-2] * 64, K) and prim_expr_equal(scale_B_shape[-2] * 64, K), (
+                "PPU MXFP4 scale regions must contain one packed uint16 pair per K=64 MMA atom"
+            )
+        assert str(scale_A_region.buffer.dtype) == "uint16" and str(scale_B_region.buffer.dtype) == "uint16", (
+            "PPU MXFP4 T.gemm scales must use uint16 packed E8M0 pairs"
+        )
+        args.extend(
+            [
+                buffer_region_to_tile_region(scale_A_region, "r", list(scale_A_shape)),
+                buffer_region_to_tile_region(scale_B_region, "r", list(scale_B_shape)),
+                tirx.const(0, dtype="int32"),
+            ]
+        )
+
+    return tirx.call_intrin(
+        "handle",
+        tirx.op.Op.get(op_key),
+        *args,
         annotations=annotations,
     )
 
@@ -156,6 +197,9 @@ def gemm(
     clear_accum: bool = False,
     k_pack: int = 1,
     mbar: BarrierType | None = None,
+    *,
+    scale_A: BufferLikeType | None = None,
+    scale_B: BufferLikeType | None = None,
 ) -> tirx.PrimExpr:
     """TileLang GEMM operator.
 
@@ -179,6 +223,15 @@ def gemm(
         k_pack (int): Numbers of packed matrix cores, for ROCm only. Defaults to 1.
         mbar (BarrierType, i.e. Buffer | BufferLoad, or Var, optional): Mbarrier in Blackwell.
             Required when this GEMM lowers to TCGEN5MMA. Defaults to None.
+        scale_A: Optional packed E8M0 scale pairs for PPU MXFP4 A. Each K=64
+            MMA atom uses one uint16 per A row (low byte for its first K32,
+            high byte for its second K32). A K=64 GEMM tile may use a
+            one-dimensional region; larger tiles use ``[K/64, M]``. Must be
+            provided together with ``scale_B``.
+            This option is only supported by PPU MXFP4 lowering; other
+            backends may ignore it and must not pass it to ``T.gemm``.
+        scale_B: Optional packed E8M0 scale pairs for PPU MXFP4 B, with the
+            corresponding ``[K/64, N]`` layout for a multi-atom K tile.
 
     Returns:
         tirx.Call: A handle to the GEMM operation.
@@ -195,6 +248,8 @@ def gemm(
         k_pack,
         0,
         mbar,
+        scale_A,
+        scale_B,
     )
 
 

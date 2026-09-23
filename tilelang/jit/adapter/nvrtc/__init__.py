@@ -4,8 +4,9 @@ This module provides runtime compilation support using NVIDIA's NVRTC API.
 """
 
 import logging
+import os
 
-__all__ = ["NVRTCKernelAdapter", "TLNVRTCSourceWrapper", "NVRTCLibraryGenerator", "is_nvrtc_available", "check_nvrtc_available"]
+__all__ = ["NVRTCKernelAdapter", "TLNVRTCSourceWrapper", "TLPPUNVRTCSourceWrapper", "NVRTCLibraryGenerator", "is_nvrtc_available", "check_nvrtc_available"]
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +39,16 @@ def check_nvrtc_available():
         raise ImportError(NVRTC_UNAVAILABLE_MESSAGE)
 
 
+def _is_ppu_backend_available() -> bool:
+    """The PPU variant of this backend only needs the PPU SDK (hgcc + libhggc.so)."""
+    sdk = os.environ.get("PPU_SDK")
+    return bool(sdk) and os.path.exists(os.path.join(sdk, "bin", "hgcc"))
+
+
 # Conditionally import the adapter
-if is_nvrtc_available:
+if is_nvrtc_available or _is_ppu_backend_available():
     from .adapter import NVRTCKernelAdapter
-    from .wrapper import TLNVRTCSourceWrapper
+    from .wrapper import TLNVRTCSourceWrapper, TLPPUNVRTCSourceWrapper
     from .libgen import NVRTCLibraryGenerator
 else:
     # Provide a dummy class that raises error on instantiation
@@ -57,6 +64,12 @@ else:
 
     class TLNVRTCSourceWrapper:
         """Dummy TLNVRTCSourceWrapper that raises ImportError on instantiation."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError(NVRTC_UNAVAILABLE_MESSAGE)
+
+    class TLPPUNVRTCSourceWrapper:
+        """Dummy TLPPUNVRTCSourceWrapper that raises ImportError on instantiation."""
 
         def __init__(self, *args, **kwargs):
             raise ImportError(NVRTC_UNAVAILABLE_MESSAGE)

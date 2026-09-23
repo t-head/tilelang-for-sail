@@ -17,6 +17,9 @@ bool TargetHasAsyncCopy(Target target) {
   if (TargetIsRocm(target)) {
     return TargetRocmHasAsyncCopy(target);
   }
+  if (TargetIsPPU(target)) {
+    return TargetPPUHasAsyncCopy(target);
+  }
   return false;
 }
 

@@ -81,7 +81,7 @@ def get_configs(M, N, K):
     return configs
 
 
-def matmul_sp(M, N, K, in_dtype, accum_dtype, e_dtype):
+def matmul_sp(M, N, K, in_dtype, accum_dtype, e_dtype, config=None):
     """
     Create an autotuned matrix multiplication kernel for matrices of shape:
       - A: (M, K)
@@ -122,7 +122,7 @@ def matmul_sp(M, N, K, in_dtype, accum_dtype, e_dtype):
         rep=20,
     )
     @jit(
-        out_idx=[2],
+        out_idx=[3],
     )
     def kernel(
         block_M=None,
@@ -156,6 +156,17 @@ def matmul_sp(M, N, K, in_dtype, accum_dtype, e_dtype):
         Function
             A TVM Tensor Language function (T.prim_func) that computes matmul.
         """
+        # Provide concrete defaults so the kernel can be elaborated
+        # (e.g. for cache-key / validation TIR generation by the autotuner)
+        # before the actual tunable values are supplied.
+        block_M = block_M or 128
+        block_N = block_N or 128
+        block_K = block_K or 64
+        num_stages = num_stages if num_stages is not None else 2
+        thread_num = thread_num or 128
+        policy = policy or T.GemmWarpPolicy.Square
+        enable_rasterization = enable_rasterization if enable_rasterization is not None else True
+
         # Use half-precision for input data to reduce memory bandwidth,
         # accumulate in float for better numerical accurac
         e_factor = get_e_factor(in_dtype, e_dtype)
@@ -193,6 +204,7 @@ def matmul_sp(M, N, K, in_dtype, accum_dtype, e_dtype):
 
                 # Clear out the accumulation buffer
                 T.clear(C_local)
+                T.disable_warp_group_reg_alloc()
 
                 T.use_swizzle(panel_size=10, enable=enable_rasterization)
                 # Loop over sub-blocks in K dimension, pipelined by num_stages
@@ -221,6 +233,8 @@ def matmul_sp(M, N, K, in_dtype, accum_dtype, e_dtype):
 
         return main
 
+    if config is not None:
+        return kernel(**config)
     return kernel()
 
 
