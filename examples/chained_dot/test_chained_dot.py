@@ -44,7 +44,7 @@ def test_chained_dot2_transB(shape=SHAPE):
     v = torch.randn(shape, shape, device="cuda", dtype=torch.float16)
 
     kernel = matmul_chain2_transB(shape, shape, shape, BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
-    c, d, _e = kernel(a, b, v)
+    c, d = kernel(a, b, v)
 
     ref_c = a @ b
     ref_d = ref_c @ b.T

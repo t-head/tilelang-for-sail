@@ -155,6 +155,11 @@ class LibraryGenerator:
             if os.path.isdir(ppu_target_inc):
                 command += ["-I" + ppu_target_inc]
             # actlize (hard dependency for PPU backend)
+            if ACTLIZE_INCLUDE_DIR is None:
+                raise RuntimeError(
+                    "Actlize include path is not configured. "
+                    "Please set TL_ACTLIZE_PATH to the Actlize installation required by the PPU backend."
+                )
             command += ["-I" + ACTLIZE_INCLUDE_DIR]
 
         elif is_hip_target(target):

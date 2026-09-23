@@ -17,13 +17,15 @@ TL_DEVICE void mbarrier_init(uint64_t &smem_barrier, uint32_t arrive_count) {
 
 TL_DEVICE uint32_t mbarrier_test_wait(uint64_t &smem_barrier, int phase_bit) {
   uint32_t smem_int_ptr = smem_ptr_to_uint(&smem_barrier);
+  uint32_t waitComplete;
   asm volatile("{\n"
                ".reg .pred P1; \n\t"
-               "ppu.awbar.test_wait.parity.shared::blk.b64 _, [%0], %1;\n"
+               "ppu.awbar.test_wait.parity.shared::blk.b64 P1, [%1], %2;\n\t"
                "ppu.selp.b32 %0, 1, 0, P1; \n\t"
                "}\n"
                : "=r"(waitComplete)
                : "r"(smem_int_ptr), "r"(phase_bit));
+  return waitComplete;
 }
 
 TL_DEVICE void mbarrier_wait(uint64_t &smem_barrier, int phase_bit) {
@@ -83,12 +85,12 @@ TL_DEVICE void syncthreads_partial(uint64_t &smem_barrier) {
   uint64_t state = 0;
   asm volatile("{\n"
                ".reg .pred                P1;\n"
-               "ppu.awbar.arrive.shared.b64 %1, [%0];\n"
+               "ppu.awbar.arrive.shared.b64 %0, [%1];\n"
                "LAB_WAIT:\n"
-               "ppu.awbar.test_wait.shared.b64 P1, [%0], %1;\n"
+               "ppu.awbar.test_wait.shared.b64 P1, [%1], %0;\n"
                "@!P1                      ppu.bra LAB_WAIT;\n"
                "}\n"
-               :
-               : "r"(smem_int_ptr), "l"(state));
+               : "+l"(state)
+               : "r"(smem_int_ptr));
 }
 } // namespace tl

@@ -13,10 +13,10 @@ def print_float16_hex(tensor):
         print(row)
 
 
-# Chained dot product: a @ b @ b @ b (i.e., a * b^3).
+# Chained dot product (2-stage): C = a @ b, D = C @ b^T.
 # Pure sequential chain—each result feeds the next multiplication with the same matrix b.
 @tilelang.jit(
-    out_idx=[3, 4, 5], verbose=False, pass_configs={PassConfigKey.TL_DISABLE_AIU_LOWER: False, PassConfigKey.TL_DISABLE_LDMAT_SWZL: False}
+    out_idx=[3, 4], verbose=False, pass_configs={PassConfigKey.TL_DISABLE_AIU_LOWER: False, PassConfigKey.TL_DISABLE_LDMAT_SWZL: False}
 )
 def matmul(M, N, K, block_M, block_N, block_K, dtype="float16", accum_dtype="float"):
     thread_num = min((M // block_M) * (N // block_N) * 32, 128)
@@ -28,7 +28,6 @@ def matmul(M, N, K, block_M, block_N, block_K, dtype="float16", accum_dtype="flo
         V: T.Tensor((N, N), dtype),
         C: T.Tensor((M, N), dtype),
         D: T.Tensor((M, N), dtype),
-        E: T.Tensor((M, N), dtype),
     ):
         with T.Kernel(T.ceildiv(N, block_N), T.ceildiv(M, block_M), threads=thread_num) as (bx, by):
             A_shared = T.alloc_shared((block_M, block_K), dtype)
@@ -37,7 +36,6 @@ def matmul(M, N, K, block_M, block_N, block_K, dtype="float16", accum_dtype="flo
             C_local = T.alloc_fragment((block_M, block_N), accum_dtype)
             C_local_cast = T.alloc_fragment((block_M, block_N), dtype)
             D_local = T.alloc_fragment((block_M, block_N), accum_dtype)
-            E_local = T.alloc_fragment((block_M, block_N), accum_dtype)
 
             T.clear(C_local)
             T.clear(D_local)
@@ -51,7 +49,6 @@ def matmul(M, N, K, block_M, block_N, block_K, dtype="float16", accum_dtype="flo
 
             T.copy(C_local, C[by * block_M, bx * block_N])
             T.copy(D_local, D[by * block_M, bx * block_N])
-            T.copy(E_local, E[by * block_M, bx * block_N])
 
     return gemm
 
@@ -86,7 +83,7 @@ def main():
     # c = torch.zeros(ref_c.size(), dtype=torch.float16, device=ref_c.device)
     # d = torch.zeros(ref_d.size(), dtype=torch.float16, device=ref_d.device)
     kernel = matmul(shape, shape, shape, block_size, block_size, block_size)
-    c, d, e = kernel(a, b, v)
+    c, d = kernel(a, b, v)
 
     print("c:")
     print_float16_hex(c)

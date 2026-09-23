@@ -10,17 +10,19 @@ _is_cutedsl = os.environ.get("TILELANG_TARGET", "").lower() == "cutedsl"
 
 
 @tilelang.testing.requires_ppu
-@tilelang.testing.requires_ppu_compute_version_le(8, 9)
+@tilelang.testing.requires_ppu_compute_version_le(1, 5)
 @pytest.mark.skipif(_is_cutedsl, reason="CuTeDSL backend does not support alloc_global yet")
 def test_example_example_gqa_decode():
     example_gqa_decode.main()
 
 
+@tilelang.testing.requires_ppu
 @pytest.mark.skipif(_is_cutedsl, reason="CuTeDSL backend does not support alloc_global yet")
 def test_example_example_mha_inference():
     example_mha_inference.main(BATCH=1, H=32, Q_CTX=128, KV_CTX=2048, D_HEAD=128, causal=False)
 
 
+@tilelang.testing.requires_ppu
 def test_example_example_gqa_decode_varlen_logits():
     example_gqa_decode_varlen_logits.main()
 

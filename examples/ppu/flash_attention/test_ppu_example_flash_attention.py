@@ -52,7 +52,7 @@ def test_example_mha_fwd_bshd():
 
 
 @tilelang.testing.requires_ppu
-@tilelang.testing.requires_ppu_compute_version_ge(8, 9)
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 def test_example_mha_fwd_varlen():
     ppu_example_mha_fwd_varlen.main()
 
