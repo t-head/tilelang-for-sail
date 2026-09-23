@@ -101,6 +101,8 @@ static constexpr const char *kConfigIndexBitwidth = "tl.config_index_bitwidth";
 // Deprecated pass config, temporarily re-enabled. Prevents plain T.copy()
 // from auto-lowering to TMA store. Will be removed in v0.1.10.
 static constexpr const char *kDisableTMALower = "tl.disable_tma_lower";
+// PPU: disables PPU AIU global->swizzled-shared bulk copy lowering.
+static constexpr const char *kDisableAIULower = "tl.disable_aiu_lower";
 static constexpr const char *kEnableAggressiveSharedMemoryMerge =
     "tl.enable_aggressive_shared_memory_merge";
 static constexpr const char *kDisableSharedMemoryReuse =
@@ -111,6 +113,7 @@ static constexpr const char *kPtxasRegisterUsageLevel =
     "tl.ptxas_register_usage_level";
 static constexpr const char *kDisableVectorize256 = "tl.disable_vectorize_256";
 static constexpr const char *kEnableAsyncCopy = "tl.enable_async_copy";
+static constexpr const char *kDisableLdmatSwzl = "tl.disable_ldmat_swzl";
 static constexpr const char *kEnableVectorizePlannerVerbose =
     "tl.enable_vectorize_planner_verbose";
 static constexpr const char *kDisableWGMMA = "tl.disable_wgmma";
@@ -1403,6 +1406,32 @@ TVM_DLL const Op &ptx_cluster_store();
  * tma_store_cluster(dst_ptr, src_ptr, dst_cta, size_bytes, bar_ref)
  */
 TVM_DLL const Op &tma_store_cluster();
+
+/*!
+ * \brief PPU ldmatrix intrinsic using swizzled bulk tensor load.
+ *
+ * tix_ldmatrix_swzl(transposed, num, shared_addr, local_addr, swzl_mode,
+ *                   trans_block)
+ *
+ */
+TVM_DLL const Op &tix_ldmatrix_swzl();
+
+/*!
+ * \brief PPU intrinsic for converting a value to uniform b32.
+ *
+ * ppu_to_uniform_b32(value)
+ *
+ */
+TVM_DLL const Op &ppu_to_uniform_b32();
+
+/*!
+ * \brief PPU AIU intrinsic for loading global tensor tiles into swizzled shared
+ * memory.
+ *
+ * ppu_aiu_load(smem_ptr, gmem_ptr, dim_c, dim_w, cube_c, cube_w,
+ * stride_w_bytes, start_c, start_w, swzl_mode)
+ */
+TVM_DLL const Op &ppu_aiu_load();
 
 } // namespace tl
 } // namespace tvm

@@ -250,10 +250,11 @@ else()
 endif()
 
 # Configs
-set(TILELANG_BACKENDS CUDA ROCM METAL LLVM)
+set(TILELANG_BACKENDS CUDA ROCM PPU METAL LLVM)
 
 set(TILELANG_BACKEND_DOC_CUDA "Enable CUDA backend (ON/OFF/or CUDA SDK path)")
 set(TILELANG_BACKEND_DOC_ROCM "Enable ROCm backend (ON/OFF/or ROCm SDK path)")
+set(TILELANG_BACKEND_DOC_PPU "Enable PPU backend (ON/OFF/or PPU SDK path)")
 set(TILELANG_BACKEND_DOC_METAL "Enable Metal backend")
 set(TILELANG_BACKEND_DOC_LLVM "Enable LLVM backend")
 
@@ -450,6 +451,7 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/src/cpu/CMakeLists.txt")
 include("${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/CMakeLists.txt")
 include("${CMAKE_CURRENT_SOURCE_DIR}/src/rocm/CMakeLists.txt")
 include("${CMAKE_CURRENT_SOURCE_DIR}/src/metal/CMakeLists.txt")
+include("${CMAKE_CURRENT_SOURCE_DIR}/src/ppu/CMakeLists.txt")
 include("${CMAKE_CURRENT_SOURCE_DIR}/src/webgpu/CMakeLists.txt")
 
 set(USE_Z3      ON CACHE STRING "Use Z3 SMT solver for TileLang optimizations")

@@ -6,6 +6,8 @@ import tilelang.language as T
 from tilelang.autotuner import autotune
 from tilelang import jit
 
+from utils import print_benchmark_summary, with_aiu_lower_tuning
+
 # Configure logger
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -30,7 +32,7 @@ def ref_program(A, B):
     return A @ B.T
 
 
-def get_configs(*args, **kwargs):
+def get_configs(M, N, K, with_roller, **kwargs):
     """
     Generate a list of configuration dictionaries that will be used for tuning.
 
@@ -45,15 +47,6 @@ def get_configs(*args, **kwargs):
         Each configuration dict includes various block sizes, pipeline stages,
         thread numbers, and other parameters to explore during autotuning.
     """
-    # Support both the current autotuner calling convention
-    #   get_configs(M, N, K, with_roller, ...)
-    # and the historical/manual helper style
-    #   get_configs((M, N, K, with_roller), kwargs)
-    if len(args) == 2 and isinstance(args[0], (tuple, list)) and isinstance(args[1], dict):
-        M, N, K, with_roller = args[0][:4]
-    else:
-        M, N, K, with_roller = args[:4]
-
     if with_roller:
         from tilelang.carver.template import MatmulTemplate
         from tilelang.carver.arch import CUDA, auto_infer_current_arch
@@ -113,19 +106,20 @@ def get_configs(*args, **kwargs):
             block_M=[64, 128, 256],
             block_N=[64, 128, 256],
             block_K=[32, 64],
-            num_stages=[0, 1, 2, 3],
+            num_stages=[1, 2, 3],
             thread_num=[128, 256],
             policy=[T.GemmWarpPolicy.Square],
             enable_rasteration=[True, False],
         )
-        return [{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())]
-    return configs
+        return with_aiu_lower_tuning([{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())])
+    return with_aiu_lower_tuning(configs)
 
 
 @autotune(
     configs=get_configs,
-    warmup=3,
-    rep=20,
+    warmup=10,
+    rep=100,
+    ref_prog=ref_program,
 )
 @jit(
     out_idx=[2],
@@ -168,6 +162,17 @@ def matmul(
         ref_latency : float
             The baseline latency of the reference program (for computing speedup).
     """
+
+    # Provide concrete defaults so the kernel can be elaborated (e.g. for
+    # cache-key / validation TIR generation by the autotuner) before the
+    # actual tunable values are supplied. These are overridden by autotune.
+    block_M = block_M or 64
+    block_N = block_N or 64
+    block_K = block_K or 32
+    num_stages = num_stages if num_stages is not None else 1
+    thread_num = thread_num or 128
+    policy = policy if policy is not None else T.GemmWarpPolicy.Square
+    enable_rasteration = enable_rasteration if enable_rasteration is not None else False
 
     # Use half-precision for input data to reduce memory bandwidth,
     # accumulate in float for better numerical accuracy
@@ -255,10 +260,16 @@ if __name__ == "__main__":
     best_config = best_result.config
     ref_latency = best_result.ref_latency
 
-    # Print out the benchmark results
-    print(f"Best latency (s): {best_latency}")
-    print(f"Best TFlops: {total_flops / best_latency * 1e-9:.3f}")
-    print(f"Best config: {best_config}")
-
-    if ref_latency is not None:
-        print(f"Reference TFlops: {total_flops / ref_latency * 1e-9:.3f}")
+    # Print benchmark results
+    tilelang_tflops = total_flops / best_latency * 1e-9
+    ref_tflops = total_flops / ref_latency * 1e-9 if ref_latency is not None else 0.0
+    print_benchmark_summary(
+        "MatMul",
+        f"M={M}, N={N}, K={K}",
+        best_latency,
+        tilelang_tflops,
+        ref_latency if ref_latency is not None else 0.0,
+        ref_tflops,
+        "Reference",
+        best_config,
+    )

@@ -3,7 +3,7 @@ import tilelang.language as T
 
 
 # https://docs.nvidia.com/cuda/curand/device-api-overview.html#device-api-overview
-def rng_init(seed, seq=None, off=0, generator="curandStatePhilox4_32_10_t") -> tirx.PrimExpr:
+def rng_init(seed, seq=None, off=0, generator="acrandStatePhilox4_32_10_t") -> tirx.PrimExpr:
     """Initialize CUDA curand random number generator state
 
     Parameters
@@ -23,7 +23,14 @@ def rng_init(seed, seq=None, off=0, generator="curandStatePhilox4_32_10_t") -> t
     state : PrimExpr
         The random number generator state handle.
     """
-    assert generator in ["curandStateMRG32k3a_t", "curandStatePhilox4_32_10_t", "curandStateXORWOW_t"]
+    assert generator in [
+        "curandStateMRG32k3a_t",
+        "curandStatePhilox4_32_10_t",
+        "curandStateXORWOW_t",
+        "acrandStateMRG32k3a_t",
+        "acrandStatePhilox4_32_10_t",
+        "acrandStateXORWOW_t",
+    ]
     seed = tirx.convert(seed)
     if seq is None:
         bx = T.get_block_binding()

@@ -1,6 +1,6 @@
 import tilelang
 import tilelang.language as T
-from tilelang.autotuner import autotune
+from kda_autotune import autotune
 
 from FLA_KDA.fla_chunk_inter import chunk_kda_bwd_dqkwg
 from test_utils_kda import do_bench, compare_tensors

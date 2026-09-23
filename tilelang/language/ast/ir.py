@@ -1902,6 +1902,9 @@ tvm_mfma_store = _dtype_forward(_tir_op.tvm_mfma_store)
 tvm_rdna_wmma = _dtype_forward(_tir_op.tvm_rdna_wmma)
 tvm_rdna_wmma_store = _dtype_forward(_tir_op.tvm_rdna_wmma_store)
 
+tix_ldmatrix_swzl = _dtype_forward(_tir_op.tix_ldmatrix_swzl)  # PPU: ld swizzle
+ppu_aiu_load = _tir_op.ppu_aiu_load
+
 broadcast = Broadcast
 ramp = Ramp
 fabs = abs
@@ -2163,6 +2166,8 @@ __all__ = [
     "tvm_mfma_store",
     "tvm_rdna_wmma",
     "tvm_rdna_wmma_store",
+    "tix_ldmatrix_swzl",  # PPU: ld swizzle
+    "ppu_aiu_load",
     "assume",
     "undef",
     "tvm_call_packed",

@@ -65,7 +65,11 @@ def _normalize_registered_target(target: TargetLike) -> TargetInput | None:
 
 def auto_detect_target() -> TargetInput:
     errors: list[str] = []
-    for spec in _TARGET_DETECTORS.values():
+    ordered_specs = sorted(
+        _TARGET_DETECTORS.values(),
+        key=lambda spec: 0 if spec.name == "ppu" else 1,
+    )
+    for spec in ordered_specs:
         try:
             detected = spec.detect()
         except Exception as err:

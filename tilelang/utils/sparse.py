@@ -62,7 +62,9 @@ def _compress_fn(D, dtype, meta_dtype, block_M=_BLOCK_M, block_K=_BLOCK_K, elem_
                 dense_local = T.alloc_local([elem_per_thread], dtype)
                 sparse_local = T.alloc_local([elem_per_thread * elem // group], dtype)
                 meta_local = T.alloc_local([elem_per_thread // e_factor], meta_dtype)
-                nz_idx = T.alloc_local([elem], T.uint8)
+                # nz_idx is indexed by nz_count which ranges over [0, group),
+                # not [0, elem); size by group to match the actual access range.
+                nz_idx = T.alloc_local([group], T.uint8)
                 nz_count = T.alloc_var(dtype=T.uint8)
 
                 T.clear(sparse_local)
@@ -134,7 +136,9 @@ def _compress_fn(D, dtype, meta_dtype, block_M=_BLOCK_M, block_K=_BLOCK_K, elem_
                 dense_local = T.alloc_local([elem_per_thread], dtype)
                 sparse_local = T.alloc_local([elem_per_thread * elem // group], dtype)
                 meta_local = T.alloc_local([elem_per_thread // e_factor], meta_dtype)
-                nz_idx = T.alloc_local([elem], T.uint8)
+                # nz_idx is indexed by nz_count which ranges over [0, group),
+                # not [0, elem); size by group to match the actual access range.
+                nz_idx = T.alloc_local([group], T.uint8)
                 nz_count = T.alloc_var(dtype=T.uint8)
 
                 T.clear(sparse_local)

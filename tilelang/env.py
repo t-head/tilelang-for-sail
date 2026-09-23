@@ -19,6 +19,8 @@ TargetConfig = dict[str, object]
 # SETUP ENVIRONMENT VARIABLES
 CUTLASS_NOT_FOUND_MESSAGE = "CUTLASS is not installed or found in the expected path"
 ", which may lead to compilation bugs when utilize tilelang backend."
+ACTLIZE_NOT_FOUND_MESSAGE = "actlize is not installed or found in the expected path"
+", which may lead to compilation bugs when utilize tilelang PPU backend."
 COMPOSABLE_KERNEL_NOT_FOUND_MESSAGE = "Composable Kernel is not installed or found in the expected path"
 ", which may lead to compilation bugs when utilize tilelang backend."
 TL_TEMPLATE_NOT_FOUND_MESSAGE = "TileLang is not installed or found in the expected path"
@@ -327,6 +329,7 @@ class Environment:
     # External library include paths
     CUTLASS_INCLUDE_DIR = EnvVar("TL_CUTLASS_PATH", None)
     COMPOSABLE_KERNEL_INCLUDE_DIR = EnvVar("TL_COMPOSABLE_KERNEL_PATH", None)
+    ACTLIZE_INCLUDE_DIR = EnvVar("TL_ACTLIZE_PATH", None)
 
     # TVM integration
     TVM_PYTHON_PATH = EnvVar("TVM_IMPORT_PYTHON_PATH", None)
@@ -569,6 +572,14 @@ if os.environ.get("TL_COMPOSABLE_KERNEL_PATH", None) is None:
     else:
         logger.warning(COMPOSABLE_KERNEL_NOT_FOUND_MESSAGE)
 
+# Initialize actlize (cutlass-ppu) paths (hard dependency for PPU backend)
+if os.environ.get("TL_ACTLIZE_PATH", None) is None:
+    actlize_inc_path = os.path.join(THIRD_PARTY_ROOT, "actlize", "include")
+    if os.path.exists(actlize_inc_path):
+        os.environ["TL_ACTLIZE_PATH"] = env.ACTLIZE_INCLUDE_DIR = actlize_inc_path
+    else:
+        logger.warning(ACTLIZE_NOT_FOUND_MESSAGE)
+
 # Initialize TL_TEMPLATE_PATH
 if os.environ.get("TL_TEMPLATE_PATH", None) is None:
     tl_template_path = os.path.join(THIRD_PARTY_ROOT, "..", "src")
@@ -580,5 +591,6 @@ if os.environ.get("TL_TEMPLATE_PATH", None) is None:
 # Export static variables after initialization.
 CUTLASS_INCLUDE_DIR = env.CUTLASS_INCLUDE_DIR
 COMPOSABLE_KERNEL_INCLUDE_DIR = env.COMPOSABLE_KERNEL_INCLUDE_DIR
+ACTLIZE_INCLUDE_DIR = env.ACTLIZE_INCLUDE_DIR
 TILELANG_TEMPLATE_PATH = env.TILELANG_TEMPLATE_PATH
 TILELANG_HIP_SAVE_TEMP_FILES = env.TILELANG_HIP_SAVE_TEMP_FILES

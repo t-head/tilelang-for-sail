@@ -410,6 +410,7 @@ private:
 
   void VisitExpr_(const CallNode *op) {
     if (op->op.same_as(tl::tma_load()) || op->op.same_as(tl::tma_store()) ||
+        op->op.same_as(tl::ppu_aiu_load()) ||
         op->op.same_as(tl::initialize_wgmma_descriptor()) ||
         op->op.same_as(tl::initialize_tcgen05_descriptor())) {
       // These intrinsics introduce stricter SMEM alignment requirements; mark
