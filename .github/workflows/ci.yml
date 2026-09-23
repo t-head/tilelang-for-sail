@@ -565,21 +565,18 @@ jobs:
             ln -sf source tilelang
             cp source/.github/scripts/*_skip.json source/
 
-            # Map board type to AoneCI platform name
-            case "$BOARD_TYPE" in
-              "OAM-810E") export CI_TEST_PLATFORM=ppu0010 ;;
-              "ZW-M890P") export CI_TEST_PLATFORM=ppu0015 ;;
-              *)
-                echo "ERROR: Unknown BOARD_TYPE '$BOARD_TYPE'; no CI_TEST_PLATFORM mapping. Refusing to run to avoid using the wrong board's skip list." >&2
-                exit 1
-                ;;
-            esac
+            # Use board type directly as platform name (skip files are named <BOARD_TYPE>_skip.json)
+            export CI_TEST_PLATFORM="$BOARD_TYPE"
+            if [[ ! -f "source/${CI_TEST_PLATFORM}_skip.json" ]]; then
+              echo "ERROR: Skip file '${CI_TEST_PLATFORM}_skip.json' not found for BOARD_TYPE='$BOARD_TYPE'. Refusing to run without a valid skip list." >&2
+              exit 1
+            fi
 
             echo "Board: $BOARD_TYPE -> Platform: $CI_TEST_PLATFORM"
 
             # ---- Run tests ----
             cd /workspace/source
-            python .github/scripts/test_tilelang.py -o test_result.xml -v --timeout 600 --maxfail 3 --workers 4 --limit 3 || TEST_RC=$?
+            python .github/scripts/test_tilelang.py -o test_result.xml -v --timeout 600 --workers 4 || TEST_RC=$?
             TEST_RC=${TEST_RC:-0}
 
             # ---- Copy results to NAS ----

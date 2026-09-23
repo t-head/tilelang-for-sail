@@ -118,33 +118,197 @@ class TestResult:
 
 test_dir = os.getcwd()
 
+# PPU-specific: exclude paths that cause collection errors due to
+# missing dependencies (fla) or vendored TVM incompatibilities.
+# NOTE: entries here are hidden from pytest entirely (no collection attempt,
+# no failure record). Anything that MUST be surfaced as a CI failure via the
+# collection-error interception path below MUST NOT be listed here.
+COLLECT_IGNORE_PATHS = [
+    "examples/ppu/linear_attention",
+]
+
+
+@dataclass
+class CollectionError:
+    """A single pytest collection failure captured from --collect-only output.
+
+    file_path is normalized to the same layout as TestConfig.file_path so it
+    dedupes cleanly across per-directory scans. traceback holds the full
+    diagnostic text with ANSI escape sequences already stripped (via
+    _strip_ansi) so JUnit XML, fail_list JSON, and log output are clean.
+    XML escaping happens at write time via ElementTree.
+    """
+    file_path: str
+    traceback: str
+
+
+# ---------------------------------------------------------------------------
+# ANSI escape sequence stripping
+# ---------------------------------------------------------------------------
+
+# Matches CSI (Control Sequence Introducer) sequences including SGR (Select
+# Graphic Rendition) — e.g. \x1b[1m, \x1b[31;1m, \x1b[0m — as well as
+# OSC (Operating System Command) sequences and other 7-bit C1 escapes.
+_ANSI_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove all ANSI CSI/SGR control sequences from *text*.
+
+    Used to sanitize pytest output captured under FORCE_COLOR / --color=yes
+    before regex matching and before storing text in JUnit XML / fail_list.
+    """
+    return _ANSI_RE.sub("", text)
+
+
+# Regex matching the pytest `_____ ERROR collecting <path> _____` block header.
+# pytest uses at least one leading underscore on each side; be tolerant of
+# trailing whitespace and any amount of underscore padding.
+_COLLECT_ERROR_HEADER_RE = re.compile(
+    r"^_+\s*ERROR collecting\s+(.+?)\s*_+\s*$"
+)
+# Boundaries that terminate a captured traceback block.
+_COLLECT_ERROR_TERMINATOR_RE = re.compile(
+    r"^(=+\s*(short test summary info|ERRORS|FAILURES|warnings summary|passed|failed)\b.*=+\s*$"
+    r"|!!!+\s*Interrupted.*!!!+\s*$"
+    r"|=+\s*\d+ .* in [\d.]+s\s*=+\s*$)"
+)
+# Short-summary `ERROR <path>[::...]` lines emitted in the trailing summary.
+_COLLECT_ERROR_SUMMARY_RE = re.compile(
+    r"^ERROR\s+(\S+\.py)(?:\s*-.*|\s*::.*|\s*)$"
+)
+
+
+def _parse_collection_output(output: str):
+    """Parse pytest --collect-only -q output.
+
+    Returns:
+        test_lines: List[str] of raw `file::node_id` lines that succeeded.
+        error_files: Dict[str, str] mapping pytest-reported file path
+                     (relative to pytest rootdir) to its traceback text.
+
+    Deduplication: the same file surfaced in both the `___ ERROR collecting X ___`
+    block header and the short-summary `ERROR X` line resolves to a single entry
+    with the traceback text preferred over the summary marker.
+    """
+    test_lines: List[str] = []
+    error_files: dict = {}
+
+    # Strip ANSI from the entire output once so every subsequent regex match
+    # and stored text is free of escape sequences (CI sets FORCE_COLOR=1).
+    clean_output = _strip_ansi(output)
+
+    lines = clean_output.splitlines()
+    i = 0
+    n = len(lines)
+    while i < n:
+        raw = lines[i]
+        stripped = raw.strip()
+
+        m = _COLLECT_ERROR_HEADER_RE.match(stripped)
+        if m:
+            err_path = m.group(1).strip()
+            tb_lines: List[str] = []
+            i += 1
+            while i < n:
+                nxt = lines[i]
+                nxt_stripped = nxt.strip()
+                if _COLLECT_ERROR_HEADER_RE.match(nxt_stripped):
+                    break
+                if _COLLECT_ERROR_TERMINATOR_RE.match(nxt_stripped):
+                    break
+                tb_lines.append(nxt)
+                i += 1
+            traceback_text = "\n".join(tb_lines).strip()
+            # Prefer the block-header traceback over any prior short-summary stub
+            if err_path not in error_files or not error_files[err_path].strip():
+                error_files[err_path] = traceback_text or f"ERROR collecting {err_path} (empty traceback)"
+            continue
+
+        m2 = _COLLECT_ERROR_SUMMARY_RE.match(stripped)
+        if m2:
+            err_path = m2.group(1).strip()
+            if err_path not in error_files:
+                error_files[err_path] = f"pytest short summary: {stripped}"
+            i += 1
+            continue
+
+        if "::" in stripped and stripped:
+            test_lines.append(stripped)
+        i += 1
+
+    return test_lines, error_files
+
+
 def collect_tests(target_dir):
+    """Run pytest --collect-only and return (tests, collection_errors).
+
+    Contract:
+      * Successfully collected node ids become TestConfig entries (unchanged).
+      * Every `ERROR collecting <path>` block becomes a CollectionError so the
+        caller can surface it as a real failure in JUnit / fail_list.
+      * If pytest exits non-zero and we cannot parse any error entries, we
+        synthesize a directory-level CollectionError to fail closed (no silent
+        loss of failure signal).
+    """
+    cmd = ["pytest", target_dir[0], "--collect-only", "-q"]
+    for ignore_path in COLLECT_IGNORE_PATHS:
+        cmd.extend(["--ignore", ignore_path])
     result = subprocess.run(
-        ["pytest", target_dir[0], "--collect-only", "-q"],
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True
     )
 
-    if result.returncode != 0:
-        print(f"Warning: sub process pytest failed, here's log:\n\n{result.stdout}\n")
-    tests = []
+    test_lines, error_files = _parse_collection_output(result.stdout or "")
 
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line or "::" not in line:
+    tests: List[TestConfig] = []
+    for line in test_lines:
+        if "::" not in line:
             continue
-
         file_part, test_part = line.split("::", 1)
-
         tests.append(
             TestConfig(
-                file_path=os.path.join(target_dir[1], file_part),
+                file_path=os.path.normpath(os.path.join(target_dir[1], file_part)),
                 test_filter=test_part,
             )
         )
 
-    return tests
+    collection_errors: List[CollectionError] = []
+    for err_path, tb in error_files.items():
+        norm_path = os.path.normpath(os.path.join(target_dir[1], err_path))
+        collection_errors.append(
+            CollectionError(file_path=norm_path, traceback=tb)
+        )
+
+    # Fail-closed: pytest returned non-zero but no ERROR block was parsable.
+    # Never let this collapse to a silent warning — synthesize a directory
+    # level entry so it enters JUnit / fail_list and flips CI to failure.
+    if result.returncode != 0 and not collection_errors:
+        synth_path = os.path.normpath(target_dir[0])
+        # Strip ANSI from the raw output stored in the traceback so JUnit
+        # XML and fail_list remain free of control sequences.
+        clean_stdout = _strip_ansi(result.stdout or "")
+        collection_errors.append(
+            CollectionError(
+                file_path=synth_path,
+                traceback=(
+                    f"pytest --collect-only exited with returncode={result.returncode} "
+                    f"for {target_dir[0]} but no ERROR collecting entries could "
+                    f"be parsed from the output.\n\n"
+                    f"Full pytest output follows:\n{clean_stdout}"
+                ),
+            )
+        )
+
+    if result.returncode != 0:
+        print(
+            f"Warning: sub process pytest failed (returncode={result.returncode}, "
+            f"parsed_errors={len(collection_errors)}), here's log:\n\n{result.stdout}\n"
+        )
+
+    return tests, collection_errors
 
 
 def load_skip():
@@ -159,9 +323,9 @@ def load_skip():
 
     return {(x["file_path"], x["test_filter"]) for x in data}
 
-def scan_cases(test_dir: Tuple[str, str]) -> List[TestConfig]:
-    collected = collect_tests(test_dir)
-    print(f"Collected test: {len(collected)}")
+def scan_cases(test_dir: Tuple[str, str]) -> Tuple[List[TestConfig], List[CollectionError]]:
+    collected, errors = collect_tests(test_dir)
+    print(f"Collected test: {len(collected)}, collection errors: {len(errors)}")
 
     skip_set = load_skip()
     print(f"skipped test: {len(skip_set)}")
@@ -172,7 +336,7 @@ def scan_cases(test_dir: Tuple[str, str]) -> List[TestConfig]:
     ]
     print(f"filtered test: {len(filtered)}")
 
-    return filtered
+    return filtered, errors
 
 # ---------------------------------------------------------------------------
 # XML 结果解析
@@ -595,7 +759,7 @@ def print_summary(results: List[TestResult], output_xml: str) -> None:
 
 def dump_fail_list(results: List[TestResult], output_path: str = "fail_list.json") -> None:
     """
-    将失败的测试用例输出为 JSON 文件，格式与 ppu0010_v0.1.11_skip.json 一致。
+    将失败的测试用例输出为 JSON 文件，格式与 <BOARD_TYPE>_skip.json 一致。
 
     参数:
         results:     所有测试运行结果
@@ -654,6 +818,92 @@ def dump_skip_list(results: List[TestResult], output_path: str = "skip_list.json
 
 
 # ---------------------------------------------------------------------------
+# Collection error → synthetic JUnit / TestResult
+# ---------------------------------------------------------------------------
+
+_COLLECTION_ERROR_FILTER_TAG = "<collection-error>"
+
+
+def _write_collection_error_xml(err: CollectionError, index: int) -> str:
+    """Materialize a CollectionError as a single-testcase JUnit XML file.
+
+    ElementTree performs XML escaping on both attribute values and .text on
+    write, so we hand it the raw traceback verbatim. The synthesized file
+    plugs into the same merge_junit_xml() pipeline as normal per-case XMLs.
+    """
+    xml_path = f"collection_error_{index}.xml"
+    root = ET.Element("testsuites")
+    ts = ET.SubElement(
+        root, "testsuite",
+        name="pytest-collection-error",
+        tests="1", failures="0", errors="1", skipped="0", time="0.000",
+    )
+    tc = ET.SubElement(
+        ts, "testcase",
+        classname=err.file_path,
+        name="collection_error",
+        time="0.000",
+    )
+    error_el = ET.SubElement(
+        tc, "error",
+        type="CollectionError",
+        message=f"pytest collection error for {err.file_path}",
+    )
+    error_el.text = err.traceback or ""
+    tree = ET.ElementTree(root)
+    try:
+        ET.indent(tree, space="  ")
+    except AttributeError:
+        pass
+    tree.write(xml_path, encoding="utf-8", xml_declaration=True)
+    return xml_path
+
+
+def _make_collection_error_result(err: CollectionError, xml_path: str) -> TestResult:
+    """Build a synthetic TestResult so the collection error flows through the
+    existing print_summary / dump_fail_list / merge pipeline unchanged.
+
+    Uses returncode=-2 and xml_errors=1 so status_label resolves to FAIL and
+    the entry counts toward has_failures at exit time.
+    """
+    cfg = TestConfig(
+        file_path=err.file_path,
+        test_filter=_COLLECTION_ERROR_FILTER_TAG,
+    )
+    return TestResult(
+        config=cfg,
+        returncode=-2,
+        duration=0.0,
+        xml_path=xml_path,
+        stdout="",
+        stderr=err.traceback,
+        xml_tests=1,
+        xml_failures=0,
+        xml_errors=1,
+        xml_skipped=0,
+        timed_out=False,
+    )
+
+
+def _dedupe_collection_errors(errors: List[CollectionError]) -> List[CollectionError]:
+    """Dedupe by normalized file_path; first occurrence wins.
+
+    Called across per-directory scan results, so the same broken file surfaced
+    from multiple target dirs (or by both header + short-summary parsers) only
+    produces a single synthetic failure.
+    """
+    seen: set = set()
+    out: List[CollectionError] = []
+    for e in errors:
+        key = os.path.normpath(e.file_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(e)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
 
@@ -672,9 +922,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "示例用法:\n"
-            "  python test_ppu0010_v0.1.8.py\n"
-            "  python test_ppu0010_v0.1.8.py -o result.xml --test-dir /path/to/repo\n"
-            "  python test_ppu0010_v0.1.8.py --keep-temp -v\n"
+            "  python test_tilelang.py\n"
+            "  python test_tilelang.py -o result.xml --test-dir /path/to/repo\n"
+            "  python test_tilelang.py --keep-temp -v\n"
         ),
     )
     parser.add_argument(
@@ -761,17 +1011,33 @@ def main(argv: Optional[List[str]] = None) -> int:
         (f"testing/python/{d}", ".") for d in testing_subdirs
     ]
     test_configs: List[TestConfig] = []
+    all_collection_errors: List[CollectionError] = []
     for dir_tuple in test_dirs:
         # scan_cases 已完成 skip 过滤；--limit 在过滤之后、调度之前对每个
         # 目录组做截断（take first N per group），既能覆盖多个目录又快速跑通。
-        group = scan_cases(dir_tuple)
+        group, group_errors = scan_cases(dir_tuple)
         if args.limit > 0 and len(group) > args.limit:
             print(f"✂️ 目录组 {dir_tuple[0]}: 应用 --limit={args.limit}，"
                   f"保留前 {args.limit} 个用例（收集 {len(group)} 个）")
             group = group[:args.limit]
         test_configs.extend(group)
+        all_collection_errors.extend(group_errors)
+
+    # Deduplicate collection errors before synthesizing failure records.
+    # Same file may surface from multiple scan groups or from both the
+    # ERROR-block parser and the short-summary parser.
+    all_collection_errors = _dedupe_collection_errors(all_collection_errors)
+    if all_collection_errors:
+        print(
+            f"⚠️ 检测到 {len(all_collection_errors)} 个 pytest collection 错误，"
+            f"将作为失败写入 JUnit 与 fail_list"
+        )
+        for e in all_collection_errors:
+            print(f"   ✗ {e.file_path}")
 
     with open("tests.json", "w") as f:
+        # tests.json 只描述实际待执行的测试；collection 错误通过合成 JUnit /
+        # fail_list 单独承载，避免下游消费者把不可执行项当成正常调度目标。
         json.dump([asdict(t) for t in test_configs], f, indent=2)
 
     if not test_configs:
@@ -793,6 +1059,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     fail_lock = threading.Lock()
     fail_count = 0
     stop_event = threading.Event()
+
+    # 将 collection 错误先写入结果集，以保证即使后续调度或进程异常中断也
+    # 不会丢失“无法收集”的失败信号。保存 xml_path 以便后续合并。
+    collection_error_xml_paths: List[str] = []
+    for c_idx, c_err in enumerate(all_collection_errors):
+        xml_path = _write_collection_error_xml(c_err, c_idx)
+        collection_error_xml_paths.append(xml_path)
+        synth_result = _make_collection_error_result(c_err, xml_path)
+        results.append(synth_result)
+        if args.maxfail > 0:
+            fail_count += 1
+            if fail_count >= args.maxfail:
+                stop_event.set()
 
     def _worker(idx: int, cfg: TestConfig) -> None:
         nonlocal fail_count
