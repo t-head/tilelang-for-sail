@@ -531,6 +531,7 @@ jobs:
           extra_env: BOARD_TYPE=${{ matrix.board }}
           timeout_minutes: 300
           command: |
+            git config --global --add safe.directory '*'
             cd /workspace/source
             unset PIP_INDEX_URL
             git config --global --unset-all url.https://ai-gerrit.eng.t-head.cn/Public/Github/.insteadOf 2>/dev/null || true
