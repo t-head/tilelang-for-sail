@@ -588,13 +588,13 @@
     "reason": "Move to ppu dir."
   },
   {
-    "file_path": "examples/gemm_analyze/test_example_gemm.py",
+    "file_path": "examples/analyze/test_example_analyze.py",
     "test_filter": "test_example_gemm_analyze",
     "extra_args": [],
     "reason": "analyze module targets CUDA device, not available on PPU"
   },
   {
-    "file_path": "examples/conv_analyze/test_example_conv.py",
+    "file_path": "examples/analyze/test_example_analyze.py",
     "test_filter": "test_example_conv_analyze",
     "extra_args": [],
     "reason": "analyze module targets CUDA device, not available on PPU"
@@ -922,5 +922,491 @@
     "test_filter": "test_tiled_ws_propagates_nested_postloop_liveness_to_outer_prelude",
     "extra_args": [],
     "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "examples/blocksparse_attention/test_example_blocksparse_attention.py",
+    "test_filter": "test_example_tilelang_sparse_gqa_decode_varlen_indice",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/blocksparse_attention/test_example_blocksparse_attention.py",
+    "test_filter": "test_example_tilelang_sparse_gqa_decode_varlen_mask",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/flash_attention/test_example_flash_attention.py",
+    "test_filter": "test_example_gqa_fwd_varlen",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/flash_attention/test_example_flash_attention.py",
+    "test_filter": "test_example_mha_fwd_varlen",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_chunk_delta_bwd_compilation",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_chunk_delta_h_compilation",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_chunk_o_bwd_compilation",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_chunk_o_compilation",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_chunk_scaled_dot_kkt_compilation",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_cumsum_compilation",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_wy_fast_bwd_split_compilation",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_wy_fast_compilation",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/carver/test_tilelang_carver_cuda_driver_properties.py",
+    "test_filter": "test_device_get_num_sms",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/carver/test_tilelang_carver_cuda_driver_properties.py",
+    "test_filter": "test_device_get_shared_memory_per_block",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/carver/test_tilelang_carver_generate_hints.py",
+    "test_filter": "test_general_matmul_emit_configs",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/carver/test_tilelang_carver_generate_hints.py",
+    "test_filter": "test_general_matmul_matmul_emit_configs",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/components/test_tilelang_pass_config_disable_tma_lower.py",
+    "test_filter": "test_disable_tma_lower_warns_in_jit_entry",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_abs2[bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_f32[add]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_f32[mul]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_f32_no_sm80[add]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_f32_no_sm80[mul]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_f32_no_sm80[sub]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_f32[sub]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_fma_f32",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_fma_half_types[bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_half_types[add-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_half_types[mul-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_half_types[sub-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_binary[add2-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_binary[max2-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_binary[min2-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_binary[mul2-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_binary[sub2-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_fma2[bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_mma_sm75_dispatch.py",
+    "test_filter": "test_ladder_transform_int8_micro_size_uses_actual_k_dim",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_mma_sm75_dispatch.py",
+    "test_filter": "test_non_turing_int8_emitter_keeps_sm80_m16n8k32_shape",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_mma_sm75_dispatch.py",
+    "test_filter": "test_sm75_uses_sm75_mma_gemm_impl",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/issue/test_tilelang_issue_1810.py",
+    "test_filter": "test_issue_1810_l2_persistent_float16_host_stub_no_half",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/issue/test_tilelang_issue_sm120_tma_smem_alignment.py",
+    "test_filter": "test_tma_smem_alignment_codegen_sm100_blackwell_dc",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/issue/test_tilelang_issue_sm120_tma_smem_alignment.py",
+    "test_filter": "test_tma_smem_alignment_codegen_sm120_blackwell_consumer",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/issue/test_tilelang_issue_sm120_tma_smem_alignment.py",
+    "test_filter": "test_tma_smem_alignment_codegen_sm90_hopper",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_cutedsl_host_codegen.py",
+    "test_filter": "test_cutedsl_cache_restore_does_not_fallback_to_host_source",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_cluster.py",
+    "test_filter": "test_clc_query_codegen_includes_cluster_header",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_pdl.py",
+    "test_filter": "test_pdl_sync",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_pdl.py",
+    "test_filter": "test_pdl_trigger",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/math/test_math_fast_math.py",
+    "test_filter": "test_round_modes[ties-to-even]",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_alloc_barrier_target_guard.py",
+    "test_filter": "test_alloc_barrier_rejected_on_pre_hopper_target",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_alloc_barrier_target_guard.py",
+    "test_filter": "test_no_barrier_compiles_on_pre_hopper_target",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_codegen_cutedsl_cp_async.py",
+    "test_filter": "test_cutedsl_dict_target_normalizes_to_cuda_marker",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_codegen_cutedsl_cp_async.py",
+    "test_filter": "test_cutedsl_string_target_uses_detected_cuda_arch",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_rocm_target.py",
+    "test_filter": "test_auto_target_prefers_rocm_pytorch_over_cuda_toolkit",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_rocm_target.py",
+    "test_filter": "test_determine_target_adds_known_gfx12_thread_warp_size",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_rocm_target.py",
+    "test_filter": "test_determine_target_adds_rdna_thread_warp_size",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_does_not_duplicate_existing_sync",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_from_ramp",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_from_vectorized_loop",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_hoists_sync_out_of_predicated_block",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_inserts_commit_before_existing_wait",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_keeps_sync_out_of_inner_unrolled_loops_in_pipelined_loop",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_respects_explicit_async_scope",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_rewrites_plain_parallel_copy",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_rewrites_vectorized_float16_loop",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_supports_multi_dim_indices",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_accepts_explicit_bind_free_annotations",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_copy_consumer_num_stages_plan",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_copy_gemm_num_stages_plan",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_explicit_plan_drops_replayable_bind_slot",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_explicit_plan_keeps_pipeline_buffer_bind_slot",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_loop_local_alloc_plan",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_mbarrier_arrive_wait_plan",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_tcgen05_gemm_plan",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_tma_copy_plan",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_wgmma_gemm_plan",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_keeps_bind_that_reads_pipeline_written_buffer",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_keeps_plain_hopper_pipeline_copies_sync",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_marks_async_producers_per_statement",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_recognizes_parallel_bufferstore_copy_stages",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_schedules_guarded_body_after_replayable_bind_inline",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_stages_bind_with_dependent_copy",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_simple_pipeline",
+    "extra_args": [],
+    "reason": "cudafree BTV 2v2_release 20260923 fail"
   }
 ]

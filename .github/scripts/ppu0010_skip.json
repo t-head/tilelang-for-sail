@@ -276,13 +276,13 @@
     "reason": "Move to ppu dir."
   },
   {
-    "file_path": "examples/gemm_analyze/test_example_gemm.py",
+    "file_path": "examples/analyze/test_example_analyze.py",
     "test_filter": "test_example_gemm_analyze",
     "extra_args": [],
     "reason": "analyze module targets CUDA device, not available on PPU"
   },
   {
-    "file_path": "examples/conv_analyze/test_example_conv.py",
+    "file_path": "examples/analyze/test_example_analyze.py",
     "test_filter": "test_example_conv_analyze",
     "extra_args": [],
     "reason": "analyze module targets CUDA device, not available on PPU"
