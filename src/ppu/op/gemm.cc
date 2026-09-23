@@ -7,10 +7,9 @@
 #include "support/check.h"
 #include <tvm/runtime/logging.h>
 
-#include "ppu/target_utils.h"
 #include "op/builtin.h"
 #include "op/utils.h"
-
+#include "ppu/target_utils.h"
 
 #include <cmath>
 #include <cstdint>
@@ -36,8 +35,7 @@ void FatalUnsupportedPpuArchGemm(const GemmNode &op, Target target,
              << ", A(scope=" << op.a_.scope() << ", dtype=" << op.a_->dtype
              << "), B(scope=" << op.b_.scope() << ", dtype=" << op.b_->dtype
              << "), C(scope=" << op.c_.scope() << ", dtype=" << op.c_->dtype
-             << "), M=" << op.m_ << ", N=" << op.n_ << ", K=" << op.k_
-             << ".";
+             << "), M=" << op.m_ << ", N=" << op.n_ << ", K=" << op.k_ << ".";
 }
 
 std::pair<int, int>
@@ -162,7 +160,6 @@ struct Gemm {
     }
     return "unknown";
   }
-
 };
 
 } // namespace ppu

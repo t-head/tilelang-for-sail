@@ -33,11 +33,12 @@ struct PPU0010_16x8x16_F16F16F16F16_TN {
                                    uint32_t const &e) {
 #if defined(CUTE_ARCH_SPARSE_MMA_PPU0010_ENABLED)
 #if __HGGC_ARCH__ == 100
-    asm volatile("ppu.tc01.ex.mma.sp.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 "
-                 "{%0,%1}, {%2,%3}, {%4,%5}, {%6,%7}, %8, %9;\n"
-                 : "=r"(d0), "=r"(d1)
-                 : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "r"(c0), "r"(c1), "r"(e),
-                   "n"(int32_t(spsel)));
+    asm volatile(
+        "ppu.tc01.ex.mma.sp.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 "
+        "{%0,%1}, {%2,%3}, {%4,%5}, {%6,%7}, %8, %9;\n"
+        : "=r"(d0), "=r"(d1)
+        : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "r"(c0), "r"(c1), "r"(e),
+          "n"(int32_t(spsel)));
 #endif
 #else
     CUTE_INVALID_CONTROL_PATH("PPU0010_16x8x16_F16F16F16F16_TN requires "
@@ -63,12 +64,12 @@ struct PPU0010_16x8x32_F16F16F16F16_TN {
       uint32_t const &c0, uint32_t const &c1, uint32_t const &e) {
 #if defined(CUTE_ARCH_SPARSE_MMA_PPU0010_ENABLED)
 #if __HGGC_ARCH__ == 100
-    asm volatile("ppu.tc01.ex.mma.sp.sync.aligned.m16n8k32.row.col.f16.f16.f16.f16 "
-                 "{%0,%1}, {%2,%3,%4,%5}, {%6,%7,%8,%9}, {%10,%11}, %12, %13;\n"
-                 : "=r"(d0), "=r"(d1)
-                 : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1),
-                   "r"(b2), "r"(b3), "r"(c0), "r"(c1), "r"(e),
-                   "n"(int32_t(spsel)));
+    asm volatile(
+        "ppu.tc01.ex.mma.sp.sync.aligned.m16n8k32.row.col.f16.f16.f16.f16 "
+        "{%0,%1}, {%2,%3,%4,%5}, {%6,%7,%8,%9}, {%10,%11}, %12, %13;\n"
+        : "=r"(d0), "=r"(d1)
+        : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1), "r"(b2),
+          "r"(b3), "r"(c0), "r"(c1), "r"(e), "n"(int32_t(spsel)));
 #endif
 #else
     CUTE_INVALID_CONTROL_PATH("PPU0010_16x8x32_F16F16F16F16_TN requires "
@@ -95,11 +96,12 @@ struct PPU0010_16x8x16_F32F16F16F32_TN {
                                    uint32_t const &e) {
 #if defined(CUTE_ARCH_SPARSE_MMA_PPU0010_ENABLED)
 #if __HGGC_ARCH__ == 100
-    asm volatile("ppu.tc01.ex.mma.sp.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
-                 "{%0,%1,%2,%3}, {%4,%5}, {%6,%7}, {%8,%9,%10,%11}, %12, %13;\n"
-                 : "=f"(d0), "=f"(d1), "=f"(d2), "=f"(d3)
-                 : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "f"(c0), "f"(c1),
-                   "f"(c2), "f"(c3), "r"(e), "n"(int32_t(spsel)));
+    asm volatile(
+        "ppu.tc01.ex.mma.sp.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
+        "{%0,%1,%2,%3}, {%4,%5}, {%6,%7}, {%8,%9,%10,%11}, %12, %13;\n"
+        : "=f"(d0), "=f"(d1), "=f"(d2), "=f"(d3)
+        : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "f"(c0), "f"(c1), "f"(c2),
+          "f"(c3), "r"(e), "n"(int32_t(spsel)));
 #endif
 #else
     CUTE_INVALID_CONTROL_PATH("PPU0010_16x8x16_F32F16F16F32_TN requires "
@@ -126,13 +128,14 @@ struct PPU0010_16x8x32_F32F16F16F32_TN {
       float const &c3, uint32_t const &e) {
 #if defined(CUTE_ARCH_SPARSE_MMA_PPU0010_ENABLED)
 #if __HGGC_ARCH__ == 100
-    asm volatile("ppu.tc01.ex.mma.sp.sync.aligned.m16n8k32.row.col.f32.f16.f16.f32 "
-                 "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9,%10,%11}, "
-                 "{%12,%13,%14,%15}, %16, %17;\n"
-                 : "=f"(d0), "=f"(d1), "=f"(d2), "=f"(d3)
-                 : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1),
-                   "r"(b2), "r"(b3), "f"(c0), "f"(c1), "f"(c2), "f"(c3), "r"(e),
-                   "n"(int32_t(spsel)));
+    asm volatile(
+        "ppu.tc01.ex.mma.sp.sync.aligned.m16n8k32.row.col.f32.f16.f16.f32 "
+        "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9,%10,%11}, "
+        "{%12,%13,%14,%15}, %16, %17;\n"
+        : "=f"(d0), "=f"(d1), "=f"(d2), "=f"(d3)
+        : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1), "r"(b2),
+          "r"(b3), "f"(c0), "f"(c1), "f"(c2), "f"(c3), "r"(e),
+          "n"(int32_t(spsel)));
 #endif
 #else
     CUTE_INVALID_CONTROL_PATH("PPU0010_16x8x32_F32F16F16F32_TN requires "
@@ -159,11 +162,12 @@ struct PPU0010_16x8x16_F32BF16BF16F32_TN {
                                    uint32_t const &e) {
 #if defined(CUTE_ARCH_SPARSE_MMA_PPU0010_ENABLED)
 #if __HGGC_ARCH__ == 100
-    asm volatile("ppu.tc01.ex.mma.sp.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 "
-                 "{%0,%1,%2,%3}, {%4,%5}, {%6,%7}, {%8,%9,%10,%11}, %12, %13;\n"
-                 : "=f"(d0), "=f"(d1), "=f"(d2), "=f"(d3)
-                 : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "f"(c0), "f"(c1),
-                   "f"(c2), "f"(c3), "r"(e), "n"(int32_t(spsel)));
+    asm volatile(
+        "ppu.tc01.ex.mma.sp.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 "
+        "{%0,%1,%2,%3}, {%4,%5}, {%6,%7}, {%8,%9,%10,%11}, %12, %13;\n"
+        : "=f"(d0), "=f"(d1), "=f"(d2), "=f"(d3)
+        : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "f"(c0), "f"(c1), "f"(c2),
+          "f"(c3), "r"(e), "n"(int32_t(spsel)));
 #endif
 #else
     CUTE_INVALID_CONTROL_PATH("PPU0010_16x8x16_F32BF16BF16F32_TN requires "
@@ -190,13 +194,14 @@ struct PPU0010_16x8x32_F32BF16BF16F32_TN {
       float const &c3, uint32_t const &e) {
 #if defined(CUTE_ARCH_SPARSE_MMA_PPU0010_ENABLED)
 #if __HGGC_ARCH__ == 100
-    asm volatile("ppu.tc01.ex.mma.sp.sync.aligned.m16n8k32.row.col.f32.bf16.bf16.f32 "
-                 "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9,%10,%11}, "
-                 "{%12,%13,%14,%15}, %16, %17;\n"
-                 : "=f"(d0), "=f"(d1), "=f"(d2), "=f"(d3)
-                 : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1),
-                   "r"(b2), "r"(b3), "f"(c0), "f"(c1), "f"(c2), "f"(c3), "r"(e),
-                   "n"(int32_t(spsel)));
+    asm volatile(
+        "ppu.tc01.ex.mma.sp.sync.aligned.m16n8k32.row.col.f32.bf16.bf16.f32 "
+        "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9,%10,%11}, "
+        "{%12,%13,%14,%15}, %16, %17;\n"
+        : "=f"(d0), "=f"(d1), "=f"(d2), "=f"(d3)
+        : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1), "r"(b2),
+          "r"(b3), "f"(c0), "f"(c1), "f"(c2), "f"(c3), "r"(e),
+          "n"(int32_t(spsel)));
 #endif
 #else
     CUTE_INVALID_CONTROL_PATH("PPU0010_16x8x32_F32BF16BF16F32_TN requires "
@@ -223,11 +228,12 @@ struct PPU0010_16x8x8_F32TF32TF32F32_TN {
                                    uint32_t const &e) {
 #if defined(CUTE_ARCH_SPARSE_MMA_PPU0010_ENABLED)
 #if __HGGC_ARCH__ == 100
-    asm volatile("ppu.tc01.ex.mma.sp.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 "
-                 "{%0,%1,%2,%3}, {%4,%5}, {%6,%7}, {%8,%9,%10,%11}, %12, %13;\n"
-                 : "=f"(d0), "=f"(d1), "=f"(d2), "=f"(d3)
-                 : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "f"(c0), "f"(c1),
-                   "f"(c2), "f"(c3), "r"(e), "n"(int32_t(spsel)));
+    asm volatile(
+        "ppu.tc01.ex.mma.sp.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 "
+        "{%0,%1,%2,%3}, {%4,%5}, {%6,%7}, {%8,%9,%10,%11}, %12, %13;\n"
+        : "=f"(d0), "=f"(d1), "=f"(d2), "=f"(d3)
+        : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "f"(c0), "f"(c1), "f"(c2),
+          "f"(c3), "r"(e), "n"(int32_t(spsel)));
 #endif
 #else
     CUTE_INVALID_CONTROL_PATH("PPU0010_16x8x8_F32TF32TF32F32_TN requires "
@@ -254,13 +260,14 @@ struct PPU0010_16x8x16_F32TF32TF32F32_TN {
       float const &c3, uint32_t const &e) {
 #if defined(CUTE_ARCH_SPARSE_MMA_PPU0010_ENABLED)
 #if __HGGC_ARCH__ == 100
-    asm volatile("ppu.tc01.ex.mma.sp.sync.aligned.m16n8k16.row.col.f32.tf32.tf32.f32 "
-                 "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9,%10,%11}, "
-                 "{%12,%13,%14,%15}, %16, %17;\n"
-                 : "=f"(d0), "=f"(d1), "=f"(d2), "=f"(d3)
-                 : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1),
-                   "r"(b2), "r"(b3), "f"(c0), "f"(c1), "f"(c2), "f"(c3), "r"(e),
-                   "n"(int32_t(spsel)));
+    asm volatile(
+        "ppu.tc01.ex.mma.sp.sync.aligned.m16n8k16.row.col.f32.tf32.tf32.f32 "
+        "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9,%10,%11}, "
+        "{%12,%13,%14,%15}, %16, %17;\n"
+        : "=f"(d0), "=f"(d1), "=f"(d2), "=f"(d3)
+        : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1), "r"(b2),
+          "r"(b3), "f"(c0), "f"(c1), "f"(c2), "f"(c3), "r"(e),
+          "n"(int32_t(spsel)));
 #endif
 #else
     CUTE_INVALID_CONTROL_PATH("PPU0010_16x8x16_F32TF32TF32F32_TN requires "
@@ -271,7 +278,8 @@ struct PPU0010_16x8x16_F32TF32TF32F32_TN {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template <SparseSel spsel = SparseSel::Zero> struct PPU0010_16x8x32_S32S8S8S32_TN {
+template <SparseSel spsel = SparseSel::Zero>
+struct PPU0010_16x8x32_S32S8S8S32_TN {
   using DRegisters = uint32_t[4];
   using ARegisters = uint32_t[2];
   using BRegisters = uint32_t[2];
@@ -286,11 +294,12 @@ template <SparseSel spsel = SparseSel::Zero> struct PPU0010_16x8x32_S32S8S8S32_T
                                    uint32_t const &c3, uint32_t const &e) {
 #if defined(CUTE_ARCH_SPARSE_MMA_PPU0010_ENABLED)
 #if __HGGC_ARCH__ == 100
-    asm volatile("ppu.tc01.ex.mma.sp.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 "
-                 "{%0,%1,%2,%3}, {%4,%5}, {%6,%7}, {%8,%9,%10,%11}, %12, 0x0;\n"
-                 : "=r"(d0), "=r"(d1), "=r"(d2), "=r"(d3)
-                 : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "r"(c0), "r"(c1),
-                   "r"(c2), "r"(c3), "r"(e));
+    asm volatile(
+        "ppu.tc01.ex.mma.sp.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 "
+        "{%0,%1,%2,%3}, {%4,%5}, {%6,%7}, {%8,%9,%10,%11}, %12, 0x0;\n"
+        : "=r"(d0), "=r"(d1), "=r"(d2), "=r"(d3)
+        : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "r"(c0), "r"(c1), "r"(c2),
+          "r"(c3), "r"(e));
 #endif
 #else
     CUTE_INVALID_CONTROL_PATH("PPU0010_16x8x32_S32S8S8S32_TN requires "
@@ -319,7 +328,8 @@ template <> struct PPU0010_16x8x32_S32S8S8S32_TN<SparseSel::One> {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template <SparseSel spsel = SparseSel::Zero> struct PPU0010_16x8x64_S32S8S8S32_TN {
+template <SparseSel spsel = SparseSel::Zero>
+struct PPU0010_16x8x64_S32S8S8S32_TN {
   using DRegisters = uint32_t[4];
   using ARegisters = uint32_t[4];
   using BRegisters = uint32_t[4];
@@ -336,13 +346,13 @@ template <SparseSel spsel = SparseSel::Zero> struct PPU0010_16x8x64_S32S8S8S32_T
                                    uint32_t const &c3, uint32_t const &e) {
 #if defined(CUTE_ARCH_SPARSE_MMA_PPU0010_ENABLED)
 #if __HGGC_ARCH__ == 100
-    asm volatile("ppu.tc01.ex.mma.sp.sync.aligned.m16n8k64.row.col.s32.s8.s8.s32 "
-                 "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9,%10,%11}, "
-                 "{%12,%13,%14,%15}, %16, 0x0;\n"
-                 : "=r"(d0), "=r"(d1), "=r"(d2), "=r"(d3)
-                 : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1),
-                   "r"(b2), "r"(b3), "r"(c0), "r"(c1), "r"(c2), "r"(c3),
-                   "r"(e));
+    asm volatile(
+        "ppu.tc01.ex.mma.sp.sync.aligned.m16n8k64.row.col.s32.s8.s8.s32 "
+        "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9,%10,%11}, "
+        "{%12,%13,%14,%15}, %16, 0x0;\n"
+        : "=r"(d0), "=r"(d1), "=r"(d2), "=r"(d3)
+        : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1), "r"(b2),
+          "r"(b3), "r"(c0), "r"(c1), "r"(c2), "r"(c3), "r"(e));
 #endif
 #else
     CUTE_INVALID_CONTROL_PATH("PPU0010_16x8x64_S32S8S8S32_TN requires "
@@ -373,7 +383,8 @@ template <> struct PPU0010_16x8x64_S32S8S8S32_TN<SparseSel::One> {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template <SparseSel spsel = SparseSel::Zero> struct PPU0010_16x8x32_S32U8U8S32_TN {
+template <SparseSel spsel = SparseSel::Zero>
+struct PPU0010_16x8x32_S32U8U8S32_TN {
   using DRegisters = uint32_t[4];
   using ARegisters = uint32_t[2];
   using BRegisters = uint32_t[2];
@@ -388,11 +399,12 @@ template <SparseSel spsel = SparseSel::Zero> struct PPU0010_16x8x32_S32U8U8S32_T
                                    uint32_t const &c3, uint32_t const &e) {
 #if defined(CUTE_ARCH_SPARSE_MMA_PPU0010_ENABLED)
 #if __HGGC_ARCH__ == 100
-    asm volatile("ppu.tc01.ex.mma.sp.sync.aligned.m16n8k32.row.col.s32.u8.u8.s32 "
-                 "{%0,%1,%2,%3}, {%4,%5}, {%6,%7}, {%8,%9,%10,%11}, %12, 0x0;\n"
-                 : "=r"(d0), "=r"(d1), "=r"(d2), "=r"(d3)
-                 : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "r"(c0), "r"(c1),
-                   "r"(c2), "r"(c3), "r"(e));
+    asm volatile(
+        "ppu.tc01.ex.mma.sp.sync.aligned.m16n8k32.row.col.s32.u8.u8.s32 "
+        "{%0,%1,%2,%3}, {%4,%5}, {%6,%7}, {%8,%9,%10,%11}, %12, 0x0;\n"
+        : "=r"(d0), "=r"(d1), "=r"(d2), "=r"(d3)
+        : "r"(a0), "r"(a1), "r"(b0), "r"(b1), "r"(c0), "r"(c1), "r"(c2),
+          "r"(c3), "r"(e));
 #endif
 #else
     CUTE_INVALID_CONTROL_PATH("PPU0010_16x8x32_S32U8U8S32_TN requires "
@@ -421,7 +433,8 @@ template <> struct PPU0010_16x8x32_S32U8U8S32_TN<SparseSel::One> {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template <SparseSel spsel = SparseSel::Zero> struct PPU0010_16x8x64_S32U8U8S32_TN {
+template <SparseSel spsel = SparseSel::Zero>
+struct PPU0010_16x8x64_S32U8U8S32_TN {
   using DRegisters = uint32_t[4];
   using ARegisters = uint32_t[4];
   using BRegisters = uint32_t[4];
@@ -438,13 +451,13 @@ template <SparseSel spsel = SparseSel::Zero> struct PPU0010_16x8x64_S32U8U8S32_T
                                    uint32_t const &c3, uint32_t const &e) {
 #if defined(CUTE_ARCH_SPARSE_MMA_PPU0010_ENABLED)
 #if __HGGC_ARCH__ == 100
-    asm volatile("ppu.tc01.ex.mma.sp.sync.aligned.m16n8k64.row.col.s32.u8.u8.s32 "
-                 "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9,%10,%11}, "
-                 "{%12,%13,%14,%15}, %16, 0x0;\n"
-                 : "=r"(d0), "=r"(d1), "=r"(d2), "=r"(d3)
-                 : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1),
-                   "r"(b2), "r"(b3), "r"(c0), "r"(c1), "r"(c2), "r"(c3),
-                   "r"(e));
+    asm volatile(
+        "ppu.tc01.ex.mma.sp.sync.aligned.m16n8k64.row.col.s32.u8.u8.s32 "
+        "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9,%10,%11}, "
+        "{%12,%13,%14,%15}, %16, 0x0;\n"
+        : "=r"(d0), "=r"(d1), "=r"(d2), "=r"(d3)
+        : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1), "r"(b2),
+          "r"(b3), "r"(c0), "r"(c1), "r"(c2), "r"(c3), "r"(e));
 #endif
 #else
     CUTE_INVALID_CONTROL_PATH("PPU0010_16x8x64_S32U8U8S32_TN requires "
@@ -477,4 +490,4 @@ template <> struct PPU0010_16x8x64_S32U8U8S32_TN<SparseSel::One> {
 
 } // namespace SPARSE
 } // namespace MMA
-} // namespace PPU0010
+} // namespace PPU0010_ARCH

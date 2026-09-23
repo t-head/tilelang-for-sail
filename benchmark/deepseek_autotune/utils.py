@@ -7,7 +7,6 @@ and ncu/acu profiling utilities for collecting cycle and tensor-core metrics.
 import os
 import re
 import subprocess
-from typing import Tuple
 
 import torch
 import torch.nn.functional as F
@@ -16,6 +15,7 @@ import torch.nn.functional as F
 # ---------------------------------------------------------------------------
 # FLOPs helpers
 # ---------------------------------------------------------------------------
+
 
 def gemm_flops(M: int, N: int, K: int) -> int:
     """Total FLOPs for a single GEMM (2*M*N*K)."""
@@ -41,11 +41,12 @@ def nsa_flops(batch: int, heads: int, seq_len: int, dim: int, selected_blocks: i
 # DeepGEMM FP8 helpers
 # ---------------------------------------------------------------------------
 
+
 def ceildiv(a: int, b: int) -> int:
     return (a + b - 1) // b
 
 
-def per_token_cast_to_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def per_token_cast_to_fp8(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """Per-token FP8 quantization (group_size=128)."""
     assert x.dim() == 2 and x.size(1) % 128 == 0
     m, n = x.shape
@@ -57,7 +58,7 @@ def per_token_cast_to_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     )
 
 
-def per_block_cast_to_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def per_block_cast_to_fp8(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """Per-block FP8 quantization (128x128 blocks)."""
     assert x.dim() == 2
     m, n = x.shape
@@ -81,20 +82,21 @@ def ref_deepgemm_fp8(A_fp8, B_fp8, A_scale, B_scale, out_dtype):
             c_acc.zero_()
             for k in range(ceildiv(K, 128)):
                 c = torch._scaled_mm(
-                    A_fp8[i * 128:(i + 1) * 128, k * 128:(k + 1) * 128],
-                    B_fp8[j * 128:(j + 1) * 128, k * 128:(k + 1) * 128].T,
+                    A_fp8[i * 128 : (i + 1) * 128, k * 128 : (k + 1) * 128],
+                    B_fp8[j * 128 : (j + 1) * 128, k * 128 : (k + 1) * 128].T,
                     scale_a=A_scales[i, k].view(128, 1).contiguous(),
                     scale_b=B_scales[j, k].view(1, 128).contiguous(),
                     out_dtype=torch.bfloat16,
                 )
                 c_acc += c.to(torch.float32)
-            C[i * 128:(i + 1) * 128, j * 128:(j + 1) * 128] = c_acc.to(out_dtype)
+            C[i * 128 : (i + 1) * 128, j * 128 : (j + 1) * 128] = c_acc.to(out_dtype)
     return C
 
 
 # ---------------------------------------------------------------------------
 # MLA decode reference
 # ---------------------------------------------------------------------------
+
 
 def ref_mla_decode(q, q_pe, kv, k_pe, softmax_scale=None):
     """Reference MLA decode attention using broadcasting.
@@ -144,6 +146,7 @@ def ref_mla_decode(q, q_pe, kv, k_pe, softmax_scale=None):
 # Diff utility
 # ---------------------------------------------------------------------------
 
+
 def calc_diff(x, y):
     """Cosine-distance based diff metric."""
     x, y = x.double(), y.double()
@@ -165,6 +168,7 @@ def bench_ref(fn, warmup=5, rep=20):
     if os.environ.get("TILELANG_SKIP_REF"):
         return 0.0
     from tilelang.profiler import do_bench
+
     return do_bench(fn, warmup=warmup, rep=rep)
 
 
@@ -180,10 +184,20 @@ def _format_ratio(numerator, denominator):
     return "Invalid"
 
 
-def print_benchmark_summary(name, config_str, tilelang_latency, tilelang_tflops,
-                            ref_latency, ref_tflops, ref_name, best_config,
-                            tilelang_cycles=None, tilelang_tc=None,
-                            ref_cycles=None, ref_tc=None):
+def print_benchmark_summary(
+    name,
+    config_str,
+    tilelang_latency,
+    tilelang_tflops,
+    ref_latency,
+    ref_tflops,
+    ref_name,
+    best_config,
+    tilelang_cycles=None,
+    tilelang_tc=None,
+    ref_cycles=None,
+    ref_tc=None,
+):
     """Print a tabulate grid summary for a single benchmark configuration.
 
     When cycle/tensor-core profiling data is provided, those metrics are
@@ -199,21 +213,13 @@ def print_benchmark_summary(name, config_str, tilelang_latency, tilelang_tflops,
 
     table_data = [
         ["Metric", "TileLang", ref_name, "Ratio (TL/Ref)"],
-        ["Latency (ms)", f"{tilelang_latency:.4f}", f"{ref_latency:.4f}",
-         _format_ratio(tilelang_latency, ref_latency)],
-        ["TFlops", f"{tilelang_tflops:.2f}", f"{ref_tflops:.2f}",
-         _format_ratio(tilelang_tflops, ref_tflops)],
+        ["Latency (ms)", f"{tilelang_latency:.4f}", f"{ref_latency:.4f}", _format_ratio(tilelang_latency, ref_latency)],
+        ["TFlops", f"{tilelang_tflops:.2f}", f"{ref_tflops:.2f}", _format_ratio(tilelang_tflops, ref_tflops)],
     ]
     if tilelang_cycles is not None and ref_cycles is not None:
-        table_data.append(
-            ["Cycles", f"{tilelang_cycles:,.0f}", f"{ref_cycles:,.0f}",
-             _format_ratio(tilelang_cycles, ref_cycles)]
-        )
+        table_data.append(["Cycles", f"{tilelang_cycles:,.0f}", f"{ref_cycles:,.0f}", _format_ratio(tilelang_cycles, ref_cycles)])
     if tilelang_tc is not None and ref_tc is not None:
-        table_data.append(
-            ["TC Efficiency", f"{tilelang_tc:.2f}", f"{ref_tc:.2f}",
-             _format_ratio(tilelang_tc, ref_tc)]
-        )
+        table_data.append(["TC Efficiency", f"{tilelang_tc:.2f}", f"{ref_tc:.2f}", _format_ratio(tilelang_tc, ref_tc)])
     print(tabulate(table_data, headers="firstrow", tablefmt="grid"))
 
 
@@ -235,6 +241,7 @@ def inject_pass_configs_from_env(kernel_func):
     called in acu/ncu profiling scripts.
     """
     import json
+
     pc_str = os.environ.get("TILELANG_PASS_CONFIGS", "")
     if pc_str:
         pc = json.loads(pc_str)
@@ -245,8 +252,12 @@ def run_cmd(cmd: str, timeout=None, stdout=subprocess.PIPE, stderr=subprocess.PI
     """Run a shell command and stream its output."""
     print(f"Run command: {cmd}, timeout: {timeout}")
     ret = subprocess.run(
-        args=cmd, timeout=timeout, shell=True,
-        stdout=stdout, stderr=stderr, encoding="utf-8",
+        args=cmd,
+        timeout=timeout,
+        shell=True,
+        stdout=stdout,
+        stderr=stderr,
+        encoding="utf-8",
     )
     if stdout:
         for line in ret.stdout.splitlines() + ret.stderr.splitlines():
@@ -266,8 +277,7 @@ def _match_any(text: str, patterns) -> bool:
     return any(pattern.lower() in text for pattern in patterns)
 
 
-def read_cycle_from_nculog(filename, framework="tilelang", kernel_filters=None,
-                           exclude_kernel_filters=None, verbose=True):
+def read_cycle_from_nculog(filename, framework="tilelang", kernel_filters=None, exclude_kernel_filters=None, verbose=True):
     """Parse an ncu/acu ``--page=details`` log file.
 
     Extracts per-kernel cycle counts (``__cycles_active.max``) and tensor-core
@@ -306,19 +316,21 @@ def read_cycle_from_nculog(filename, framework="tilelang", kernel_filters=None,
             if re.search(tc_pattern, line):
                 tc_list.append(float(line.strip().split()[-1]))
 
-    assert len(kernel_list) == len(cycles_list), (
-        f"kernel/cycle mismatch: {len(kernel_list)} vs {len(cycles_list)}"
-    )
-    assert len(kernel_list) == len(tc_list), (
-        f"kernel/tc mismatch: {len(kernel_list)} vs {len(tc_list)}"
-    )
+    assert len(kernel_list) == len(cycles_list), f"kernel/cycle mismatch: {len(kernel_list)} vs {len(cycles_list)}"
+    assert len(kernel_list) == len(tc_list), f"kernel/tc mismatch: {len(kernel_list)} vs {len(tc_list)}"
 
     if kernel_filters is None and framework == "tilelang":
         kernel_filters = ["main_kernel", "main"]
     if exclude_kernel_filters is None and framework == "ref":
         exclude_kernel_filters = [
-            "normal", "rand", "randperm", "arange", "fill",
-            "copy", "distribution", "vectorized_elementwise",
+            "normal",
+            "rand",
+            "randperm",
+            "arange",
+            "fill",
+            "copy",
+            "distribution",
+            "vectorized_elementwise",
         ]
 
     matched = []
@@ -359,15 +371,9 @@ def get_device_type() -> str:
 def get_metrics_string(dev: str = "gpu") -> str:
     """Return the profiler metrics string for the given device type."""
     if dev == "gpu":
-        return (
-            "sm__cycles_active.max,"
-            "sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active"
-        )
+        return "sm__cycles_active.max,sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active"
     else:
-        return (
-            "ce__cycles_active.max,"
-            "cu__inst_executed_pipe_tensor_fp16.avg.pct_of_peak_sustained_active"
-        )
+        return "ce__cycles_active.max,cu__inst_executed_pipe_tensor_fp16.avg.pct_of_peak_sustained_active"
 
 
 def setup_ppu_env():
@@ -405,24 +411,32 @@ def run_cycle_on_device(
     metrics = get_metrics_string(dev)
     args_str = " ".join(str(a) for a in script_args)
 
-    cmd = (
-        f'{profiler} --clock-control none --metrics="{metrics}" '
-        f'--page=details python {script_path} {args_str} '
-        f"2>&1 | tee -a {log_file}"
-    )
+    cmd = f'{profiler} --clock-control none --metrics="{metrics}" --page=details python {script_path} {args_str} 2>&1 | tee -a {log_file}'
     run_cmd(cmd)
 
     cycle, tc = read_cycle_from_nculog(
-        log_file, framework=framework,
+        log_file,
+        framework=framework,
         kernel_filters=kernel_filters,
         exclude_kernel_filters=exclude_kernel_filters,
     )
     return cycle, tc
 
 
-def print_cycle_summary(name, config_str, tilelang_latency, tilelang_tflops,
-                         tilelang_cycle, tilelang_tc, ref_latency, ref_tflops,
-                         ref_name, best_config, ref_cycle=0, ref_tc=0):
+def print_cycle_summary(
+    name,
+    config_str,
+    tilelang_latency,
+    tilelang_tflops,
+    tilelang_cycle,
+    tilelang_tc,
+    ref_latency,
+    ref_tflops,
+    ref_name,
+    best_config,
+    ref_cycle=0,
+    ref_tc=0,
+):
     """Print a summary table that includes cycles and tensor-core efficiency
     for both TileLang and the reference."""
     from tabulate import tabulate
@@ -433,13 +447,9 @@ def print_cycle_summary(name, config_str, tilelang_latency, tilelang_tflops,
 
     table_data = [
         ["Metric", "TileLang", ref_name, "Ratio (TL/Ref)"],
-        ["Latency (ms)", f"{tilelang_latency:.4f}", f"{ref_latency:.4f}",
-         _format_ratio(tilelang_latency, ref_latency)],
-        ["TFlops", f"{tilelang_tflops:.2f}", f"{ref_tflops:.2f}",
-         _format_ratio(tilelang_tflops, ref_tflops)],
-        ["Cycles", f"{tilelang_cycle:,.0f}", f"{ref_cycle:,.0f}",
-         _format_ratio(tilelang_cycle, ref_cycle)],
-        ["TC Efficiency", f"{tilelang_tc:.2f}", f"{ref_tc:.2f}",
-         _format_ratio(tilelang_tc, ref_tc)],
+        ["Latency (ms)", f"{tilelang_latency:.4f}", f"{ref_latency:.4f}", _format_ratio(tilelang_latency, ref_latency)],
+        ["TFlops", f"{tilelang_tflops:.2f}", f"{ref_tflops:.2f}", _format_ratio(tilelang_tflops, ref_tflops)],
+        ["Cycles", f"{tilelang_cycle:,.0f}", f"{ref_cycle:,.0f}", _format_ratio(tilelang_cycle, ref_cycle)],
+        ["TC Efficiency", f"{tilelang_tc:.2f}", f"{ref_tc:.2f}", _format_ratio(tilelang_tc, ref_tc)],
     ]
     print(tabulate(table_data, headers="firstrow", tablefmt="grid"))

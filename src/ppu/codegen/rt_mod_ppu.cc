@@ -1,9 +1,10 @@
-// PPU: native HGGC runtime module — uses hg* driver APIs and hggc* runtime APIs directly.
+// PPU: native HGGC runtime module — uses hg* driver APIs and hggc* runtime APIs
+// directly.
 #include "codegen_ppu.h"
 #include "runtime/pack_args.h"
 #include "runtime/thread_storage_scope.h"
-#include "support/check.h"
 #include "support/bytes_io.h"
+#include "support/check.h"
 #include "transform/common/attr.h"
 #include <tvm/ffi/cast.h>
 #include <tvm/ffi/extra/c_env_api.h>
@@ -31,23 +32,23 @@ using ppu::CodeGenTileLangPPU;
 // ---------------------------------------------------------------------------
 // HGGC driver-API error-checking macro
 // ---------------------------------------------------------------------------
-#define HGGC_DRIVER_CALL(x)                                                  \
-  {                                                                           \
-    HGresult result = x;                                                      \
-    if (result != HGGC_SUCCESS && result != HGGC_ERROR_DEINITIALIZED) {     \
-      const char* msg;                                                        \
-      hgGetErrorName(result, &msg);                                          \
-      TVM_FFI_THROW(InternalError) << "" #x " failed with error: "           \
-                                   << (msg ? msg : "unknown");               \
-    }                                                                         \
+#define HGGC_DRIVER_CALL(x)                                                    \
+  {                                                                            \
+    HGresult result = x;                                                       \
+    if (result != HGGC_SUCCESS && result != HGGC_ERROR_DEINITIALIZED) {        \
+      const char *msg;                                                         \
+      hgGetErrorName(result, &msg);                                            \
+      TVM_FFI_THROW(InternalError)                                             \
+          << "" #x " failed with error: " << (msg ? msg : "unknown");          \
+    }                                                                          \
   }
 
 // HGGC runtime-API error-checking macro
-#define HGGC_RT_CALL(func)                                                   \
-  {                                                                          \
-    hggcError_t e = (func);                                                   \
-    TVM_FFI_ICHECK(e == hggcSuccess || e == hggcErrorHggcrtUnloading)        \
-        << "HGGC: " << hggcGetErrorString(e);                               \
+#define HGGC_RT_CALL(func)                                                     \
+  {                                                                            \
+    hggcError_t e = (func);                                                    \
+    TVM_FFI_ICHECK(e == hggcSuccess || e == hggcErrorHggcrtUnloading)          \
+        << "HGGC: " << hggcGetErrorString(e);                                  \
   }
 
 // ---------------------------------------------------------------------------
@@ -59,20 +60,22 @@ static constexpr const int kMaxNumPPUs = 32;
 
 inline void EnsureCurrentPPUContext(int device_id) {
   ICHECK_GE(device_id, 0) << "Invalid device_id: " << device_id;
-  ICHECK_LT(device_id, kMaxNumPPUs) << "device_id " << device_id << " exceeds maximum " << kMaxNumPPUs;
+  ICHECK_LT(device_id, kMaxNumPPUs)
+      << "device_id " << device_id << " exceeds maximum " << kMaxNumPPUs;
   // hggcSetDevice implicitly initializes the driver.
   // Retain primary context per-device; reuse for subsequent driver API calls.
   HGGC_RT_CALL(hggcSetDevice(device_id));
   static std::array<HGcontext, kMaxNumPPUs> primary_ctxs = {};
   static std::array<std::once_flag, kMaxNumPPUs> init_flags = {};
   std::call_once(init_flags[device_id], [&]() {
-    HGGC_DRIVER_CALL(hgDevicePrimaryCtxRetain(&primary_ctxs[device_id], device_id));
+    HGGC_DRIVER_CALL(
+        hgDevicePrimaryCtxRetain(&primary_ctxs[device_id], device_id));
   });
   HGGC_DRIVER_CALL(hgCtxSetCurrent(primary_ctxs[device_id]));
 }
 
 class PPUModuleNode : public ffi::ModuleObj {
- public:
+public:
   PPUModuleNode(ffi::Bytes code, ffi::String fmt,
                 ffi::Map<ffi::String, runtime::FunctionInfo> fmap,
                 ffi::Map<ffi::String, ffi::String> source)
@@ -93,13 +96,13 @@ class PPUModuleNode : public ffi::ModuleObj {
     }
   }
 
-  const char* kind() const final { return "ppu"; }
+  const char *kind() const final { return "ppu"; }
 
   int GetPropertyMask() const final {
     return ffi::Module::kBinarySerializable | ffi::Module::kRunnable;
   }
 
-  ffi::Optional<ffi::Function> GetFunction(const ffi::String& name) final;
+  ffi::Optional<ffi::Function> GetFunction(const ffi::String &name) final;
 
   ffi::Bytes SaveToBytes() const final {
     std::string buffer;
@@ -110,7 +113,7 @@ class PPUModuleNode : public ffi::ModuleObj {
     return ffi::Bytes(std::move(buffer));
   }
 
-  ffi::String InspectSource(const ffi::String& format) const final {
+  ffi::String InspectSource(const ffi::String &format) const final {
     if (format == fmt_) {
       return ffi::String(code_.data(), code_.size());
     }
@@ -129,16 +132,17 @@ class PPUModuleNode : public ffi::ModuleObj {
   }
 
   // Get a HGfunction from primary context in device_id (lazily loads module)
-  HGfunction GetFunc(int device_id, const std::string& func_name) {
+  HGfunction GetFunc(int device_id, const std::string &func_name) {
     std::lock_guard<std::mutex> lock(mutex_);
     EnsureCurrentPPUContext(device_id);
     if (module_[device_id] == nullptr) {
       HGGC_DRIVER_CALL(hgModuleLoadData(&(module_[device_id]), code_.data()));
     }
     HGfunction func;
-    HGresult result = hgModuleGetFunction(&func, module_[device_id], func_name.c_str());
+    HGresult result =
+        hgModuleGetFunction(&func, module_[device_id], func_name.c_str());
     if (result != HGGC_SUCCESS) {
-      const char* msg;
+      const char *msg;
       hgGetErrorName(result, &msg);
       TVM_FFI_THROW(InternalError) << "hgModuleGetFunction " << func_name
                                    << " failed with error: " << msg;
@@ -146,7 +150,7 @@ class PPUModuleNode : public ffi::ModuleObj {
     return func;
   }
 
- private:
+private:
   ffi::Bytes code_;
   ffi::String fmt_;
   ffi::Map<ffi::String, runtime::FunctionInfo> fmap_;
@@ -159,18 +163,20 @@ class PPUModuleNode : public ffi::ModuleObj {
 // PPUWrappedFunc — wrapped kernel launcher
 // ---------------------------------------------------------------------------
 class PPUWrappedFunc {
- public:
-  void Init(PPUModuleNode* m, ffi::ObjectPtr<ffi::Object> sptr,
-            const std::string& func_name, size_t num_void_args,
-            const ffi::Array<ffi::String>& launch_param_tags) {
+public:
+  void Init(PPUModuleNode *m, ffi::ObjectPtr<ffi::Object> sptr,
+            const std::string &func_name, size_t num_void_args,
+            const ffi::Array<ffi::String> &launch_param_tags) {
     m_ = m;
     sptr_ = sptr;
     func_name_ = func_name;
     std::fill(fcache_.begin(), fcache_.end(), nullptr);
-    std::fill(dyn_smem_initialized_.begin(), dyn_smem_initialized_.end(), false);
-    std::fill(cluster_attr_initialized_.begin(), cluster_attr_initialized_.end(), false);
+    std::fill(dyn_smem_initialized_.begin(), dyn_smem_initialized_.end(),
+              false);
+    std::fill(cluster_attr_initialized_.begin(),
+              cluster_attr_initialized_.end(), false);
     use_dyn_shared_memory_ = false;
-    for (const auto& tag : launch_param_tags) {
+    for (const auto &tag : launch_param_tags) {
       if (tag == runtime::launch_param::kUseDynamicSharedMemoryTag) {
         use_dyn_shared_memory_ = true;
         break;
@@ -179,10 +185,11 @@ class PPUWrappedFunc {
     launch_param_config_.Init(num_void_args, launch_param_tags);
   }
 
-  void operator()(ffi::PackedArgs args, ffi::Any* rv, void** void_args) const {
+  void operator()(ffi::PackedArgs args, ffi::Any *rv, void **void_args) const {
     int device_id;
     HGGC_RT_CALL(hggcGetDevice(&device_id));
-    ICHECK_LT(device_id, kMaxNumPPUs) << "device_id " << device_id << " exceeds maximum " << kMaxNumPPUs;
+    ICHECK_LT(device_id, kMaxNumPPUs)
+        << "device_id " << device_id << " exceeds maximum " << kMaxNumPPUs;
     EnsureCurrentPPUContext(device_id);
     runtime::ThreadWorkLoad wl = launch_param_config_.Extract(args);
 
@@ -192,7 +199,8 @@ class PPUWrappedFunc {
 
     bool need_dyn_attr = use_dyn_shared_memory_ || (wl.dyn_shmem_size > 0);
     if (need_dyn_attr) {
-      if (!dyn_smem_initialized_[device_id] || dyn_smem_last_[device_id] != wl.dyn_shmem_size) {
+      if (!dyn_smem_initialized_[device_id] ||
+          dyn_smem_last_[device_id] != wl.dyn_shmem_size) {
         HGresult attr_set = hgFuncSetAttribute(
             fcache_[device_id], HG_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
             static_cast<int>(wl.dyn_shmem_size));
@@ -206,12 +214,15 @@ class PPUWrappedFunc {
       }
     }
 
-    HGstream strm = static_cast<HGstream>(TVMFFIEnvGetStream(static_cast<int>(DLDeviceType::kDLPPU), device_id));
+    HGstream strm = static_cast<HGstream>(
+        TVMFFIEnvGetStream(static_cast<int>(DLDeviceType::kDLPPU), device_id));
     HGresult result;
 
-    TVM_FFI_ICHECK(wl.grid_dim(0) > 0 && wl.grid_dim(1) > 0 && wl.grid_dim(2) > 0)
+    TVM_FFI_ICHECK(wl.grid_dim(0) > 0 && wl.grid_dim(1) > 0 &&
+                   wl.grid_dim(2) > 0)
         << "PPULaunch Error: grid dimension must be positive, but got"
-        << " grid=(" << wl.grid_dim(0) << "," << wl.grid_dim(1) << "," << wl.grid_dim(2) << ")"
+        << " grid=(" << wl.grid_dim(0) << "," << wl.grid_dim(1) << ","
+        << wl.grid_dim(2) << ")"
         << " in kernel " << func_name_
         << ". A zero grid dimension is often caused by a dynamic shape"
         << " (e.g. num_tokens) being 0 at runtime.";
@@ -239,9 +250,10 @@ class PPUWrappedFunc {
 
       if (!cluster_attr_initialized_[device_id]) {
         HGresult attr_result = hgFuncSetAttribute(
-            fcache_[device_id], HG_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED, 1);
+            fcache_[device_id],
+            HG_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED, 1);
         if (attr_result != HGGC_SUCCESS) {
-          const char* msg;
+          const char *msg;
           hgGetErrorName(attr_result, &msg);
           TVM_FFI_THROW(InternalError) << "Failed to set cluster attribute for "
                                        << func_name_ << ": " << msg;
@@ -249,7 +261,8 @@ class PPUWrappedFunc {
         cluster_attr_initialized_[device_id] = true;
       }
 
-      result = hgLaunchKernelEx(&config, fcache_[device_id], void_args, nullptr);
+      result =
+          hgLaunchKernelEx(&config, fcache_[device_id], void_args, nullptr);
     } else if (launch_param_config_.use_programtic_dependent_launch()) {
       HGlaunchConfig config{};
       HGlaunchAttribute attribute[1]{};
@@ -267,26 +280,29 @@ class PPUWrappedFunc {
       config.blockDimZ = wl.block_dim(2);
       config.sharedMemBytes = wl.dyn_shmem_size;
 
-      result = hgLaunchKernelEx(&config, fcache_[device_id], void_args, nullptr);
+      result =
+          hgLaunchKernelEx(&config, fcache_[device_id], void_args, nullptr);
     } else if (launch_param_config_.use_cooperative_launch()) {
       result = hgLaunchCooperativeKernel(
           fcache_[device_id], wl.grid_dim(0), wl.grid_dim(1), wl.grid_dim(2),
           wl.block_dim(0), wl.block_dim(1), wl.block_dim(2), wl.dyn_shmem_size,
           strm, void_args);
     } else {
-      result = hgLaunchKernel(
-          fcache_[device_id], wl.grid_dim(0), wl.grid_dim(1), wl.grid_dim(2),
-          wl.block_dim(0), wl.block_dim(1), wl.block_dim(2), wl.dyn_shmem_size,
-          strm, void_args, nullptr);
+      result = hgLaunchKernel(fcache_[device_id], wl.grid_dim(0),
+                              wl.grid_dim(1), wl.grid_dim(2), wl.block_dim(0),
+                              wl.block_dim(1), wl.block_dim(2),
+                              wl.dyn_shmem_size, strm, void_args, nullptr);
     }
 
     if (result != HGGC_SUCCESS && result != HGGC_ERROR_DEINITIALIZED) {
-      const char* msg;
+      const char *msg;
       hgGetErrorName(result, &msg);
       std::ostringstream os;
       os << "PPULaunch Error: " << (msg ? msg : "unknown") << "\n"
-         << " grid=(" << wl.grid_dim(0) << "," << wl.grid_dim(1) << "," << wl.grid_dim(2) << "), "
-         << " block=(" << wl.block_dim(0) << "," << wl.block_dim(1) << "," << wl.block_dim(2) << ")"
+         << " grid=(" << wl.grid_dim(0) << "," << wl.grid_dim(1) << ","
+         << wl.grid_dim(2) << "), "
+         << " block=(" << wl.block_dim(0) << "," << wl.block_dim(1) << ","
+         << wl.block_dim(2) << ")"
          << " dyn_smem_bytes=" << wl.dyn_shmem_size << "\n";
       ffi::String ppu_src = m_->InspectSource("");
       if (ppu_src.length() != 0) {
@@ -302,18 +318,18 @@ class PPUWrappedFunc {
     if (result == HGGC_SUCCESS) {
       hggcError_t last_err = hggcPeekAtLastError();
       if (last_err != hggcSuccess) {
-        const char* err_name = hggcGetErrorName(last_err);
-        const char* err_str = hggcGetErrorString(last_err);
-        hggcGetLastError();  // Clear sticky error
-        TVM_FFI_THROW(InternalError) << func_name_ << ": "
-                                     << (err_name ? err_name : "unknown") << " - "
-                                     << (err_str ? err_str : "unknown");
+        const char *err_name = hggcGetErrorName(last_err);
+        const char *err_str = hggcGetErrorString(last_err);
+        hggcGetLastError(); // Clear sticky error
+        TVM_FFI_THROW(InternalError)
+            << func_name_ << ": " << (err_name ? err_name : "unknown") << " - "
+            << (err_str ? err_str : "unknown");
       }
     }
   }
 
- private:
-  PPUModuleNode* m_;
+private:
+  PPUModuleNode *m_;
   ffi::ObjectPtr<ffi::Object> sptr_;
   std::string func_name_;
   mutable std::array<HGfunction, kMaxNumPPUs> fcache_;
@@ -324,44 +340,47 @@ class PPUWrappedFunc {
   mutable std::array<bool, kMaxNumPPUs> cluster_attr_initialized_;
 };
 
-}  // anonymous namespace
+} // anonymous namespace
 
 // ---------------------------------------------------------------------------
 // PPUModuleNode::GetFunction — defined after PPUWrappedFunc
 // ---------------------------------------------------------------------------
-ffi::Optional<ffi::Function> PPUModuleNode::GetFunction(const ffi::String& name) {
-  ffi::ObjectPtr<ffi::Object> sptr_to_self = ffi::GetObjectPtr<ffi::Object>(this);
+ffi::Optional<ffi::Function>
+PPUModuleNode::GetFunction(const ffi::String &name) {
+  ffi::ObjectPtr<ffi::Object> sptr_to_self =
+      ffi::GetObjectPtr<ffi::Object>(this);
   TVM_FFI_ICHECK_EQ(sptr_to_self.get(), this);
   auto opt_info = fmap_.Get(name);
-  if (!opt_info.has_value()) return ffi::Function();
+  if (!opt_info.has_value())
+    return ffi::Function();
   runtime::FunctionInfo info = opt_info.value();
   PPUWrappedFunc f;
-  f.Init(this, sptr_to_self, name, info->arg_types.size(), info->launch_param_tags);
+  f.Init(this, sptr_to_self, name, info->arg_types.size(),
+         info->launch_param_tags);
   return runtime::PackFuncVoidAddr(f, info->arg_types, info->arg_extra_tags);
 }
 
 // ---------------------------------------------------------------------------
 // PPUModuleCreate — factory
 // ---------------------------------------------------------------------------
-static ffi::Module PPUModuleCreateImpl(
-    ffi::Bytes code, ffi::String fmt,
-    ffi::Map<ffi::String, runtime::FunctionInfo> fmap,
-    ffi::Map<ffi::String, ffi::String> source) {
+static ffi::Module
+PPUModuleCreateImpl(ffi::Bytes code, ffi::String fmt,
+                    ffi::Map<ffi::String, runtime::FunctionInfo> fmap,
+                    ffi::Map<ffi::String, ffi::String> source) {
   auto n = ffi::make_object<PPUModuleNode>(code, fmt, fmap, source);
   return ffi::Module(n);
 }
 
 // Public factory used by BuildTileLangPPU
-ffi::Module PPUModuleCreate(
-    ffi::Bytes code, ffi::String fmt,
-    ffi::Map<ffi::String, runtime::FunctionInfo> fmap,
-    ffi::Map<ffi::String, ffi::String> source) {
+ffi::Module PPUModuleCreate(ffi::Bytes code, ffi::String fmt,
+                            ffi::Map<ffi::String, runtime::FunctionInfo> fmap,
+                            ffi::Map<ffi::String, ffi::String> source) {
   return PPUModuleCreateImpl(std::move(code), std::move(fmt), std::move(fmap),
                              std::move(source));
 }
 
 // Load from bytes (for save/load round-trip)
-static ffi::Module PPUModuleLoadFromBytes(const ffi::Bytes& bytes) {
+static ffi::Module PPUModuleLoadFromBytes(const ffi::Bytes &bytes) {
   support::BytesInStream stream(bytes);
   ffi::String fmt;
   ffi::Map<ffi::String, runtime::FunctionInfo> fmap;
@@ -376,15 +395,15 @@ static ffi::Module PPUModuleLoadFromBytes(const ffi::Bytes& bytes) {
 // ---------------------------------------------------------------------------
 // Helper functions (from original rt_mod_ppu.cc)
 // ---------------------------------------------------------------------------
-static std::string GetDeviceGlobalSymbol(const GlobalVar& gvar,
-                                         const tirx::PrimFunc& f) {
+static std::string GetDeviceGlobalSymbol(const GlobalVar &gvar,
+                                         const tirx::PrimFunc &f) {
   if (auto global_symbol = f->GetAttr<String>(tvm::attr::kGlobalSymbol)) {
     return static_cast<std::string>(global_symbol.value());
   }
   return gvar->name_hint;
 }
 
-static void ValidateUniqueDeviceGlobalSymbols(const IRModule& mod) {
+static void ValidateUniqueDeviceGlobalSymbols(const IRModule &mod) {
   std::unordered_map<std::string, std::string> symbol_to_gvar;
   for (auto kv : mod->functions) {
     ICHECK(kv.second->IsInstance<tirx::PrimFuncNode>())
@@ -392,14 +411,15 @@ static void ValidateUniqueDeviceGlobalSymbols(const IRModule& mod) {
     auto gvar = Downcast<GlobalVar>(kv.first);
     auto f = Downcast<tirx::PrimFunc>(kv.second);
     std::string global_symbol = GetDeviceGlobalSymbol(gvar, f);
-    auto [it, inserted] = symbol_to_gvar.emplace(global_symbol, gvar->name_hint);
+    auto [it, inserted] =
+        symbol_to_gvar.emplace(global_symbol, gvar->name_hint);
     ICHECK(inserted) << "Duplicate PPU kernel global_symbol `" << global_symbol
                      << "` found on PrimFuncs `" << it->second << "` and `"
                      << gvar->name_hint << "`.";
   }
 }
 
-static Map<String, runtime::FunctionInfo> ExtractFuncInfo(const IRModule& mod) {
+static Map<String, runtime::FunctionInfo> ExtractFuncInfo(const IRModule &mod) {
   Map<String, runtime::FunctionInfo> fmap;
   for (auto kv : mod->functions) {
     ICHECK(kv.second->IsInstance<tirx::PrimFuncNode>())
@@ -418,7 +438,8 @@ static Map<String, runtime::FunctionInfo> ExtractFuncInfo(const IRModule& mod) {
         }
       }
       DataType dtype = f->params[i].dtype();
-      if (dtype.is_bool()) dtype = DataType::Int(32);
+      if (dtype.is_bool())
+        dtype = DataType::Int(32);
       arg_types.push_back(dtype);
     }
     if (f->HasNonzeroAttr(tl::attr::kHasGridSync)) {
@@ -434,7 +455,7 @@ static Map<String, runtime::FunctionInfo> ExtractFuncInfo(const IRModule& mod) {
       launch_param_tags.push_back(runtime::launch_param::kClusterDimZ);
     }
     if (auto opt = f->GetAttr<Array<String>>(tirx::attr::kKernelLaunchParams)) {
-      for (const auto& tag : opt.value()) {
+      for (const auto &tag : opt.value()) {
         if (tag != runtime::launch_param::kClusterDimX &&
             tag != runtime::launch_param::kClusterDimY &&
             tag != runtime::launch_param::kClusterDimZ) {
@@ -480,9 +501,10 @@ Module BuildTileLangPPU(IRModule mod, Target target) {
   std::string fmt = "hgbin";
   std::string binary;
   if (const auto f = Function::GetGlobal("tilelang_callback_ppu_compile")) {
-    tvm::transform::PassContext pass_ctx = tvm::transform::PassContext::Current();
+    tvm::transform::PassContext pass_ctx =
+        tvm::transform::PassContext::Current();
     binary = (*f)(code, target, pass_ctx->config).cast<std::string>();
-    fmt = "hgbin";  // always binary data, not file path
+    fmt = "hgbin"; // always binary data, not file path
   } else {
     ICHECK(0) << "tilelang_callback_ppu_compile not registered";
   }
@@ -490,8 +512,8 @@ Module BuildTileLangPPU(IRModule mod, Target target) {
   Map<String, String> source_map;
   source_map.Set("ppu", code);
 
-  return PPUModuleCreate(Bytes(binary.data(), binary.size()),
-                         String(fmt), ExtractFuncInfo(mod), source_map);
+  return PPUModuleCreate(Bytes(binary.data(), binary.size()), String(fmt),
+                         ExtractFuncInfo(mod), source_map);
 }
 
 // ---------------------------------------------------------------------------
@@ -526,8 +548,8 @@ Module BuildTileLangPPUWithoutCompile(IRModule mod, Target target) {
   source_map.Set("ppu", code);
 
   static constexpr const char kDummy[] = "hgbin";
-  return PPUModuleCreate(Bytes(kDummy, sizeof(kDummy) - 1),
-                         String("hgbin"), ExtractFuncInfo(mod), source_map);
+  return PPUModuleCreate(Bytes(kDummy, sizeof(kDummy) - 1), String("hgbin"),
+                         ExtractFuncInfo(mod), source_map);
 }
 
 // ---------------------------------------------------------------------------
@@ -537,7 +559,8 @@ TVM_FFI_STATIC_INIT_BLOCK() {
   namespace refl = tvm::ffi::reflection;
   refl::GlobalDef()
       .def("target.build.tilelang_ppu", BuildTileLangPPU)
-      .def("target.build.tilelang_ppu_without_compile", BuildTileLangPPUWithoutCompile)
+      .def("target.build.tilelang_ppu_without_compile",
+           BuildTileLangPPUWithoutCompile)
       .def("ffi.Module.create.ppu",
            [](ffi::Bytes code, ffi::String fmt,
               ffi::Map<ffi::String, runtime::FunctionInfo> fmap,
@@ -548,5 +571,5 @@ TVM_FFI_STATIC_INIT_BLOCK() {
       .def("ffi.Module.load_from_bytes.ppu", PPUModuleLoadFromBytes);
 }
 
-}  // namespace codegen
-}  // namespace tvm
+} // namespace codegen
+} // namespace tvm

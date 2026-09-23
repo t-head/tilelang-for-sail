@@ -1,6 +1,5 @@
 import argparse
 import logging
-import os
 from tilelang import tvm as tvm
 from tvm import DataType
 import tilelang as tl
@@ -236,7 +235,7 @@ def get_configs(M, N, K, in_dtype, out_dtype, accum_dtype, with_roller, **kwargs
             chunk=[32, 64, 128, 256],
             stage=[0, 2],
             enable_rasteration=[True, False],
-            )
+        )
         return [{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())]
 
     return configs
@@ -330,7 +329,10 @@ if __name__ == "__main__":
     print_benchmark_summary(
         "MatMul Intrinsic",
         f"M={M}, N={N}, K={K}, dtype={args.dtype}",
-        best_latency, tilelang_tflops,
-        ref_latency if ref_latency is not None else 0.0, ref_tflops,
-        "Reference", best_config,
+        best_latency,
+        tilelang_tflops,
+        ref_latency if ref_latency is not None else 0.0,
+        ref_tflops,
+        "Reference",
+        best_config,
     )

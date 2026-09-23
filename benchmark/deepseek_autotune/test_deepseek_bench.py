@@ -158,6 +158,7 @@ def _maybe_profile(kernel_key, problem_args, best_config):
     # The autotune skip path loses per-config pass_configs; benchmark scripts
     # read TILELANG_PASS_CONFIGS and set jit_impl.pass_configs before kernel call.
     from enum import Enum
+
     pass_configs = best_config.get("pass_configs")
     if pass_configs:
         safe_pc = {k.value if isinstance(k, Enum) else k: v for k, v in pass_configs.items()}
@@ -165,9 +166,7 @@ def _maybe_profile(kernel_key, problem_args, best_config):
     else:
         os.environ.pop("TILELANG_PASS_CONFIGS", None)
 
-    tl_cycle, tl_tc = run_cycle_on_device(
-        script_path, profile_args, dev=dev, log_file=log_file, framework="tilelang"
-    )
+    tl_cycle, tl_tc = run_cycle_on_device(script_path, profile_args, dev=dev, log_file=log_file, framework="tilelang")
 
     # Profile reference (skip when TILELANG_SKIP_REF=1)
     if SKIP_REF:
@@ -177,8 +176,7 @@ def _maybe_profile(kernel_key, problem_args, best_config):
         torch.cuda.empty_cache()
         ref_profile_args = list(problem_args) + ["--profile-ref"]
         ref_cycle, ref_tc = run_cycle_on_device(
-            script_path, ref_profile_args, dev=dev, log_file=log_file,
-            framework="ref", kernel_filters=meta.get("ref_filters")
+            script_path, ref_profile_args, dev=dev, log_file=log_file, framework="ref", kernel_filters=meta.get("ref_filters")
         )
 
     gc.collect()
@@ -218,28 +216,41 @@ _mla_keys = list(_mla_config.keys())
 def test_bench_mla(batch, heads, kv_heads, kv_ctx, dim, pe_dim):
     from benchmark_mla import main
 
-    latency, tflops, best_config, ref_latency = main(
-        batch=batch, heads=heads, kv_heads=kv_heads, kv_ctx=kv_ctx, dim=dim, pe_dim=pe_dim
-    )
+    latency, tflops, best_config, ref_latency = main(batch=batch, heads=heads, kv_heads=kv_heads, kv_ctx=kv_ctx, dim=dim, pe_dim=pe_dim)
     assert latency > 0, f"Invalid latency: {latency}"
     assert tflops > 0, f"Invalid TFlops: {tflops}"
 
-    config_str = (f"batch={batch}, heads={heads}, kv_heads={kv_heads}, "
-                  f"kv_ctx={kv_ctx}, dim={dim}, pe_dim={pe_dim}")
+    config_str = f"batch={batch}, heads={heads}, kv_heads={kv_heads}, kv_ctx={kv_ctx}, dim={dim}, pe_dim={pe_dim}"
     ref_tflops = tflops * latency / ref_latency if ref_latency > 0 else 0
     problem_args = [
-        "--batch", str(batch), "--heads", str(heads),
-        "--kv_heads", str(kv_heads), "--kv_ctx", str(kv_ctx),
-        "--dim", str(dim), "--pe_dim", str(pe_dim),
+        "--batch",
+        str(batch),
+        "--heads",
+        str(heads),
+        "--kv_heads",
+        str(kv_heads),
+        "--kv_ctx",
+        str(kv_ctx),
+        "--dim",
+        str(dim),
+        "--pe_dim",
+        str(pe_dim),
     ]
     tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile("mla", problem_args, best_config)
 
     print_benchmark_summary(
-        "MLA Decode", config_str,
-        latency, tflops, ref_latency, ref_tflops,
-        "FlashMLA", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        "MLA Decode",
+        config_str,
+        latency,
+        tflops,
+        ref_latency,
+        ref_tflops,
+        "FlashMLA",
+        best_config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
@@ -255,30 +266,41 @@ _mla_paged_keys = list(_mla_paged_config.keys())
 def test_bench_mla_paged(batch, h_q, h_kv, cache_seqlen, d, dv):
     from benchmark_mla_paged import main
 
-    latency, tflops, best_config, ref_latency = main(
-        batch=batch, h_q=h_q, h_kv=h_kv, cache_seqlen=cache_seqlen, d=d, dv=dv
-    )
+    latency, tflops, best_config, ref_latency = main(batch=batch, h_q=h_q, h_kv=h_kv, cache_seqlen=cache_seqlen, d=d, dv=dv)
     assert latency > 0, f"Invalid latency: {latency}"
     assert tflops > 0, f"Invalid TFlops: {tflops}"
 
-    config_str = (f"batch={batch}, h_q={h_q}, h_kv={h_kv}, "
-                  f"cache_seqlen={cache_seqlen}, d={d}, dv={dv}")
+    config_str = f"batch={batch}, h_q={h_q}, h_kv={h_kv}, cache_seqlen={cache_seqlen}, d={d}, dv={dv}"
     ref_tflops = tflops * latency / ref_latency if ref_latency > 0 else 0
     problem_args = [
-        "--batch", str(batch), "--h_q", str(h_q),
-        "--h_kv", str(h_kv), "--cache_seqlen", str(cache_seqlen),
-        "--d", str(d), "--dv", str(dv),
+        "--batch",
+        str(batch),
+        "--h_q",
+        str(h_q),
+        "--h_kv",
+        str(h_kv),
+        "--cache_seqlen",
+        str(cache_seqlen),
+        "--d",
+        str(d),
+        "--dv",
+        str(dv),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
-        "mla_paged", problem_args, best_config
-    )
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile("mla_paged", problem_args, best_config)
 
     print_benchmark_summary(
-        "MLA Decode Paged", config_str,
-        latency, tflops, ref_latency, ref_tflops,
-        "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        "MLA Decode Paged",
+        config_str,
+        latency,
+        tflops,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
@@ -290,12 +312,14 @@ _deepgemm_config = get_bench_config("deepgemm", _TIER)
 _deepgemm_keys = list(_deepgemm_config.keys())
 
 from tilelang.contrib import hgcc
+
 try:
     arch = hgcc.get_target_compute_version()
     compute_version = hgcc.parse_compute_version(arch)
 except Exception:
     arch = "unknown"
     compute_version = (0, 0)
+
 
 @pytest.mark.skipif(
     compute_version != (1, 5),
@@ -305,28 +329,39 @@ except Exception:
 def test_bench_deepgemm(M, N, K, in_dtype, out_dtype):
     from benchmark_deepgemm import main
 
-    latency, tflops, best_config, ref_latency = main(
-        M=M, N=N, K=K, in_dtype_str=in_dtype, out_dtype_str=out_dtype
-    )
+    latency, tflops, best_config, ref_latency = main(M=M, N=N, K=K, in_dtype_str=in_dtype, out_dtype_str=out_dtype)
     assert latency > 0, f"Invalid latency: {latency}"
     assert tflops > 0, f"Invalid TFlops: {tflops}"
 
     config_str = f"M={M}, N={N}, K={K}, in_dtype={in_dtype}, out_dtype={out_dtype}"
     ref_tflops = tflops * latency / ref_latency if ref_latency > 0 else 0
     problem_args = [
-        "--m", str(M), "--n", str(N), "--k", str(K),
-        "--in_dtype", str(in_dtype), "--out_dtype", str(out_dtype),
+        "--m",
+        str(M),
+        "--n",
+        str(N),
+        "--k",
+        str(K),
+        "--in_dtype",
+        str(in_dtype),
+        "--out_dtype",
+        str(out_dtype),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
-        "deepgemm", problem_args, best_config
-    )
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile("deepgemm", problem_args, best_config)
 
     print_benchmark_summary(
-        "DeepGEMM FP8", config_str,
-        latency, tflops, ref_latency, ref_tflops,
-        "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        "DeepGEMM FP8",
+        config_str,
+        latency,
+        tflops,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
@@ -343,33 +378,48 @@ def test_bench_nsa(batch, heads, seq_len, dim, selected_blocks, block_size, is_c
     from benchmark_nsa import main
 
     latency, tflops, best_config, ref_latency = main(
-        batch=batch, heads=heads, seq_len=seq_len, dim=dim,
-        selected_blocks=selected_blocks, block_size=block_size, is_causal=is_causal
+        batch=batch, heads=heads, seq_len=seq_len, dim=dim, selected_blocks=selected_blocks, block_size=block_size, is_causal=is_causal
     )
     assert latency > 0, f"Invalid latency: {latency}"
     assert tflops > 0, f"Invalid TFlops: {tflops}"
 
-    config_str = (f"batch={batch}, heads={heads}, seq_len={seq_len}, dim={dim}, "
-                  f"selected_blocks={selected_blocks}, block_size={block_size}, "
-                  f"is_causal={is_causal}")
+    config_str = (
+        f"batch={batch}, heads={heads}, seq_len={seq_len}, dim={dim}, "
+        f"selected_blocks={selected_blocks}, block_size={block_size}, "
+        f"is_causal={is_causal}"
+    )
     ref_tflops = tflops * latency / ref_latency if ref_latency > 0 else 0
     problem_args = [
-        "--batch", str(batch), "--heads", str(heads),
-        "--seq_len", str(seq_len), "--dim", str(dim),
-        "--selected_blocks", str(selected_blocks), "--block_size", str(block_size),
+        "--batch",
+        str(batch),
+        "--heads",
+        str(heads),
+        "--seq_len",
+        str(seq_len),
+        "--dim",
+        str(dim),
+        "--selected_blocks",
+        str(selected_blocks),
+        "--block_size",
+        str(block_size),
     ]
     if is_causal:
         problem_args.append("--causal")
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
-        "nsa", problem_args, best_config
-    )
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile("nsa", problem_args, best_config)
 
     print_benchmark_summary(
-        "NSA Fwd", config_str,
-        latency, tflops, ref_latency, ref_tflops,
-        "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        "NSA Fwd",
+        config_str,
+        latency,
+        tflops,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
@@ -386,30 +436,42 @@ def test_bench_nsa_decode(batch, heads, seq_len, dim, selected_blocks, block_siz
     from benchmark_nsa_decode import main
 
     latency, tflops, best_config, ref_latency = main(
-        batch=batch, heads=heads, seq_len=seq_len, dim=dim,
-        selected_blocks=selected_blocks, block_size=block_size
+        batch=batch, heads=heads, seq_len=seq_len, dim=dim, selected_blocks=selected_blocks, block_size=block_size
     )
     assert latency > 0, f"Invalid latency: {latency}"
     assert tflops > 0, f"Invalid TFlops: {tflops}"
 
-    config_str = (f"batch={batch}, heads={heads}, seq_len={seq_len}, dim={dim}, "
-                  f"selected_blocks={selected_blocks}, block_size={block_size}")
+    config_str = f"batch={batch}, heads={heads}, seq_len={seq_len}, dim={dim}, selected_blocks={selected_blocks}, block_size={block_size}"
     ref_tflops = tflops * latency / ref_latency if ref_latency > 0 else 0
     problem_args = [
-        "--batch", str(batch), "--heads", str(heads),
-        "--seq_len", str(seq_len), "--dim", str(dim),
-        "--selected_blocks", str(selected_blocks), "--block_size", str(block_size),
+        "--batch",
+        str(batch),
+        "--heads",
+        str(heads),
+        "--seq_len",
+        str(seq_len),
+        "--dim",
+        str(dim),
+        "--selected_blocks",
+        str(selected_blocks),
+        "--block_size",
+        str(block_size),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
-        "nsa_decode", problem_args, best_config
-    )
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile("nsa_decode", problem_args, best_config)
 
     print_benchmark_summary(
-        "NSA Decode", config_str,
-        latency, tflops, ref_latency, ref_tflops,
-        "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        "NSA Decode",
+        config_str,
+        latency,
+        tflops,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
@@ -425,27 +487,35 @@ _mhc_keys = list(_mhc_config.keys())
 def test_bench_mhc(n, hidden_size, hc_mult):
     from benchmark_mhc import main
 
-    latency, tflops, best_config, ref_latency = main(
-        n=n, hidden_size=hidden_size, hc_mult=hc_mult
-    )
+    latency, tflops, best_config, ref_latency = main(n=n, hidden_size=hidden_size, hc_mult=hc_mult)
     assert latency > 0, f"Invalid latency: {latency}"
     assert tflops > 0, f"Invalid TFlops: {tflops}"
 
     config_str = f"n={n}, hidden_size={hidden_size}, hc_mult={hc_mult}"
     ref_tflops = tflops * latency / ref_latency if ref_latency > 0 else 0
     problem_args = [
-        "--n", str(n), "--hidden_size", str(hidden_size), "--hc_mult", str(hc_mult),
+        "--n",
+        str(n),
+        "--hidden_size",
+        str(hidden_size),
+        "--hc_mult",
+        str(hc_mult),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
-        "mhc", problem_args, best_config
-    )
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile("mhc", problem_args, best_config)
 
     print_benchmark_summary(
-        "mHC Pre", config_str,
-        latency, tflops, ref_latency, ref_tflops,
-        "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        "mHC Pre",
+        config_str,
+        latency,
+        tflops,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
@@ -461,27 +531,35 @@ _mhc_big_fuse_keys = list(_mhc_big_fuse_config.keys())
 def test_bench_mhc_big_fuse(n, hidden_size, hc_mult):
     from benchmark_mhc_big_fuse import main
 
-    latency, tflops, best_config, ref_latency = main(
-        n=n, hidden_size=hidden_size, hc_mult=hc_mult
-    )
+    latency, tflops, best_config, ref_latency = main(n=n, hidden_size=hidden_size, hc_mult=hc_mult)
     assert latency > 0, f"Invalid latency: {latency}"
     assert tflops > 0, f"Invalid TFlops: {tflops}"
 
     config_str = f"n={n}, hidden_size={hidden_size}, hc_mult={hc_mult}"
     ref_tflops = tflops * latency / ref_latency if ref_latency > 0 else 0
     problem_args = [
-        "--n", str(n), "--hidden_size", str(hidden_size), "--hc_mult", str(hc_mult),
+        "--n",
+        str(n),
+        "--hidden_size",
+        str(hidden_size),
+        "--hc_mult",
+        str(hc_mult),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
-        "mhc_big_fuse", problem_args, best_config
-    )
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile("mhc_big_fuse", problem_args, best_config)
 
     print_benchmark_summary(
-        "mHC BigFuse", config_str,
-        latency, tflops, ref_latency, ref_tflops,
-        "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        "mHC BigFuse",
+        config_str,
+        latency,
+        tflops,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
@@ -497,27 +575,35 @@ _mhc_post_keys = list(_mhc_post_config.keys())
 def test_bench_mhc_post(n, hidden_size, hc_mult):
     from benchmark_mhc_post import main
 
-    latency, tflops, best_config, ref_latency = main(
-        n=n, hidden_size=hidden_size, hc_mult=hc_mult
-    )
+    latency, tflops, best_config, ref_latency = main(n=n, hidden_size=hidden_size, hc_mult=hc_mult)
     assert latency > 0, f"Invalid latency: {latency}"
     assert tflops > 0, f"Invalid TFlops: {tflops}"
 
     config_str = f"n={n}, hidden_size={hidden_size}, hc_mult={hc_mult}"
     ref_tflops = tflops * latency / ref_latency if ref_latency > 0 else 0
     problem_args = [
-        "--n", str(n), "--hidden_size", str(hidden_size), "--hc_mult", str(hc_mult),
+        "--n",
+        str(n),
+        "--hidden_size",
+        str(hidden_size),
+        "--hc_mult",
+        str(hc_mult),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
-        "mhc_post", problem_args, best_config
-    )
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile("mhc_post", problem_args, best_config)
 
     print_benchmark_summary(
-        "mHC Post", config_str,
-        latency, tflops, ref_latency, ref_tflops,
-        "Reference", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        "mHC Post",
+        config_str,
+        latency,
+        tflops,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
@@ -534,32 +620,50 @@ def test_bench_v32(batch, seq_len, seq_len_kv, heads, kv_group, topk, dim, tail_
     from benchmark_v32 import main
 
     latency, tflops, best_config, ref_latency = main(
-        batch=batch, seq_len=seq_len, seq_len_kv=seq_len_kv,
-        heads=heads, kv_group=kv_group, topk=topk, dim=dim, tail_dim=tail_dim
+        batch=batch, seq_len=seq_len, seq_len_kv=seq_len_kv, heads=heads, kv_group=kv_group, topk=topk, dim=dim, tail_dim=tail_dim
     )
     assert latency > 0, f"Invalid latency: {latency}"
     assert tflops > 0, f"Invalid TFlops: {tflops}"
 
-    config_str = (f"batch={batch}, seq_len={seq_len}, seq_len_kv={seq_len_kv}, "
-                  f"heads={heads}, kv_group={kv_group}, topk={topk}, "
-                  f"dim={dim}, tail_dim={tail_dim}")
+    config_str = (
+        f"batch={batch}, seq_len={seq_len}, seq_len_kv={seq_len_kv}, "
+        f"heads={heads}, kv_group={kv_group}, topk={topk}, "
+        f"dim={dim}, tail_dim={tail_dim}"
+    )
     ref_tflops = tflops * latency / ref_latency if ref_latency > 0 else 0
     problem_args = [
-        "--batch", str(batch), "--seq_len", str(seq_len),
-        "--seq_len_kv", str(seq_len_kv), "--heads", str(heads),
-        "--kv_group", str(kv_group), "--topk", str(topk),
-        "--dim", str(dim), "--tail_dim", str(tail_dim),
+        "--batch",
+        str(batch),
+        "--seq_len",
+        str(seq_len),
+        "--seq_len_kv",
+        str(seq_len_kv),
+        "--heads",
+        str(heads),
+        "--kv_group",
+        str(kv_group),
+        "--topk",
+        str(topk),
+        "--dim",
+        str(dim),
+        "--tail_dim",
+        str(tail_dim),
     ]
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(
-        "v32", problem_args, best_config
-    )
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile("v32", problem_args, best_config)
 
     print_benchmark_summary(
-        "V32 Sparse MLA Fwd", config_str,
-        latency, tflops, ref_latency, ref_tflops,
-        "FlashMLA", best_config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        "V32 Sparse MLA Fwd",
+        config_str,
+        latency,
+        tflops,
+        ref_latency,
+        ref_tflops,
+        "FlashMLA",
+        best_config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
@@ -569,4 +673,5 @@ def test_bench_v32(batch, seq_len, seq_len_kv, heads, kv_group, topk, dim, tail_
 
 if __name__ == "__main__":
     import tilelang.testing
+
     tilelang.testing.main()

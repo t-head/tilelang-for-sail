@@ -56,7 +56,6 @@ def get_configs(M, N, K, with_roller, **kwargs):
         from tilelang.carver.template import MatmulTemplate
         from tilelang.carver.arch import CUDA
         from tilelang.carver.arch import CDNA
-        from tilelang.carver.roller.rasterization import NoRasterization
 
         arch = CUDA("cuda") if torch.version.hip is None else CDNA("hip")
         topk = 10
@@ -212,10 +211,10 @@ if __name__ == "__main__":
     print_benchmark_summary(
         "MatMul SR",
         f"M={M}, N={N}, K={K}",
-        best_latency, tilelang_tflops,
-        ref_latency if ref_latency is not None else 0.0, ref_tflops,
-        "Reference", best_config,
+        best_latency,
+        tilelang_tflops,
+        ref_latency if ref_latency is not None else 0.0,
+        ref_tflops,
+        "Reference",
+        best_config,
     )
-
-
-

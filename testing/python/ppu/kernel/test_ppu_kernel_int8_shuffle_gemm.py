@@ -41,9 +41,7 @@ def _int8_shuffle_gemm(
         T.copy(b, b_shared)
         lane = T.get_lane_idx()
         for i, j in T.Parallel(M, K, loop_layout=a_layout):
-            a_fragment[i, j] = T.cast(
-                T.shfl_sync(T.cast(a[i, j], T.int32), lane), T.int8
-            )
+            a_fragment[i, j] = T.cast(T.shfl_sync(T.cast(a[i, j], T.int32), lane), T.int8)
 
         T.clear(result)
         T.gemm(a_fragment, b_shared, result, transpose_B=True)
@@ -65,9 +63,7 @@ def _int8_shuffle_dp4a(
         col = lane % DP4A_N
 
         for k in T.serial(K):
-            a_local[k] = T.cast(
-                T.shfl_sync(T.cast(a[row, k], T.int32), lane), T.int8
-            )
+            a_local[k] = T.cast(T.shfl_sync(T.cast(a[row, k], T.int32), lane), T.int8)
             b_local[k] = b[col, k]
 
         accum[0] = 0
@@ -81,10 +77,7 @@ def _int8_shuffle_dp4a(
 def test_ppu15_int8_gemm_with_packed_single_source_lane_shuffle():
     kernel = tilelang.compile(_int8_shuffle_gemm, out_idx=[2])
     source = kernel.get_kernel_source()
-    loop_extents = [
-        int(extent)
-        for extent in re.findall(r"for \(int [^;]+; [^<]+< (\d+);", source)
-    ]
+    loop_extents = [int(extent) for extent in re.findall(r"for \(int [^;]+; [^<]+< (\d+);", source)]
 
     # Four logical INT8 values share each shuffled uint32 carrier.  A scalar
     # fallback would retain a 16-iteration relayout loop instead.
@@ -98,9 +91,7 @@ def test_ppu15_int8_gemm_with_packed_single_source_lane_shuffle():
         a = torch.randint(-4, 5, (M, K), device="cuda", dtype=torch.int8)
         b = torch.randint(-4, 5, (N, K), device="cuda", dtype=torch.int8)
         actual = kernel(a, b)
-        expected = (
-            a.cpu().to(torch.int32) @ b.cpu().to(torch.int32).T
-        ).to(device="cuda", dtype=torch.int32)
+        expected = (a.cpu().to(torch.int32) @ b.cpu().to(torch.int32).T).to(device="cuda", dtype=torch.int32)
         torch.testing.assert_close(actual, expected, atol=0, rtol=0)
 
 
@@ -118,9 +109,7 @@ def test_ppu10_int8_dp4a_with_packed_single_source_lane_shuffle():
         a = torch.randint(-4, 5, (DP4A_M, K), device="cuda", dtype=torch.int8)
         b = torch.randint(-4, 5, (DP4A_N, K), device="cuda", dtype=torch.int8)
         actual = kernel(a, b)
-        expected = (
-            a.cpu().to(torch.int32) @ b.cpu().to(torch.int32).T
-        ).to(device="cuda", dtype=torch.int32)
+        expected = (a.cpu().to(torch.int32) @ b.cpu().to(torch.int32).T).to(device="cuda", dtype=torch.int32)
         torch.testing.assert_close(actual, expected, atol=0, rtol=0)
 
 

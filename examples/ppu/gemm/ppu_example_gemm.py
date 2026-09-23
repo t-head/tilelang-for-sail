@@ -41,8 +41,7 @@ def main():
         print(f"Testing num_stages={num_stages}")
         print(f"{'=' * 60}")
 
-        kernel = matmul.compile(
-            M=1024, N=1024, K=1024, block_M=128, block_N=128, block_K=32, num_stages=num_stages)
+        kernel = matmul.compile(M=1024, N=1024, K=1024, block_M=128, block_N=128, block_K=32, num_stages=num_stages)
 
         a = torch.randn(1024, 1024).cuda().half()
         b = torch.randn(1024, 1024).cuda().half()

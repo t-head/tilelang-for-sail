@@ -3,13 +3,13 @@
  * \file inject_aiu_sync_barrier.cc
  */
 #include <tvm/ffi/reflection/registry.h>
+#include <tvm/s_tir/stmt.h>
 #include <tvm/tirx/analysis.h>
 #include <tvm/tirx/builtin.h>
 #include <tvm/tirx/expr.h>
 #include <tvm/tirx/op.h>
 #include <tvm/tirx/stmt_functor.h>
 #include <tvm/tirx/transform.h>
-#include <tvm/s_tir/stmt.h>
 
 #include <unordered_set>
 #include <vector>
@@ -87,7 +87,8 @@ Stmt MakeCommit(const Stmt &body) {
 }
 
 /*!
- * \brief Wrap a statement with async_wait_queue_scope (queue_id=0, cnt=wait_count).
+ * \brief Wrap a statement with async_wait_queue_scope (queue_id=0,
+ * cnt=wait_count).
  * \param body The statement to wrap.
  * \param wait_count The number of in-flight groups to allow (N in wait<N>).
  *        wait_count=0 means wait for ALL pending groups to complete.
@@ -143,8 +144,8 @@ public:
         // container also loads the same buffer (prefetch pattern), in which
         // case the internal wrap-around handles the wait. Otherwise the
         // outer wait is needed for correctness.
-        bool skip_use = is_container &&
-                        ContainsAIULoadForVars(seq[i], pending_groups);
+        bool skip_use =
+            is_container && ContainsAIULoadForVars(seq[i], pending_groups);
         if (!skip_use) {
           int newest_needed = FindNewestUsedGroup(seq[i], pending_groups);
           if (newest_needed >= 0) {
@@ -173,9 +174,10 @@ public:
 
     // Wrap-around for loop-carried dependencies: pending groups at loop tail
     // are consumed at the beginning of the next iteration.
-    // Account for new commits issued BEFORE the use point in the same iteration:
-    // at runtime the async queue contains both the carried-over groups (oldest)
-    // and the freshly committed groups, so wait<N> must reflect the total.
+    // Account for new commits issued BEFORE the use point in the same
+    // iteration: at runtime the async queue contains both the carried-over
+    // groups (oldest) and the freshly committed groups, so wait<N> must reflect
+    // the total.
     if (!pending_groups.empty() && in_for_body_) {
       int new_commits_before = 0;
       for (int i = 0; i < static_cast<int>(seq.size()); ++i) {
@@ -244,7 +246,8 @@ private:
     }
     bool found = false;
     PostOrderVisit(stmt, [&](const ObjectRef &node) {
-      if (found) return;
+      if (found)
+        return;
       if (auto *call = node.as<CallNode>()) {
         if (call->op.same_as(tl::ppu_aiu_load()) && call->args.size() > 0) {
           if (auto *access_call = call->args[0].as<CallNode>()) {
@@ -292,7 +295,8 @@ private:
         if (call->op.same_as(tl::ppu_aiu_load()) && call->args.size() > 0) {
           PendingGroup group;
           PrimExpr dst = call->args[0];
-          // dst should be tvm_access_ptr(type, buffer_data, offset, extent, mask)
+          // dst should be tvm_access_ptr(type, buffer_data, offset, extent,
+          // mask)
           if (auto *access_call = dst.as<CallNode>()) {
             if (access_call->op.same_as(builtin::tvm_access_ptr()) &&
                 access_call->args.size() > 1) {
@@ -317,7 +321,8 @@ private:
                   const std::unordered_set<const VarNode *> &vars) const {
     bool found = false;
     PostOrderVisit(stmt, [&](const ObjectRef &node) {
-      if (found) return;
+      if (found)
+        return;
       if (auto *load = node.as<BufferLoadNode>()) {
         if (vars.count(load->buffer->data.get())) {
           found = true;

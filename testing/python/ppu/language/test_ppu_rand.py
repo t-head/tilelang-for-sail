@@ -4,6 +4,7 @@ import torch
 import pytest
 import tilelang.testing
 
+
 @tilelang.jit
 def tilelang_rand_1d(M=1024, seed=42, generator="acrandStatePhilox4_32_10_t"):
     num_per_thread = 128
@@ -54,6 +55,7 @@ def tilelang_rand_1d(M=1024, seed=42, generator="acrandStatePhilox4_32_10_t"):
 
     return rand_kernel
 
+
 @tilelang.testing.requires_ppu
 @pytest.mark.parametrize(
     "M, seed, generator", [(1024, 42, "acrandStateMRG32k3a_t"), (512, 123, "acrandStatePhilox4_32_10_t"), (128, 0, "acrandStateXORWOW_t")]
@@ -66,6 +68,7 @@ def test_rand_1d(M, seed, generator):
     D = torch.empty(M, dtype=torch.float32, device="cuda")
     E = torch.empty(M, dtype=torch.float64, device="cuda")
     kernel(A, B, C, D, E)
+
 
 if __name__ == "__main__":
     tilelang.testing.main()

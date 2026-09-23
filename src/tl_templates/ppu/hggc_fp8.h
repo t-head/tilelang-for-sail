@@ -1,8 +1,8 @@
 #pragma once
 
 #include "common.h"
-#include <hggc_fp8.h>
 #include <cute/numeric/numeric_types.hpp>
+#include <hggc_fp8.h>
 
 using fp8_e4_t = tl::float_e4m3_t;
 using fp8_e5_t = tl::float_e5m2_t;
@@ -313,9 +313,8 @@ __tl_cvt_fp8x2_to_half2(const __hg_fp8x2_storage_t x,
 // half2 -> e4m3x2/e5m2x2
 // No direct HG intrinsic; half -> float is exact, so compose through float2
 // to keep a single rounding step at the fp8 conversion.
-TL_DEVICE __hg_fp8x2_storage_t
-__tl_cvt_half2_to_fp8x2(const half2 x,
-                        const __hg_fp8_interpretation_t fp8_interpretation) {
+TL_DEVICE __hg_fp8x2_storage_t __tl_cvt_half2_to_fp8x2(
+    const half2 x, const __hg_fp8_interpretation_t fp8_interpretation) {
   return __hg_cvt_float2_to_fp8x2(__half22float2(x), __HG_SATFINITE,
                                   fp8_interpretation);
 }
@@ -323,9 +322,9 @@ __tl_cvt_half2_to_fp8x2(const half2 x,
 // bfloat162 -> e4m3x2/e5m2x2
 // bfloat16 -> float is exact, so compose through float2 for a single
 // rounding step.
-TL_DEVICE __hg_fp8x2_storage_t
-__tl_cvt_bfloat162_to_fp8x2(const __ppu_bfloat162 x,
-                            const __hg_fp8_interpretation_t fp8_interpretation) {
+TL_DEVICE __hg_fp8x2_storage_t __tl_cvt_bfloat162_to_fp8x2(
+    const __ppu_bfloat162 x,
+    const __hg_fp8_interpretation_t fp8_interpretation) {
   return __hg_cvt_float2_to_fp8x2(__bfloat1622float2(x), __HG_SATFINITE,
                                   fp8_interpretation);
 }
@@ -333,9 +332,9 @@ __tl_cvt_bfloat162_to_fp8x2(const __ppu_bfloat162 x,
 // e4m3x2/e5m2x2 -> bfloat162
 // fp8 values are exactly representable in float, so composing through float2
 // is exact.
-TL_DEVICE __ppu_bfloat162
-__tl_cvt_fp8x2_to_bfloat162(const __hg_fp8x2_storage_t x,
-                            const __hg_fp8_interpretation_t fp8_interpretation) {
+TL_DEVICE __ppu_bfloat162 __tl_cvt_fp8x2_to_bfloat162(
+    const __hg_fp8x2_storage_t x,
+    const __hg_fp8_interpretation_t fp8_interpretation) {
   return __float22bfloat162_rn(__tl_cvt_fp8x2_to_float2(x, fp8_interpretation));
 }
 
@@ -354,9 +353,8 @@ __tl_cvt_fp8_to_half(const __hg_fp8_storage_t x,
 
 // half -> fp8. half -> float is exact, so the only rounding happens at the
 // fp8 hardware cvt (satfinite).
-TL_DEVICE __hg_fp8_storage_t
-__tl_cvt_half_to_fp8(const half x,
-                     const __hg_fp8_interpretation_t fp8_interpretation) {
+TL_DEVICE __hg_fp8_storage_t __tl_cvt_half_to_fp8(
+    const half x, const __hg_fp8_interpretation_t fp8_interpretation) {
   __hg_fp8x2_storage_t r = __hg_cvt_float2_to_fp8x2(
       make_float2(__half2float(x), 0.0f), __HG_SATFINITE, fp8_interpretation);
   return static_cast<__hg_fp8_storage_t>(r & 0xFF);
@@ -413,7 +411,8 @@ __hg_fp8_storage_t __tl_cvt_bfloat16_to_e8m0(const __ppu_bfloat16 src) {
 // bfloat162 -> fp8_e8m0x2
 TL_DEVICE __hg_fp8x2_storage_t
 __tl_cvt_bfloat162_to_e8m0x2(const __ppu_bfloat162 src) {
-  __ppu_bfloat162_raw raw = *reinterpret_cast<const __ppu_bfloat162_raw *>(&src);
+  __ppu_bfloat162_raw raw =
+      *reinterpret_cast<const __ppu_bfloat162_raw *>(&src);
   return __hg_cvt_bfloat162raw_to_e8m0x2(raw, __HG_SATFINITE, hggcRoundPosInf);
 }
 

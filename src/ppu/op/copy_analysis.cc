@@ -7,9 +7,9 @@
 #include "support/check.h"
 #include <tvm/runtime/logging.h>
 
-#include "ppu/target_utils.h"
 #include "op/builtin.h"
 #include "op/utils.h"
+#include "ppu/target_utils.h"
 
 #include <tvm/tirx/transform.h>
 
@@ -96,8 +96,9 @@ ParsePreferredCopyInstruction(const std::string &prefer) {
       return inst;
     }
   }
-  LOG(FATAL) << "Unsupported T.copy prefer_instruction=\"" << prefer
-             << "\". Expected one of: \"tma\", \"cp_async\", \"aiu\", \"sync\".";
+  LOG(FATAL)
+      << "Unsupported T.copy prefer_instruction=\"" << prefer
+      << "\". Expected one of: \"tma\", \"cp_async\", \"aiu\", \"sync\".";
   return PreferredCopyInstruction::kAuto;
 }
 
@@ -118,8 +119,7 @@ bool CheckAiuLoad(const CopyNode &op, Target target) {
          IsGlobalBuffer(op.src) && IsSharedBuffer(op.dst) &&
          op.src->dtype == op.dst->dtype &&
          (op.src->dtype.is_float16() || op.src->dtype.is_bfloat16() ||
-          op.src->dtype.is_float8_e4m3fn() ||
-          op.src->dtype.is_float8_e5m2() ||
+          op.src->dtype.is_float8_e4m3fn() || op.src->dtype.is_float8_e5m2() ||
           op.src->dtype.is_float4_e2m1fn());
 }
 
@@ -193,10 +193,11 @@ CopyInstSelection Unsupported(std::string reason) {
 std::string MakeTmaUnavailableReason(const CopyNode &op) {
   std::ostringstream oss;
   oss << "PPU only supports ppu0010/ppu0015; TMA bulk copy, T.tma_copy(), "
-         "gather4/scatter4, and cluster-copy paths require ppu0015+ TMA. Got src="
-      << op.src->name << " (scope=" << op.src.scope() << ", dtype="
-      << op.src->dtype << "), dst=" << op.dst->name << " (scope="
-      << op.dst.scope() << ", dtype=" << op.dst->dtype << ").";
+         "gather4/scatter4, and cluster-copy paths require ppu0015+ TMA. Got "
+         "src="
+      << op.src->name << " (scope=" << op.src.scope()
+      << ", dtype=" << op.src->dtype << "), dst=" << op.dst->name
+      << " (scope=" << op.dst.scope() << ", dtype=" << op.dst->dtype << ").";
   return oss.str();
 }
 
@@ -329,9 +330,10 @@ CopyInstSelection SelectCopyInstForLowering(const CopyNode &op,
     }
     return facts.can_aiu_load
                ? Supported(CopyInst::kAiuLoad)
-               : Unsupported("T.copy prefer_instruction=\"aiu\" requires a PPU "
-                             "AIU-capable fp16/bf16/float8_e4m3fn/float8_e5m2/"
-                             "float4_e2m1fn global->shared copy with matching dtype.");
+               : Unsupported(
+                     "T.copy prefer_instruction=\"aiu\" requires a PPU "
+                     "AIU-capable fp16/bf16/float8_e4m3fn/float8_e5m2/"
+                     "float4_e2m1fn global->shared copy with matching dtype.");
   }
 
   if (facts.prefer_instruction == PreferredCopyInstruction::kSync) {

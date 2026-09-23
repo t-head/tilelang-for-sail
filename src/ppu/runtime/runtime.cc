@@ -26,7 +26,8 @@ static thread_local bool __tl_prev_persisting_l2_cache_saved = false;
 
 //
 // HGGC L2 Persisting Cache Access Policy Window helpers.
-// Exposed as TVM FFI packed functions, following the same pattern as other backends.
+// Exposed as TVM FFI packed functions, following the same pattern as other
+// backends.
 //
 TVM_FFI_STATIC_INIT_BLOCK() {
   namespace refl = reflection;

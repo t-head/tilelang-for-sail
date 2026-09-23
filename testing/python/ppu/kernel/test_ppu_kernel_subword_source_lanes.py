@@ -30,12 +30,8 @@ def _make_kernel(dtype, source_lane_count, conditional):
                     group_base = lane // 4 * 4
                     true_lane = group_base + byte % source_lane_count
                     false_lane = group_base + (byte + 1) % source_lane_count
-                    true_value = T.shfl_sync(
-                        T.cast(a[lane, byte], compute_dtype), true_lane
-                    )
-                    false_value = T.shfl_sync(
-                        T.cast(b[lane, byte], compute_dtype), false_lane
-                    )
+                    true_value = T.shfl_sync(T.cast(a[lane, byte], compute_dtype), true_lane)
+                    false_value = T.shfl_sync(T.cast(b[lane, byte], compute_dtype), false_lane)
                     values[byte] = T.cast(
                         T.if_then_else(lane % 2 == 0, true_value, false_value),
                         dtype,
@@ -57,9 +53,7 @@ def _make_kernel(dtype, source_lane_count, conditional):
                 for byte in T.unroll(BYTES_PER_WORD):
                     source_lane = lane // 4 * 4 + byte % source_lane_count
                     values[byte] = T.cast(
-                        T.shfl_sync(
-                            T.cast(a[lane, byte], compute_dtype), source_lane
-                        ),
+                        T.shfl_sync(T.cast(a[lane, byte], compute_dtype), source_lane),
                         dtype,
                     )
                 for byte in T.unroll(BYTES_PER_WORD):
@@ -73,26 +67,16 @@ def _make_kernel(dtype, source_lane_count, conditional):
 @pytest.mark.parametrize("conditional", [False, True])
 @pytest.mark.parametrize(
     "dtype,source_lane_count,packed",
-    [
-        (T.float8_e4m3fn, lanes, True) for lanes in (1, 2, 3, 4)
-    ]
+    [(T.float8_e4m3fn, lanes, True) for lanes in (1, 2, 3, 4)]
     + [(T.int8, lanes, lanes <= 2) for lanes in (1, 2, 3, 4)]
     + [(T.float8_e5m2, 2, False)],
 )
 def test_subword_source_lane_gather(dtype, source_lane_count, packed, conditional):
-    kernel = tilelang.compile(
-        _make_kernel(dtype, source_lane_count, conditional), out_idx=[2]
-    )
+    kernel = tilelang.compile(_make_kernel(dtype, source_lane_count, conditional), out_idx=[2])
     source = kernel.get_kernel_source()
-    expected_shuffles = (
-        source_lane_count * (2 if conditional else 1)
-        if packed
-        else (2 if conditional else 1)
-    )
+    expected_shuffles = source_lane_count * (2 if conditional else 1) if packed else (2 if conditional else 1)
     assert source.count("__shfl_sync") == expected_shuffles
-    assert source.count("__byte_perm") == (
-        (source_lane_count - 1) * (2 if conditional else 1) if packed else 0
-    )
+    assert source.count("__byte_perm") == ((source_lane_count - 1) * (2 if conditional else 1) if packed else 0)
 
     torch_dtype = dtype.as_torch()
     data = torch.arange(LANES * BYTES_PER_WORD, device="cuda", dtype=torch.int16)

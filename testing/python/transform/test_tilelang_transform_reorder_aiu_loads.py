@@ -90,10 +90,9 @@ def _extract_aiu_dst_names(body):
     names = []
     aiu_op = tir.op.Op.get("tl.ppu_aiu_load")
     for stmt in body:
-        if isinstance(stmt, tir.Evaluate) and isinstance(stmt.value, tir.Call):
-            if stmt.value.op.same_as(aiu_op):
-                access = stmt.value.args[0]
-                names.append(access.args[1].name)
+        if isinstance(stmt, tir.Evaluate) and isinstance(stmt.value, tir.Call) and stmt.value.op.same_as(aiu_op):
+            access = stmt.value.args[0]
+            names.append(access.args[1].name)
     return names
 
 
@@ -108,14 +107,16 @@ def test_basic_reorder():
     B = tir.decl_buffer((128,), "float16", name="B")
     C = tir.decl_buffer((128,), "float16", name="C")
 
-    body = tir.SeqStmt([
-        _make_ppu_aiu_load(A),  # slot 0
-        _make_ppu_aiu_load(B),  # slot 1
-        _make_ppu_aiu_load(C),  # slot 2
-        _make_use(B),  # pos 3: first use of B
-        _make_use(A),  # pos 4: first use of A
-        _make_use(C),  # pos 5: first use of C
-    ])
+    body = tir.SeqStmt(
+        [
+            _make_ppu_aiu_load(A),  # slot 0
+            _make_ppu_aiu_load(B),  # slot 1
+            _make_ppu_aiu_load(C),  # slot 2
+            _make_use(B),  # pos 3: first use of B
+            _make_use(A),  # pos 4: first use of A
+            _make_use(C),  # pos 5: first use of C
+        ]
+    )
 
     params = [A.data, B.data, C.data]
     buf_map = {A.data: A, B.data: B, C.data: C}
@@ -132,17 +133,17 @@ def test_dependency_blocks_move():
 
     addr_var = tir.Var("addr_var", "int32")
     # LetStmt defines addr_var at position 1; body is a trivial nop.
-    let_stmt = tir.LetStmt(
-        addr_var, tir.IntImm("int32", 42), tir.Evaluate(tir.IntImm("int32", 0))
-    )
+    let_stmt = tir.LetStmt(addr_var, tir.IntImm("int32", 42), tir.Evaluate(tir.IntImm("int32", 0)))
 
-    body = tir.SeqStmt([
-        _make_ppu_aiu_load(A),  # slot 0: load A (no deps)
-        let_stmt,  # pos 1: defines addr_var
-        _make_ppu_aiu_load(B, extra_var=addr_var),  # slot 2: load B (needs addr_var)
-        _make_use(B),  # pos 3: first use B
-        _make_use(A),  # pos 4: first use A
-    ])
+    body = tir.SeqStmt(
+        [
+            _make_ppu_aiu_load(A),  # slot 0: load A (no deps)
+            let_stmt,  # pos 1: defines addr_var
+            _make_ppu_aiu_load(B, extra_var=addr_var),  # slot 2: load B (needs addr_var)
+            _make_use(B),  # pos 3: first use B
+            _make_use(A),  # pos 4: first use A
+        ]
+    )
 
     params = [A.data, B.data]
     buf_map = {A.data: A, B.data: B}
@@ -161,17 +162,17 @@ def test_bundle_forward_move():
 
     addr_var = tir.Var("addr_var", "int32")
     # LetStmt defines addr_var at position 0, before both loads.
-    let_stmt = tir.LetStmt(
-        addr_var, tir.IntImm("int32", 42), tir.Evaluate(tir.IntImm("int32", 0))
-    )
+    let_stmt = tir.LetStmt(addr_var, tir.IntImm("int32", 42), tir.Evaluate(tir.IntImm("int32", 0)))
 
-    body = tir.SeqStmt([
-        let_stmt,  # pos 0: defines addr_var
-        _make_ppu_aiu_load(A),  # slot 1: load A (no deps)
-        _make_ppu_aiu_load(B, extra_var=addr_var),  # slot 2: load B (needs addr_var @ pos 0)
-        _make_use(B),  # pos 3: first use B
-        _make_use(A),  # pos 4: first use A
-    ])
+    body = tir.SeqStmt(
+        [
+            let_stmt,  # pos 0: defines addr_var
+            _make_ppu_aiu_load(A),  # slot 1: load A (no deps)
+            _make_ppu_aiu_load(B, extra_var=addr_var),  # slot 2: load B (needs addr_var @ pos 0)
+            _make_use(B),  # pos 3: first use B
+            _make_use(A),  # pos 4: first use A
+        ]
+    )
 
     params = [A.data, B.data]
     buf_map = {A.data: A, B.data: B}
@@ -188,12 +189,14 @@ def test_stage_gt0_skipped():
     A = tir.decl_buffer((128,), "float16", name="A")
     B = tir.decl_buffer((128,), "float16", name="B")
 
-    loop_body = tir.SeqStmt([
-        _make_ppu_aiu_load(A),
-        _make_ppu_aiu_load(B),
-        _make_use(B),  # B used first
-        _make_use(A),
-    ])
+    loop_body = tir.SeqStmt(
+        [
+            _make_ppu_aiu_load(A),
+            _make_ppu_aiu_load(B),
+            _make_use(B),  # B used first
+            _make_use(A),
+        ]
+    )
 
     loop_var = tir.Var("k", "int32")
     for_stmt = tir.For(
@@ -234,13 +237,15 @@ def test_container_boundary():
         _make_ppu_aiu_load(B),
     )
 
-    body = tir.SeqStmt([
-        _make_ppu_aiu_load(A),  # top-level load A (slot 0)
-        inner_for,  # container with load B (NOT a top-level load)
-        _make_ppu_aiu_load(C),  # top-level load C (slot 2)
-        _make_use(C),  # pos 3: first use C
-        _make_use(A),  # pos 4: first use A
-    ])
+    body = tir.SeqStmt(
+        [
+            _make_ppu_aiu_load(A),  # top-level load A (slot 0)
+            inner_for,  # container with load B (NOT a top-level load)
+            _make_ppu_aiu_load(C),  # top-level load C (slot 2)
+            _make_use(C),  # pos 3: first use C
+            _make_use(A),  # pos 4: first use A
+        ]
+    )
 
     params = [A.data, B.data, C.data]
     buf_map = {A.data: A, B.data: B, C.data: C}
@@ -261,14 +266,16 @@ def test_slot_zero_assignment():
     A = tir.decl_buffer((128,), "float16", name="A")
     B = tir.decl_buffer((128,), "float16", name="B")
 
-    body = tir.SeqStmt([
-        _make_ppu_aiu_load(A),  # slot 0: load A
-        _make_ppu_aiu_load(B),  # slot 1: load B
-        _make_use(B),  # pos 2: first use of B (immediately after loads)
-        tir.Evaluate(tir.IntImm("int32", 0)),  # some compute
-        tir.Evaluate(tir.IntImm("int32", 0)),  # some compute
-        _make_use(A),  # pos 5: first use of A (far away)
-    ])
+    body = tir.SeqStmt(
+        [
+            _make_ppu_aiu_load(A),  # slot 0: load A
+            _make_ppu_aiu_load(B),  # slot 1: load B
+            _make_use(B),  # pos 2: first use of B (immediately after loads)
+            tir.Evaluate(tir.IntImm("int32", 0)),  # some compute
+            tir.Evaluate(tir.IntImm("int32", 0)),  # some compute
+            _make_use(A),  # pos 5: first use of A (far away)
+        ]
+    )
 
     params = [A.data, B.data]
     buf_map = {A.data: A, B.data: B}
@@ -286,16 +293,16 @@ def test_call_arg_use_detection():
     # B's use is a normal BufferStore
     use_B = _make_use(B)
     # A's use is a call_extern with A.data in its args
-    call_using_A = tir.Evaluate(
-        tir.call_extern("handle", "some_func", A.data)
-    )
+    call_using_A = tir.Evaluate(tir.call_extern("handle", "some_func", A.data))
 
-    body = tir.SeqStmt([
-        _make_ppu_aiu_load(A),  # slot 0: load A
-        _make_ppu_aiu_load(B),  # slot 1: load B
-        use_B,  # pos 2: first use of B
-        call_using_A,  # pos 3: first use of A (via Call arg)
-    ])
+    body = tir.SeqStmt(
+        [
+            _make_ppu_aiu_load(A),  # slot 0: load A
+            _make_ppu_aiu_load(B),  # slot 1: load B
+            use_B,  # pos 2: first use of B
+            call_using_A,  # pos 3: first use of A (via Call arg)
+        ]
+    )
 
     params = [A.data, B.data]
     buf_map = {A.data: A, B.data: B}

@@ -1,7 +1,6 @@
 import argparse
 import itertools
 import logging
-import os
 
 import tilelang.language as T
 from tilelang.autotuner import autotune
@@ -267,7 +266,10 @@ if __name__ == "__main__":
     print_benchmark_summary(
         "MatMul",
         f"M={M}, N={N}, K={K}",
-        best_latency, tilelang_tflops,
-        ref_latency if ref_latency is not None else 0.0, ref_tflops,
-        "Reference", best_config,
+        best_latency,
+        tilelang_tflops,
+        ref_latency if ref_latency is not None else 0.0,
+        ref_tflops,
+        "Reference",
+        best_config,
     )

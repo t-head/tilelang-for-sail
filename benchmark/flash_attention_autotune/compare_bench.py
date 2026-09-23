@@ -1,8 +1,6 @@
 import itertools
 import pytest
 import torch
-import re
-import ast
 import os
 import gc
 from utils import run_fa_cycle_on_device, run_tilelang_cycle_on_device, format_ratio
@@ -18,30 +16,35 @@ from kernels.example_gqa_bwd import main as tilelang_gqa_bwd_bshd_main
 try:
     from flash_attn.flash_attn_interface import flash_attn_qkvpacked_func
     from flash_attn.flash_attn_interface import flash_attn_func
+
     HAS_FLASH = True
 except BaseException:
     HAS_FLASH = False
-    raise ValueError("No flash-2 found")
+    raise ValueError("No flash-2 found") from None
 
 from tilelang.profiler import do_bench
 
 
 def bench_flash_attention(batch, heads, seq_len, head_dim, groups, causal, algo, mode, Q, K, V, dO, device="cuda"):
     """Run flash-2 benchmark and return latency and TFlops"""
-    mode = mode.split('_')[0]
+    mode = mode.split("_")[0]
     assert mode in ["fwd", "bwd"]
-    dtype = torch.float16
 
     if algo == "mha":
-        qkv = torch.stack([Q,K,V], dim=2)
-        fn = lambda: flash_attn_qkvpacked_func(qkv, causal=causal)
+        qkv = torch.stack([Q, K, V], dim=2)
+
+        def fn():
+            return flash_attn_qkvpacked_func(qkv, causal=causal)
     elif algo == "gqa":
-        head_kv = heads // groups
-        fn = lambda: flash_attn_func(Q, K, V, causal=causal)
+
+        def fn():
+            return flash_attn_func(Q, K, V, causal=causal)
 
     if mode == "bwd":
         o = fn()
-        fn = lambda: o.backward(dO, retain_graph=True)
+
+        def fn():
+            return o.backward(dO, retain_graph=True)
 
     latency_ms = do_bench(fn, warmup=10, rep=100)
 
@@ -67,8 +70,6 @@ def bench_flash_attention(batch, heads, seq_len, head_dim, groups, causal, algo,
 
 def run_tilelang_benchmark(batch, heads, seq_len, head_dim, groups, causal, algo, mode, Q, K, V, dO):
     """Run tilelang benchmark and extract latency from output"""
-    import io
-    import sys
 
     fn = algo + "_" + mode
 
@@ -88,16 +89,18 @@ def run_tilelang_benchmark(batch, heads, seq_len, head_dim, groups, causal, algo
             # let qkv use same head_dim, because Flash-2 only support such config
             d_head_qk = head_dim
             d_head_v = head_dim
-            tilelang_output, *perf_results = tilelang_gqa_bwd_bshd_main(batch, heads, seq_len, d_head_qk, d_head_v, groups, causal, True, Q, K, V, dO)
-        
+            tilelang_output, *perf_results = tilelang_gqa_bwd_bshd_main(
+                batch, heads, seq_len, d_head_qk, d_head_v, groups, causal, True, Q, K, V, dO
+            )
+
         if "bhsd" in mode:
             tilelang_output = tilelang_output.transpose(1, 2)
-        
+
         if "fwd" in mode:
             tilelang_output = {"O": tilelang_output}
         elif "bwd" in mode:
             tilelang_output = {"O": tilelang_output, "dQ": Q.grad.clone(), "dK": K.grad.clone(), "dV": V.grad.clone()}
-        
+
         best_latency = perf_results[0]
         best_tflops = perf_results[1]
         best_config = perf_results[2]
@@ -117,9 +120,9 @@ def run_comparison(batch, heads, seq_len, head_dim, groups, causal, algo="mha", 
     elif algo == "gqa":
         config_str = f"B{batch}_H{heads}_D{head_dim}_L{seq_len}_G{groups}_causal_{causal_str}_{algo.upper()}_{mode.upper()}"
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"Running: {config_str}")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     results = {
         "config": config_str,
@@ -133,17 +136,11 @@ def run_comparison(batch, heads, seq_len, head_dim, groups, causal, algo="mha", 
         "mode": mode,
     }
 
-    Q = (
-        torch.empty(batch, seq_len, heads, head_dim, dtype=torch.half,
-                    device="cuda").normal_().requires_grad_())
+    Q = torch.empty(batch, seq_len, heads, head_dim, dtype=torch.half, device="cuda").normal_().requires_grad_()
 
     head_kv = heads // groups
-    K = (
-        torch.empty(batch, seq_len, head_kv, head_dim, dtype=torch.half,
-                    device="cuda").normal_().requires_grad_())
-    V = (
-        torch.empty(batch, seq_len, head_kv, head_dim, dtype=torch.half,
-                    device="cuda").normal_().requires_grad_())
+    K = torch.empty(batch, seq_len, head_kv, head_dim, dtype=torch.half, device="cuda").normal_().requires_grad_()
+    V = torch.empty(batch, seq_len, head_kv, head_dim, dtype=torch.half, device="cuda").normal_().requires_grad_()
     dO = torch.randn_like(Q)
 
     # Run tilelang
@@ -200,19 +197,19 @@ def run_comparison(batch, heads, seq_len, head_dim, groups, causal, algo="mha", 
 
     dev = "gpu"
     if USE_PPU:
-        os.environ['HGGC_RESET_CACHE'] = '1'
-        os.environ['ALIPPU_RESET_CE_MASK'] = '1'
+        os.environ["HGGC_RESET_CACHE"] = "1"
+        os.environ["ALIPPU_RESET_CE_MASK"] = "1"
         dev = "ppu"
-    
+
     del Q, K, V, dO
     gc.collect()
     torch.cuda.empty_cache()
-    fa_cycle, fa_tc = run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode,
-                           "./cycle.log", dev=dev)
+    fa_cycle, fa_tc = run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode, "./cycle.log", dev=dev)
     gc.collect()
     torch.cuda.empty_cache()
-    tilelang_cycle, tilelang_tc = run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode,
-                           tilelang_best_config, "./cycle.log", dev=dev)
+    tilelang_cycle, tilelang_tc = run_tilelang_cycle_on_device(
+        batch, heads, seq_len, head_dim, groups, causal, algo, mode, tilelang_best_config, "./cycle.log", dev=dev
+    )
 
     # Print summary
     print(f"\nResults for {config_str}:")
@@ -220,19 +217,28 @@ def run_comparison(batch, heads, seq_len, head_dim, groups, causal, algo="mha", 
 
     print(f"tilelang_best_config: {tilelang_best_config}")
 
-    if (results.get("tilelang_latency_ms") and results.get("flash_latency_ms") and
-        isinstance(results["tilelang_latency_ms"], (int, float)) and
-        isinstance(results["flash_latency_ms"], (int, float))):
+    if (
+        results.get("tilelang_latency_ms")
+        and results.get("flash_latency_ms")
+        and isinstance(results["tilelang_latency_ms"], (int, float))
+        and isinstance(results["flash_latency_ms"], (int, float))
+    ):
         table_data = [
             ["Metric", "Tilelang", "Flash-2", "Ratio (T/Flash)"],
-            ["Latency (ms)", f"{results['tilelang_latency_ms']:.4f}", f"{results['flash_latency_ms']:.4f}",
-             format_ratio(results["tilelang_latency_ms"], results["flash_latency_ms"])],
-            ["TFlops", f"{results['tilelang_tflops']:.2f}", f"{results['flash_tflops']:.2f}",
-             format_ratio(results["tilelang_tflops"], results["flash_tflops"])],
-            ["cycles", f"{tilelang_cycle:,.0f}", f"{fa_cycle:,.0f}",
-             format_ratio(tilelang_cycle, fa_cycle)],
-            ["tc", f"{tilelang_tc}", f"{fa_tc}",
-             format_ratio(tilelang_tc, fa_tc)]
+            [
+                "Latency (ms)",
+                f"{results['tilelang_latency_ms']:.4f}",
+                f"{results['flash_latency_ms']:.4f}",
+                format_ratio(results["tilelang_latency_ms"], results["flash_latency_ms"]),
+            ],
+            [
+                "TFlops",
+                f"{results['tilelang_tflops']:.2f}",
+                f"{results['flash_tflops']:.2f}",
+                format_ratio(results["tilelang_tflops"], results["flash_tflops"]),
+            ],
+            ["cycles", f"{tilelang_cycle:,.0f}", f"{fa_cycle:,.0f}", format_ratio(tilelang_cycle, fa_cycle)],
+            ["tc", f"{tilelang_tc}", f"{fa_tc}", format_ratio(tilelang_tc, fa_tc)],
         ]
         print(tabulate(table_data, headers="firstrow", tablefmt="grid"))
     else:
@@ -315,7 +321,6 @@ def generate_configs(config_dict):
     """根据配置字典生成所有组合"""
     configs = []
     # 支持两种配置格式: 新格式(mha_modes/gqa_modes分离)和旧格式(modes统一)
-    is_new_format = "mha_modes" in config_dict
     mha_modes = config_dict.get("mha_modes", config_dict.get("modes", []))
     gqa_modes = config_dict.get("gqa_modes", config_dict.get("modes", []))
 
@@ -371,10 +376,10 @@ def test_bench_comparison(batch, heads, seq_len, head_dim, groups, causal, algo,
     result = run_comparison(batch, heads, seq_len, head_dim, groups, causal, algo, mode)
 
     # 断言两个实现都成功运行
-    assert isinstance(result["tilelang_latency_ms"], (int, float)), \
+    assert isinstance(result["tilelang_latency_ms"], (int, float)), (
         f"Tilelang benchmark failed for {test_id}: {result['tilelang_latency_ms']}"
-    assert isinstance(result["flash_latency_ms"], (int, float)), \
-        f"Flash-2 benchmark failed for {test_id}: {result['flash_latency_ms']}"
+    )
+    assert isinstance(result["flash_latency_ms"], (int, float)), f"Flash-2 benchmark failed for {test_id}: {result['flash_latency_ms']}"
 
     # 可选：检查性能差异在合理范围内（例如 5 倍以内）
     # speedup = result["flash_latency_ms"] / result["tilelang_latency_ms"]
@@ -393,7 +398,14 @@ if __name__ == "__main__":
     gqa_modes = config.get("gqa_modes", config.get("modes", []))
 
     for batch, heads, dim, n_ctx, groups, causal, algo, shape in itertools.product(
-        config["batch"], config["heads"], config["dims"], config["n_ctx"], config["groups"], config["causal"], config["algos"], config["shapes"]
+        config["batch"],
+        config["heads"],
+        config["dims"],
+        config["n_ctx"],
+        config["groups"],
+        config["causal"],
+        config["algos"],
+        config["shapes"],
     ):
         # 过滤group
         if algo == "mha" and groups != 1:
@@ -413,32 +425,33 @@ if __name__ == "__main__":
             all_results.append(result)
 
     # 汇总表格
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("SUMMARY")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
     summary_data = []
     success_count = 0
     for r in all_results:
-        if (isinstance(r.get("tilelang_latency_ms"), (int, float)) and
-            isinstance(r.get("flash_latency_ms"), (int, float))):
-            summary_data.append([
-                r["config"],
-                f"{r['tilelang_latency_ms']:.4f}",
-                f"{r['flash_latency_ms']:.4f}",
-                f"{r['tilelang_tflops']:.2f}",
-                f"{r['flash_tflops']:.2f}",
-                format_ratio(r["flash_latency_ms"], r["tilelang_latency_ms"]),
-            ])
+        if isinstance(r.get("tilelang_latency_ms"), (int, float)) and isinstance(r.get("flash_latency_ms"), (int, float)):
+            summary_data.append(
+                [
+                    r["config"],
+                    f"{r['tilelang_latency_ms']:.4f}",
+                    f"{r['flash_latency_ms']:.4f}",
+                    f"{r['tilelang_tflops']:.2f}",
+                    f"{r['flash_tflops']:.2f}",
+                    format_ratio(r["flash_latency_ms"], r["tilelang_latency_ms"]),
+                ]
+            )
             success_count += 1
 
     print(f"Successfully completed: {success_count}/{len(all_results)} configurations\n")
 
-    print(tabulate(
-        summary_data,
-        headers=["Config", "Tilelang (ms)", "Flash-2 (ms)", "Tilelang (TF)", "Flash-2 (TF)", "Speedup"],
-        tablefmt="grid"
-    ))
+    print(
+        tabulate(
+            summary_data, headers=["Config", "Tilelang (ms)", "Flash-2 (ms)", "Tilelang (TF)", "Flash-2 (TF)", "Speedup"], tablefmt="grid"
+        )
+    )
 
     # 保存到文件
     output_file = "comparison_results.txt"

@@ -936,6 +936,7 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
     def __init__(self, *args, ppu_arch=None, **kwargs):
         if ppu_arch is None:
             from tilelang.contrib import hgcc
+
             compute_version = hgcc.get_target_compute_version()
             arch_str = hgcc.get_target_arch(compute_version)
             ppu_arch = int(arch_str.split("_")[-1].rstrip("af"))
@@ -957,16 +958,10 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
             self.mma_prefix = "m16n16k8"
         elif k_dim == 16:
             self.mma_prefix = "m16n16k16"
-        elif k_dim == 32 and (
-            is_ppu0010_int8
-            or (self.ppu_arch >= 15 and not DataType(self.a_dtype).is_float4_e2m1fn())
-        ):
+        elif k_dim == 32 and (is_ppu0010_int8 or (self.ppu_arch >= 15 and not DataType(self.a_dtype).is_float4_e2m1fn())):
             self.mma_prefix = "m16n16k32"
         elif (
-            k_dim == 64
-            and self.ppu_arch >= 15
-            and DataType(self.a_dtype).is_float4_e2m1fn()
-            and DataType(self.b_dtype).is_float4_e2m1fn()
+            k_dim == 64 and self.ppu_arch >= 15 and DataType(self.a_dtype).is_float4_e2m1fn() and DataType(self.b_dtype).is_float4_e2m1fn()
         ):
             # FP4 e2m1: PPU0015_16x16x64_F32F4F4F32_TN
             self.mma_prefix = "m16n16k64"
@@ -1194,7 +1189,9 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
 
         return _warp_ldmatrix_a(A_local_buf, A_region, ki, thread_binding, rk)
 
-    def ldmatrix_b(self, B_local_buf: Buffer, B_shared_buf: Buffer | BufferRegion, ki: PrimExpr, rk: PrimExpr | None = 0, a_from_gemm_c: bool = False):
+    def ldmatrix_b(
+        self, B_local_buf: Buffer, B_shared_buf: Buffer | BufferRegion, ki: PrimExpr, rk: PrimExpr | None = 0, a_from_gemm_c: bool = False
+    ):
         b_bits = DataType(self.b_dtype).bits
         if b_bits not in (4, 8, 16):
             return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
@@ -1495,7 +1492,10 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
             return self._make_mma_load_layout_default(local_buf, matrix="A")
         if self.a_transposed:
             base_transform_func = transform_func
-            transform_func = lambda i, j: base_transform_func(j, i)
+
+            def transform_func(i, j):
+                return base_transform_func(j, i)
+
         inverse_mma_load_layout = IndexMap.from_func(transform_func, index_dtype=T.int32)
 
         def forward_thread(i: int, j: int) -> int:
@@ -1509,12 +1509,15 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         is_sr_axis_order = not self.a_transposed
         base_fragment = T.Fragment(
             [self.micro_size_x, self.micro_size_k] if is_sr_axis_order else [self.micro_size_k, self.micro_size_x],
-            forward_thread_fn=forward_thread, forward_index_fn=forward_index,
+            forward_thread_fn=forward_thread,
+            forward_index_fn=forward_index,
         )
         warp_s, warp_r = self.warp_rows, self.chunk // self.micro_size_k
         if is_sr_axis_order:
             warp_fragment = base_fragment.repeat([warp_s, warp_r], repeat_on_thread=False, lower_dim_first=False)
-            return warp_fragment.repeat([self.block_row_warps, 1], repeat_on_thread=True, lower_dim_first=True).replicate(self.block_col_warps)
+            return warp_fragment.repeat([self.block_row_warps, 1], repeat_on_thread=True, lower_dim_first=True).replicate(
+                self.block_col_warps
+            )
         warp_fragment = base_fragment.repeat([warp_r, warp_s], repeat_on_thread=False, lower_dim_first=True)
         return warp_fragment.repeat([1, self.block_row_warps], repeat_on_thread=True, lower_dim_first=True).replicate(self.block_col_warps)
 
@@ -1531,7 +1534,9 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         is_sr_axis_order = self.b_transposed
         if not is_sr_axis_order:
             base_transform_func = transform_func
-            transform_func = lambda i, j: base_transform_func(j, i)
+
+            def transform_func(i, j):
+                return base_transform_func(j, i)
 
         inverse_mma_load_layout = IndexMap.from_func(transform_func, index_dtype=T.int32)
 
@@ -1546,7 +1551,8 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         micro_size_r, micro_size_s = self.micro_size_k, self.micro_size_y
         base_fragment = T.Fragment(
             [micro_size_s, micro_size_r] if is_sr_axis_order else [micro_size_r, micro_size_s],
-            forward_thread_fn=forward_thread, forward_index_fn=forward_index,
+            forward_thread_fn=forward_thread,
+            forward_index_fn=forward_index,
         )
         warp_s, warp_r = self.warp_cols, self.chunk // self.micro_size_k
         block_s = self.block_col_warps
@@ -1576,13 +1582,18 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
 
         base_fragment = T.Fragment(
             [self.micro_size_x, self.micro_size_k],
-            forward_thread_fn=forward_thread, forward_index_fn=forward_index,
+            forward_thread_fn=forward_thread,
+            forward_index_fn=forward_index,
         )
         warp_fragment = base_fragment.repeat(
-            [self.warp_rows, self.chunk // self.micro_size_k], repeat_on_thread=False, lower_dim_first=False,
+            [self.warp_rows, self.chunk // self.micro_size_k],
+            repeat_on_thread=False,
+            lower_dim_first=False,
         )
         return warp_fragment.repeat(
-            [self.block_row_warps, 1], repeat_on_thread=True, lower_dim_first=True,
+            [self.block_row_warps, 1],
+            repeat_on_thread=True,
+            lower_dim_first=True,
         ).replicate(self.block_col_warps)
 
     def _make_mma_load_layout_default(self, local_buf: Buffer, matrix: Literal["A", "B"] = "A") -> T.Fragment:

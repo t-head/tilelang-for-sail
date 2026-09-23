@@ -4,9 +4,9 @@
 #include <hggc_runtime.h>
 #endif
 
+#include <cutlass/numeric_types.h>
 #include <hggc/atomic>
 #include <hggc_fp16.h>
-#include <cutlass/numeric_types.h>
 
 using cutlass::bfloat16_t;
 using cutlass::half_t;
@@ -41,7 +41,8 @@ template <> TL_DEVICE half hggc_cast<half, float>(float val) {
   return __float2half(val);
 }
 
-template <> TL_DEVICE __ppu_bfloat16 hggc_cast<__ppu_bfloat16, float>(float val) {
+template <>
+TL_DEVICE __ppu_bfloat16 hggc_cast<__ppu_bfloat16, float>(float val) {
   return __float2bfloat16(val);
 }
 
@@ -347,9 +348,9 @@ TL_DEVICE void AtomicAddx2(half_t *ref, ValType val,
   } else {
     // No vectorized atomic with memory order: fall back to scalar atomicAdd,
     // consistent with the f32 version.
-    tl_atomic_detail::AtomicAddx2Scalar(
-        reinterpret_cast<half *>(ref), static_cast<half>(add_val.x),
-        static_cast<half>(add_val.y));
+    tl_atomic_detail::AtomicAddx2Scalar(reinterpret_cast<half *>(ref),
+                                        static_cast<half>(add_val.x),
+                                        static_cast<half>(add_val.y));
   }
 }
 
@@ -363,8 +364,8 @@ AtomicAddx2Ret(half_t *ref, ValType val,
   } else {
     // No vectorized atomic with memory order: fall back to scalar atomicAdd,
     // consistent with the f32 version.
-    return tl_atomic_detail::AtomicAddx2ScalarRet(
-        reinterpret_cast<half *>(ref), add_val);
+    return tl_atomic_detail::AtomicAddx2ScalarRet(reinterpret_cast<half *>(ref),
+                                                  add_val);
   }
 }
 
@@ -399,10 +400,9 @@ TL_DEVICE void AtomicAddx2(bfloat16_t *ref, ValType val,
   } else {
     // No vectorized atomic with memory order: fall back to scalar atomicAdd,
     // consistent with the f32 version.
-    tl_atomic_detail::AtomicAddx2Scalar(
-        reinterpret_cast<__ppu_bfloat16 *>(ref),
-        static_cast<__ppu_bfloat16>(add_val.x),
-        static_cast<__ppu_bfloat16>(add_val.y));
+    tl_atomic_detail::AtomicAddx2Scalar(reinterpret_cast<__ppu_bfloat16 *>(ref),
+                                        static_cast<__ppu_bfloat16>(add_val.x),
+                                        static_cast<__ppu_bfloat16>(add_val.y));
   }
 }
 

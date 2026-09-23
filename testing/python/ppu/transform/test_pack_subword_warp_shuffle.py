@@ -33,9 +33,7 @@ def _make_relayout(
                 source_lane,
                 false_width,
             )
-            dst[i + dst_offset] = T.cast(
-                T.if_then_else(lane % 4 < 2, low, high), dtype
-            )
+            dst[i + dst_offset] = T.cast(T.if_then_else(lane % 4 < 2, low, high), dtype)
 
     return tvm.IRModule.from_expr(main)
 
@@ -87,9 +85,7 @@ def _make_conditional_lane_relayout(
             false_lane = lane // 4 * 4 + (i % 4) % false_count
             true_value = T.shfl_sync(src[i], source_lane)
             false_value = T.shfl_sync(src[i + 16], false_lane, false_width)
-            dst[i + dst_offset] = T.cast(
-                T.if_then_else(lane % 2 == 0, true_value, false_value), dtype
-            )
+            dst[i + dst_offset] = T.cast(T.if_then_else(lane % 2 == 0, true_value, false_value), dtype)
 
     return tvm.IRModule.from_expr(main)
 
@@ -139,9 +135,7 @@ def test_pack_fp8_warp_shuffle_after_pipeline_unroll():
 
 
 def test_bf16x2_unconditional_source_lane_remains_scalar_on_ppu15():
-    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(
-        _make_unconditional_relayout(T.bfloat16, "ppu_15")
-    )
+    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(_make_unconditional_relayout(T.bfloat16, "ppu_15"))
     calls, loops, stores = _collect(mod)
 
     assert calls.get("tl.shfl_sync", 0) == 1
@@ -150,9 +144,7 @@ def test_bf16x2_unconditional_source_lane_remains_scalar_on_ppu15():
 
 
 def test_pack_int8x4_single_source_lane_on_ppu10():
-    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(
-        _make_unconditional_relayout(T.int8, "ppu_10")
-    )
+    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(_make_unconditional_relayout(T.int8, "ppu_10"))
     calls, loops, stores = _collect(mod)
 
     assert calls.get("tl.shfl_sync", 0) == 1
@@ -161,9 +153,7 @@ def test_pack_int8x4_single_source_lane_on_ppu10():
 
 
 def test_pack_int8x4_single_source_lane_after_pipeline_unroll():
-    mod = tilelang.transform.UnrollLoop()(
-        _make_unconditional_relayout(T.int8, "ppu_10")
-    )
+    mod = tilelang.transform.UnrollLoop()(_make_unconditional_relayout(T.int8, "ppu_10"))
     mod = s_tir.transform.RenormalizeSplitPattern()(mod)
     mod = tvm.tirx.transform.Simplify()(mod)
     mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(mod)
@@ -182,23 +172,14 @@ def test_unconditional_shuffle_admission():
         (T.int8, "ppu_15"),
     ):
         for source_lane_count in (1, 2, 3, 4):
-            mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(
-                _make_unconditional_relayout(dtype, arch, source_lane_count)
-            )
+            mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(_make_unconditional_relayout(dtype, arch, source_lane_count))
             calls, loops, stores = _collect(mod)
 
             packed = dtype == T.float8_e4m3fn or source_lane_count <= 2
-            assert calls.get("tl.shfl_sync", 0) == (
-                source_lane_count if packed else 1
-            )
-            assert calls.get("tirx.call_pure_extern", 0) == (
-                source_lane_count - 1 if packed else 0
-            )
+            assert calls.get("tl.shfl_sync", 0) == (source_lane_count if packed else 1)
+            assert calls.get("tirx.call_pure_extern", 0) == (source_lane_count - 1 if packed else 0)
             assert any(int(loop.extent) == (4 if packed else 16) for loop in loops)
-            assert any(
-                store.value.dtype.lanes == (4 if packed else 1)
-                for store in stores
-            )
+            assert any(store.value.dtype.lanes == (4 if packed else 1) for store in stores)
 
 
 def test_conditional_shuffle_admission():
@@ -208,27 +189,18 @@ def test_conditional_shuffle_admission():
         (T.int8, "ppu_15"),
     ):
         for source_lane_count in (1, 2, 3, 4):
-            mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(
-                _make_conditional_lane_relayout(dtype, arch, source_lane_count)
-            )
+            mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(_make_conditional_lane_relayout(dtype, arch, source_lane_count))
             calls, loops, stores = _collect(mod)
 
             packed = dtype == T.float8_e4m3fn or source_lane_count <= 2
-            assert calls.get("tl.shfl_sync", 0) == (
-                2 * source_lane_count if packed else 2
-            )
-            assert calls.get("tirx.call_pure_extern", 0) == (
-                2 * (source_lane_count - 1) if packed else 0
-            )
+            assert calls.get("tl.shfl_sync", 0) == (2 * source_lane_count if packed else 2)
+            assert calls.get("tirx.call_pure_extern", 0) == (2 * (source_lane_count - 1) if packed else 0)
             assert any(int(loop.extent) == (4 if packed else 16) for loop in loops)
-            assert any(
-                store.value.dtype.lanes == (4 if packed else 1)
-                for store in stores
-            )
+            assert any(store.value.dtype.lanes == (4 if packed else 1) for store in stores)
             if not packed:
                 binds = []
 
-                def collect_bind(node):
+                def collect_bind(node, binds=binds):
                     if isinstance(node, tvm.tirx.Bind):
                         binds.append(node)
 
@@ -254,9 +226,7 @@ def test_conditional_shuffle_rejects_three_lanes_in_either_candidate():
 
 
 def test_pack_fp8_warp_shuffle_non_adjacent_lanes_uses_general_gather():
-    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(
-        _make_relayout(lane_stride=2)
-    )
+    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(_make_relayout(lane_stride=2))
     calls, loops, stores = _collect(mod)
 
     assert calls.get("tl.shfl_sync", 0) == 4
@@ -266,9 +236,7 @@ def test_pack_fp8_warp_shuffle_non_adjacent_lanes_uses_general_gather():
 
 
 def test_pack_fp8_warp_shuffle_is_ppu15_only():
-    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(
-        _make_relayout(arch="ppu_10")
-    )
+    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(_make_relayout(arch="ppu_10"))
     calls, loops, stores = _collect(mod)
 
     assert calls.get("tl.shfl_sync", 0) == 2
@@ -286,9 +254,7 @@ def test_pack_fp8_warp_shuffle_does_not_widen_unproven_subword_types():
         T.float8_e4m3,
         T.float8_e5m2,
     ):
-        mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(
-            _make_relayout(dtype=dtype)
-        )
+        mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(_make_relayout(dtype=dtype))
         calls, loops, stores = _collect(mod)
 
         assert calls.get("tl.shfl_sync", 0) == 2
@@ -298,9 +264,7 @@ def test_pack_fp8_warp_shuffle_does_not_widen_unproven_subword_types():
 
 
 def test_pack_fp8_warp_shuffle_requires_aligned_destination():
-    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(
-        _make_relayout(dst_offset=1)
-    )
+    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(_make_relayout(dst_offset=1))
     calls, loops, stores = _collect(mod)
 
     assert calls.get("tl.shfl_sync", 0) == 2
@@ -310,9 +274,7 @@ def test_pack_fp8_warp_shuffle_requires_aligned_destination():
 
 
 def test_pack_int8x4_source_lane_requires_aligned_destination():
-    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(
-        _make_unconditional_relayout(T.int8, "ppu_10", dst_offset=1)
-    )
+    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(_make_unconditional_relayout(T.int8, "ppu_10", dst_offset=1))
     calls, loops, stores = _collect(mod)
 
     assert calls.get("tl.shfl_sync", 0) == 1
@@ -321,9 +283,7 @@ def test_pack_int8x4_source_lane_requires_aligned_destination():
 
 
 def test_packed_shuffle_requires_shared_control_for_select_branches():
-    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(
-        _make_relayout(false_width=16)
-    )
+    mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(_make_relayout(false_width=16))
     calls, loops, stores = _collect(mod)
 
     assert calls.get("tl.shfl_sync", 0) == 2

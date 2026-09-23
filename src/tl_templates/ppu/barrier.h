@@ -17,14 +17,13 @@ TL_DEVICE void mbarrier_init(uint64_t &smem_barrier, uint32_t arrive_count) {
 
 TL_DEVICE uint32_t mbarrier_test_wait(uint64_t &smem_barrier, int phase_bit) {
   uint32_t smem_int_ptr = smem_ptr_to_uint(&smem_barrier);
-  asm volatile(
-      "{\n"
-      ".reg .pred P1; \n\t"
-      "ppu.awbar.test_wait.parity.shared::blk.b64 _, [%0], %1;\n"
-      "ppu.selp.b32 %0, 1, 0, P1; \n\t"
-      "}\n"
-      : "=r"(waitComplete)
-      : "r"(smem_int_ptr), "r"(phase_bit));
+  asm volatile("{\n"
+               ".reg .pred P1; \n\t"
+               "ppu.awbar.test_wait.parity.shared::blk.b64 _, [%0], %1;\n"
+               "ppu.selp.b32 %0, 1, 0, P1; \n\t"
+               "}\n"
+               : "=r"(waitComplete)
+               : "r"(smem_int_ptr), "r"(phase_bit));
 }
 
 TL_DEVICE void mbarrier_wait(uint64_t &smem_barrier, int phase_bit) {
@@ -37,13 +36,12 @@ TL_DEVICE void mbarrier_wait(uint64_t &smem_barrier, int phase_bit) {
       "LAB_WAIT:\n"
       "ppu.awbar.test_wait.parity.shared::blk.b64 P1, [%0], %1;\n"
       "@P1                       ppu.bra DONE;\n"
-      "ppu.nanosleep.u32 %2;\n" // wait a few nanoseconds on current PPU architectures
-                          // to save instruction issue slots
+      "ppu.nanosleep.u32 %2;\n" // wait a few nanoseconds on current PPU
+                                // architectures to save instruction issue slots
       "ppu.bra                   LAB_WAIT;\n"
       "DONE:\n"
       "}\n" ::"r"(smem_int_ptr),
-      "r"(phase_bit),
-      "r"(ticks));
+      "r"(phase_bit), "r"(ticks));
 }
 
 TL_DEVICE void mbarrier_arrive(uint64_t &smem_barrier) {

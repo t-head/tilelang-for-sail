@@ -9,7 +9,6 @@ Tunable parameters: token_block, hidden_block, num_stages
 """
 
 import argparse
-import math
 
 import torch
 import tilelang
@@ -23,10 +22,13 @@ from utils import print_benchmark_summary, bench_ref, inject_pass_configs_from_e
 
 
 @autotune(configs=get_mhc_pre_configs(), warmup=5, rep=20, skip_check=True)
-@jit(out_idx=[2, 3], pass_configs={
-    tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
-    tilelang.PassConfigKey.TL_DISABLE_TMA_LOWER: True,
-})
+@jit(
+    out_idx=[2, 3],
+    pass_configs={
+        tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
+        tilelang.PassConfigKey.TL_DISABLE_TMA_LOWER: True,
+    },
+)
 def mhc_pre_gemm_sqrsum(
     hc_mult3: int,
     hc_hidden_size: int,
@@ -115,24 +117,25 @@ def mhc_pre_ref(residual, fn, hc_scale, hc_base, rms_eps, hc_pre_eps, hc_sinkhor
     sqrsum = residual_flat.square().sum(-1)
     mixes = residual_flat @ fn.T * (sqrsum.unsqueeze(-1) / fn.shape[-1] + rms_eps).rsqrt()
 
-    hc_scale_expanded = torch.cat([
-        hc_scale[0].expand(hc_mult),
-        hc_scale[1].expand(hc_mult),
-        hc_scale[2].expand(hc_mult * hc_mult),
-    ])
+    hc_scale_expanded = torch.cat(
+        [
+            hc_scale[0].expand(hc_mult),
+            hc_scale[1].expand(hc_mult),
+            hc_scale[2].expand(hc_mult * hc_mult),
+        ]
+    )
     mixes = mixes * hc_scale_expanded + hc_base
 
     pre_mix = mixes[:, :hc_mult].sigmoid().unsqueeze(-1) + hc_pre_eps
-    post_mix = (mixes[:, hc_mult:2 * hc_mult].sigmoid() * hc_post_mult_value).unsqueeze(-1)
-    res_mix = mixes[:, 2 * hc_mult:].view(-1, hc_mult, hc_mult)
+    post_mix = (mixes[:, hc_mult : 2 * hc_mult].sigmoid() * hc_post_mult_value).unsqueeze(-1)
+    res_mix = mixes[:, 2 * hc_mult :].view(-1, hc_mult, hc_mult)
     res_mix = sinkhorn_normalize_ref(res_mix, repeat=sinkhorn_repeat, eps=hc_sinkhorn_eps)
     layer_input = (residual * pre_mix).sum(-2).bfloat16()
 
     return post_mix, res_mix, layer_input
 
 
-def run_profile(n, hidden_size, hc_mult,
-                 token_block, hidden_block, num_stages):
+def run_profile(n, hidden_size, hc_mult, token_block, hidden_block, num_stages):
     """Run the kernel once with an explicit config for ncu/acu profiling."""
     import torch
 
@@ -145,8 +148,10 @@ def run_profile(n, hidden_size, hc_mult,
     inject_pass_configs_from_env(mhc_pre_gemm_sqrsum)
     with set_autotune_inputs(x, fn):
         kernel = mhc_pre_gemm_sqrsum(
-            hc_mult3, hc_hidden_size,
-            token_block=token_block, hidden_block=hidden_block,
+            hc_mult3,
+            hc_hidden_size,
+            token_block=token_block,
+            hidden_block=hidden_block,
             num_stages=num_stages,
         )
     kernel(x, fn)
@@ -163,13 +168,12 @@ def run_profile_ref(n, hidden_size, hc_mult):
     fn = torch.randn(hc_mult3, hc_hidden_size, dtype=torch.float32, device="cuda")
     x_ref = x.float()
 
-    gemm_out = x_ref @ fn.T
-    sq = (x_ref * x_ref).sum(dim=-1)
+    x_ref @ fn.T
+    (x_ref * x_ref).sum(dim=-1)
 
 
 def main(n=1024, hidden_size=2560, hc_mult=4):
     """Run autotune for gemm_sqrsum and print results."""
-    from tilelang.profiler import do_bench
 
     hc_mult3 = hc_mult * 2 + hc_mult * hc_mult
     hc_hidden_size = hc_mult * hidden_size
@@ -177,8 +181,6 @@ def main(n=1024, hidden_size=2560, hc_mult=4):
     # Prepare concrete tensors for dynamic-shape kernel autotune
     x = torch.randn(n, hc_hidden_size, dtype=torch.bfloat16, device="cuda")
     fn = torch.randn(hc_mult3, hc_hidden_size, dtype=torch.float32, device="cuda")
-    out = torch.zeros(n, hc_mult3, dtype=torch.float32, device="cuda")
-    sqrsum = torch.zeros(n, dtype=torch.float32, device="cuda")
 
     with set_autotune_inputs(x, fn):
         best_result = mhc_pre_gemm_sqrsum(hc_mult3, hc_hidden_size)
@@ -191,6 +193,7 @@ def main(n=1024, hidden_size=2560, hc_mult=4):
 
     # Reference: torch matmul + square-sum
     x_ref = x.float()
+
     def ref_mhc():
         gemm_out = x_ref @ fn.T
         sq = (x_ref * x_ref).sum(dim=-1)
@@ -202,9 +205,12 @@ def main(n=1024, hidden_size=2560, hc_mult=4):
     print_benchmark_summary(
         "mHC Pre",
         f"n={n}, hidden_size={hidden_size}, hc_mult={hc_mult}",
-        best_latency, total_flops / best_latency * 1e-9,
-        ref_latency, ref_tflops,
-        "Reference", best_config,
+        best_latency,
+        total_flops / best_latency * 1e-9,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
     )
 
     return best_latency, total_flops / best_latency * 1e-9, best_config, ref_latency
@@ -215,18 +221,15 @@ if __name__ == "__main__":
     parser.add_argument("--n", type=int, default=1024)
     parser.add_argument("--hidden_size", type=int, default=2560)
     parser.add_argument("--hc_mult", type=int, default=4)
-    parser.add_argument("--profile", action="store_true",
-                        help="Run kernel once with given config for ncu/acu profiling")
-    parser.add_argument("--profile-ref", action="store_true",
-                        help="Run reference once for ncu/acu profiling")
+    parser.add_argument("--profile", action="store_true", help="Run kernel once with given config for ncu/acu profiling")
+    parser.add_argument("--profile-ref", action="store_true", help="Run reference once for ncu/acu profiling")
     parser.add_argument("--token_block", type=int, default=None)
     parser.add_argument("--hidden_block", type=int, default=None)
     parser.add_argument("--num_stages", type=int, default=None)
     args = parser.parse_args()
 
     if args.profile:
-        run_profile(args.n, args.hidden_size, args.hc_mult,
-                    args.token_block, args.hidden_block, args.num_stages)
+        run_profile(args.n, args.hidden_size, args.hc_mult, args.token_block, args.hidden_block, args.num_stages)
     elif args.profile_ref:
         run_profile_ref(args.n, args.hidden_size, args.hc_mult)
     else:

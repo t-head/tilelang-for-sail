@@ -105,13 +105,8 @@ def test_64b_swizzle():
     # Should have at least one aiu_load with swzl_mode=1 (for A's 64B swizzle)
     aiu_load_lines = [line for line in source.splitlines() if "tl::aiu_load(" in line]
     assert len(aiu_load_lines) > 0
-    has_mode_1 = any(
-        line.split("tl::aiu_load(", 1)[1].split(");", 1)[0].split(",")[-1].strip() == "1"
-        for line in aiu_load_lines
-    )
-    assert has_mode_1, (
-        "Expected at least one aiu_load with swzl_mode=1 for 64B swizzle on A_shared"
-    )
+    has_mode_1 = any(line.split("tl::aiu_load(", 1)[1].split(");", 1)[0].split(",")[-1].strip() == "1" for line in aiu_load_lines)
+    assert has_mode_1, "Expected at least one aiu_load with swzl_mode=1 for 64B swizzle on A_shared"
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
@@ -130,10 +125,7 @@ def test_64b_swizzle_constraint_trigger():
     # Should contain aiu_load with swzl_mode=1 (64B for A)
     aiu_load_lines = [line for line in source.splitlines() if "tl::aiu_load(" in line]
     assert len(aiu_load_lines) > 0
-    has_mode_1 = any(
-        line.split("tl::aiu_load(", 1)[1].split(");", 1)[0].split(",")[-1].strip() == "1"
-        for line in aiu_load_lines
-    )
+    has_mode_1 = any(line.split("tl::aiu_load(", 1)[1].split(");", 1)[0].split(",")[-1].strip() == "1" for line in aiu_load_lines)
     assert has_mode_1, "Expected aiu_load with swzl_mode=1 for 64B swizzle on A_shared"
 
 

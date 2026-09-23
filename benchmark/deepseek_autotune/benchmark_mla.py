@@ -82,16 +82,16 @@ def mla_decode(
 
             cur_kv_head = hid // (kv_group_num // block_H)
 
-            T.copy(Q[bid, hid * VALID_BLOCK_H:(hid + 1) * VALID_BLOCK_H, :], Q_shared)
-            T.copy(Q_pe[bid, hid * VALID_BLOCK_H:(hid + 1) * VALID_BLOCK_H, :], Q_pe_shared)
+            T.copy(Q[bid, hid * VALID_BLOCK_H : (hid + 1) * VALID_BLOCK_H, :], Q_shared)
+            T.copy(Q_pe[bid, hid * VALID_BLOCK_H : (hid + 1) * VALID_BLOCK_H, :], Q_pe_shared)
             T.fill(acc_o, 0)
             T.fill(logsum, 0)
             T.fill(scores_max, -T.infinity(accum_dtype))
 
             loop_range = T.ceildiv(seqlen_kv, block_N)
             for k in T.Pipelined(loop_range, num_stages=num_stages):
-                T.copy(KV[bid, k * block_N:(k + 1) * block_N, cur_kv_head, :], KV_shared)
-                T.copy(K_pe[bid, k * block_N:(k + 1) * block_N, cur_kv_head, :], K_pe_shared)
+                T.copy(KV[bid, k * block_N : (k + 1) * block_N, cur_kv_head, :], KV_shared)
+                T.copy(K_pe[bid, k * block_N : (k + 1) * block_N, cur_kv_head, :], K_pe_shared)
                 T.gemm(Q_shared, KV_shared, acc_s, transpose_B=True, policy=T.GemmWarpPolicy.FullCol, clear_accum=True)
                 T.gemm(Q_pe_shared, K_pe_shared, acc_s, transpose_B=True, policy=T.GemmWarpPolicy.FullCol)
                 T.copy(scores_max, scores_max_prev)
@@ -113,13 +113,12 @@ def mla_decode(
             for i, j in T.Parallel(block_H, dim):
                 acc_o[i, j] /= logsum[i]
             T.copy(acc_o, O_shared)
-            T.copy(O_shared, Output[bid, hid * VALID_BLOCK_H:(hid + 1) * VALID_BLOCK_H, :])
+            T.copy(O_shared, Output[bid, hid * VALID_BLOCK_H : (hid + 1) * VALID_BLOCK_H, :])
 
     return main
 
 
-def run_profile(batch, heads, kv_heads, kv_ctx, dim, pe_dim,
-                 block_N, block_H, num_stages, threads):
+def run_profile(batch, heads, kv_heads, kv_ctx, dim, pe_dim, block_N, block_H, num_stages, threads):
     """Run the kernel once with an explicit config for ncu/acu profiling.
 
     When all tunable params are provided the @autotune decorator skips the
@@ -138,13 +137,21 @@ def run_profile(batch, heads, kv_heads, kv_ctx, dim, pe_dim,
     K_pe = torch.randn(batch, kv_ctx, kv_heads, pe_dim, dtype=dtype, device="cuda")
     glse = torch.zeros(batch, heads, num_split, dtype=dtype, device="cuda")
     Output_partial = torch.zeros(batch, heads, num_split, dim, dtype=dtype, device="cuda")
-    Output = torch.zeros(batch, heads, dim, dtype=dtype, device="cuda")
 
     inject_pass_configs_from_env(mla_decode)
     kernel = mla_decode(
-        batch, heads, kv_heads, kv_ctx, dim, pe_dim, num_split, softmax_scale,
-        block_N=block_N, block_H=block_H,
-        num_stages=num_stages, threads=threads,
+        batch,
+        heads,
+        kv_heads,
+        kv_ctx,
+        dim,
+        pe_dim,
+        num_split,
+        softmax_scale,
+        block_N=block_N,
+        block_H=block_H,
+        num_stages=num_stages,
+        threads=threads,
     )
     kernel(Q, Q_pe, KV, K_pe, glse, Output_partial)
 
@@ -159,27 +166,28 @@ def run_profile_ref(batch, heads, kv_heads, kv_ctx, dim, pe_dim):
     block_size = 64
     max_seqlen_pad = (kv_ctx + 255) // 256 * 256
     q_fmla = torch.randn(batch, 1, heads, d, dtype=dtype, device="cuda")
-    block_table = torch.arange(
-        batch * max_seqlen_pad // block_size, dtype=torch.int32, device="cuda"
-    ).view(batch, max_seqlen_pad // block_size)
-    blocked_k = torch.randn(
-        block_table.numel(), block_size, kv_heads, d, dtype=dtype, device="cuda"
+    block_table = torch.arange(batch * max_seqlen_pad // block_size, dtype=torch.int32, device="cuda").view(
+        batch, max_seqlen_pad // block_size
     )
+    blocked_k = torch.randn(block_table.numel(), block_size, kv_heads, d, dtype=dtype, device="cuda")
     cache_seqlens = torch.full((batch,), kv_ctx, dtype=torch.int32, device="cuda")
-    tile_scheduler_metadata, num_splits = get_mla_metadata(
-        cache_seqlens, 1 * heads // kv_heads, kv_heads
-    )
+    tile_scheduler_metadata, num_splits = get_mla_metadata(cache_seqlens, 1 * heads // kv_heads, kv_heads)
 
     flash_mla_with_kvcache(
-        q_fmla, blocked_k, block_table, cache_seqlens, dim,
-        tile_scheduler_metadata, num_splits, causal=True,
+        q_fmla,
+        blocked_k,
+        block_table,
+        cache_seqlens,
+        dim,
+        tile_scheduler_metadata,
+        num_splits,
+        causal=True,
     )
 
 
 def main(batch=132, heads=128, kv_heads=1, kv_ctx=8192, dim=512, pe_dim=64):
     """Run autotune and print results."""
     import torch
-    from tilelang.profiler import do_bench
 
     num_split = 1
     softmax_scale = (dim + pe_dim) ** -0.5
@@ -199,21 +207,23 @@ def main(batch=132, heads=128, kv_heads=1, kv_ctx=8192, dim=512, pe_dim=64):
     block_size = 64
     max_seqlen_pad = (kv_ctx + 255) // 256 * 256
     q_fmla = torch.randn(batch, 1, heads, d, dtype=dtype, device="cuda")
-    block_table = torch.arange(
-        batch * max_seqlen_pad // block_size, dtype=torch.int32, device="cuda"
-    ).view(batch, max_seqlen_pad // block_size)
-    blocked_k = torch.randn(
-        block_table.numel(), block_size, kv_heads, d, dtype=dtype, device="cuda"
+    block_table = torch.arange(batch * max_seqlen_pad // block_size, dtype=torch.int32, device="cuda").view(
+        batch, max_seqlen_pad // block_size
     )
+    blocked_k = torch.randn(block_table.numel(), block_size, kv_heads, d, dtype=dtype, device="cuda")
     cache_seqlens = torch.full((batch,), kv_ctx, dtype=torch.int32, device="cuda")
-    tile_scheduler_metadata, num_splits = get_mla_metadata(
-        cache_seqlens, 1 * heads // kv_heads, kv_heads
-    )
+    tile_scheduler_metadata, num_splits = get_mla_metadata(cache_seqlens, 1 * heads // kv_heads, kv_heads)
 
     def ref_flash_mla():
         return flash_mla_with_kvcache(
-            q_fmla, blocked_k, block_table, cache_seqlens, dim,
-            tile_scheduler_metadata, num_splits, causal=True,
+            q_fmla,
+            blocked_k,
+            block_table,
+            cache_seqlens,
+            dim,
+            tile_scheduler_metadata,
+            num_splits,
+            causal=True,
         )
 
     ref_latency = bench_ref(ref_flash_mla)
@@ -222,9 +232,12 @@ def main(batch=132, heads=128, kv_heads=1, kv_ctx=8192, dim=512, pe_dim=64):
     print_benchmark_summary(
         "MLA Decode",
         f"batch={batch}, heads={heads}, kv_ctx={kv_ctx}, dim={dim}, pe_dim={pe_dim}",
-        best_latency, total_flops / best_latency * 1e-9,
-        ref_latency, ref_tflops,
-        "FlashMLA", best_config,
+        best_latency,
+        total_flops / best_latency * 1e-9,
+        ref_latency,
+        ref_tflops,
+        "FlashMLA",
+        best_config,
     )
 
     return best_latency, total_flops / best_latency * 1e-9, best_config, ref_latency
@@ -238,10 +251,8 @@ if __name__ == "__main__":
     parser.add_argument("--kv_ctx", type=int, default=8192)
     parser.add_argument("--dim", type=int, default=512)
     parser.add_argument("--pe_dim", type=int, default=64)
-    parser.add_argument("--profile", action="store_true",
-                        help="Run kernel once with given config for ncu/acu profiling")
-    parser.add_argument("--profile-ref", action="store_true",
-                        help="Run reference once for ncu/acu profiling")
+    parser.add_argument("--profile", action="store_true", help="Run kernel once with given config for ncu/acu profiling")
+    parser.add_argument("--profile-ref", action="store_true", help="Run reference once for ncu/acu profiling")
     parser.add_argument("--block_N", type=int, default=None)
     parser.add_argument("--block_H", type=int, default=None)
     parser.add_argument("--num_stages", type=int, default=None)
@@ -249,11 +260,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.profile:
-        run_profile(args.batch, args.heads, args.kv_heads, args.kv_ctx,
-                    args.dim, args.pe_dim,
-                    args.block_N, args.block_H, args.num_stages, args.threads)
+        run_profile(
+            args.batch,
+            args.heads,
+            args.kv_heads,
+            args.kv_ctx,
+            args.dim,
+            args.pe_dim,
+            args.block_N,
+            args.block_H,
+            args.num_stages,
+            args.threads,
+        )
     elif args.profile_ref:
-        run_profile_ref(args.batch, args.heads, args.kv_heads, args.kv_ctx,
-                        args.dim, args.pe_dim)
+        run_profile_ref(args.batch, args.heads, args.kv_heads, args.kv_ctx, args.dim, args.pe_dim)
     else:
         main(args.batch, args.heads, args.kv_heads, args.kv_ctx, args.dim, args.pe_dim)

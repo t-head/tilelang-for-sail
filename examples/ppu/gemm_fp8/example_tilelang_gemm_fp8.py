@@ -48,10 +48,12 @@ def _make_matmul(pass_configs=None):
 
 
 # AIU global->shared bulk copy and swizzled ldmatrix (ldmat.swzl) both enabled
-matmul = _make_matmul({
-    tilelang.PassConfigKey.TL_DISABLE_AIU_LOWER: False,
-    tilelang.PassConfigKey.TL_DISABLE_LDMAT_SWZL: False,
-})
+matmul = _make_matmul(
+    {
+        tilelang.PassConfigKey.TL_DISABLE_AIU_LOWER: False,
+        tilelang.PassConfigKey.TL_DISABLE_LDMAT_SWZL: False,
+    }
+)
 # Default pass configs: AIU lowering and ldmat.swzl both disabled
 matmul_default = _make_matmul()
 

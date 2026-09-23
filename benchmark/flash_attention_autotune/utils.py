@@ -1,5 +1,4 @@
 import os
-import csv
 import subprocess
 import re
 
@@ -23,10 +22,11 @@ def run_cmd(cmd: str, timeout=None, stdout=subprocess.PIPE, stderr=subprocess.PI
         for line in ret.stdout.splitlines() + ret.stderr.splitlines():
             print(line)
     if ret.returncode != 0:
-        print(f"Run command failed!")
+        print("Run command failed!")
     else:
-        print(f"Run command succeed!")
+        print("Run command succeed!")
     return ret
+
 
 def inject_pass_configs_from_env(kernel_func):
     """Inject pass_configs from TILELANG_PASS_CONFIGS env var onto jit_impl.
@@ -37,24 +37,26 @@ def inject_pass_configs_from_env(kernel_func):
     called in acu/ncu profiling scripts.
     """
     import json
+
     pc_str = os.environ.get("TILELANG_PASS_CONFIGS", "")
     if pc_str:
         pc = json.loads(pc_str)
         kernel_func.jit_impl.pass_configs = pc
+
 
 # devices = {
 #     "name": ["cycle", "tensor core efficiency", "waves"],
 #     "gpu":  ["sm__cycles_active.max", "sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active", "launch__waves_per_multiprocessor"],
 #     "ppu":  ["ce__cycles_active.max", "cu__inst_executed_pipe_tensor_fp16.avg.pct_of_peak_sustained_active", "launch__waves_per_cu"],
 # }
-def read_cycle_from_nculog(filename, mode, framwork):
+def read_cycle_from_nculog(filename, mode, framework):
     kernel_pattern = r"(.*)kernel(.*)Device(.*)"
     cycles_pattern = "__cycles_active.max"
     tc_pattern = "pct_of_peak_sustained_active"
     kernel_list = []
     cycles_list = []
     tc_list = []
-    with open(filename, newline='') as log_file:
+    with open(filename, newline="") as log_file:
         for line in log_file.read().split("\n"):
             if re.search(kernel_pattern, line):
                 kernel_list.append(line.strip())
@@ -65,8 +67,8 @@ def read_cycle_from_nculog(filename, mode, framwork):
     # print(kernel_list)
     # print(cycles_list)
     # print(tc_list)
-    assert(len(kernel_list) == len(cycles_list))
-    assert(len(kernel_list) == len(tc_list))
+    assert len(kernel_list) == len(cycles_list)
+    assert len(kernel_list) == len(tc_list)
     op_cycles = dict()
     cycle_sum = 0
     tc_sum = 0
@@ -77,24 +79,17 @@ def read_cycle_from_nculog(filename, mode, framwork):
         # if "fwd" in op.lower() or "mla" in op.lower(): # flashmla ppu / triton / flashinfer
         #     fwd_cycle_sum += cycle
         #     fwd_tc_sum += tc_list[i]
-        if framwork == "flash-2":
-            if "fwd" in mode:
-                if "flash_fwd" in op.lower():
-                    cycle_sum += cycle
-                    tc_sum += tc_list[i]
-            elif "bwd" in mode:
-                if "flash_bwd" in op.lower():
-                    cycle_sum += cycle
-                    tc_sum += tc_list[i]
-        elif framwork == "tilelang":
-            if "fwd" in mode:
-                if "main_kernel" in op.lower():
-                    cycle_sum += cycle
-                    tc_sum += tc_list[i]
-            elif "bwd" in mode:
-                if "flash_bwd_kernel" in op.lower():
-                    cycle_sum = cycle
-                    tc_sum = tc_list[i]
+        if framework == "flash-2":
+            if "fwd" in mode and "flash_fwd" in op.lower() or "bwd" in mode and "flash_bwd" in op.lower():
+                cycle_sum += cycle
+                tc_sum += tc_list[i]
+        elif framework == "tilelang":
+            if "fwd" in mode and "main_kernel" in op.lower():
+                cycle_sum += cycle
+                tc_sum += tc_list[i]
+            elif "bwd" in mode and "flash_bwd_kernel" in op.lower():
+                cycle_sum = cycle
+                tc_sum = tc_list[i]
     # calculate statistics data
     if cycle_sum != 0:
         # fwd unit case
@@ -102,10 +97,10 @@ def read_cycle_from_nculog(filename, mode, framwork):
     else:
         print("Not valid CSV file!")
         return 0, 0, []
-        #exit(-1)
+        # exit(-1)
 
-def run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode,
-                           output_file, dev="gpu", run_local=False):
+
+def run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode, output_file, dev="gpu", run_local=False):
     """Run flash attention cycle benchmark on specified device.
 
     Args:
@@ -122,7 +117,6 @@ def run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo
         run_local: Whether to save results to output_file
     """
     output_lines = list()
-    headers = ["casename","cycle","tc efficiency", "cmd","detail"]
 
     # Build case name
     causal_str = "causal" if causal else "noncausal"
@@ -133,9 +127,12 @@ def run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo
     run_cmd(cmd)
 
     # Get metrics based on device
-    metrics_string = "sm__cycles_active.max,sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active" if dev == "gpu" else \
-                     "ce__cycles_active.max,cu__inst_executed_pipe_tensor_fp16.avg.pct_of_peak_sustained_active"
-    mode = mode.split('_')[0]
+    metrics_string = (
+        "sm__cycles_active.max,sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active"
+        if dev == "gpu"
+        else "ce__cycles_active.max,cu__inst_executed_pipe_tensor_fp16.avg.pct_of_peak_sustained_active"
+    )
+    mode = mode.split("_")[0]
 
     # Build the command to run run_flash.py
     cmd = '{} --clock-control none --metrics="{}" \
@@ -150,10 +147,11 @@ def run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo
         seq_len,
         head_dim,
         groups,
-        "causal True" if causal else "causal \"\"",
+        "causal True" if causal else 'causal ""',
         algo,
         mode,
-        log_file)
+        log_file,
+    )
 
     run_cmd(cmd)
     cycle, tc, detail = read_cycle_from_nculog(log_file, mode, "flash-2")
@@ -189,8 +187,10 @@ def run_fa_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo
     #             writer.writerow(row)
     #     print("write result succeed")
 
-def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal, algo, mode, best_config,
-                           output_file, dev="gpu", run_local=False):
+
+def run_tilelang_cycle_on_device(
+    batch, heads, seq_len, head_dim, groups, causal, algo, mode, best_config, output_file, dev="gpu", run_local=False
+):
     """Run flash attention cycle benchmark on specified device.
 
     Args:
@@ -208,7 +208,6 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
         run_local: Whether to save results to output_file
     """
     output_lines = list()
-    headers = ["casename","cycle","tc efficiency", "cmd","detail"]
 
     # Build case name
     causal_str = "causal" if causal else "noncausal"
@@ -223,6 +222,7 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
     # read TILELANG_PASS_CONFIGS and set jit_impl.pass_configs before kernel call.
     import json
     from enum import Enum
+
     pass_configs = best_config.get("pass_configs")
     if pass_configs:
         safe_pc = {k.value if isinstance(k, Enum) else k: v for k, v in pass_configs.items()}
@@ -231,8 +231,11 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
         os.environ.pop("TILELANG_PASS_CONFIGS", None)
 
     # Get metrics based on device
-    metrics_string = "sm__cycles_active.max,sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active" if dev == "gpu" else \
-                     "ce__cycles_active.max,cu__inst_executed_pipe_tensor_fp16.avg.pct_of_peak_sustained_active"
+    metrics_string = (
+        "sm__cycles_active.max,sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active"
+        if dev == "gpu"
+        else "ce__cycles_active.max,cu__inst_executed_pipe_tensor_fp16.avg.pct_of_peak_sustained_active"
+    )
     fn = algo + "_" + mode
     filename = "example_" + fn + ".py"
 
@@ -249,12 +252,13 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
             heads,
             seq_len,
             head_dim,
-            "causal True" if causal else "causal \"\"",
+            "causal True" if causal else 'causal ""',
             best_config["block_M"],
             best_config["block_N"],
             best_config["num_stages"],
             best_config["threads"],
-            log_file)
+            log_file,
+        )
     elif fn == "mha_fwd_bhsd":
         filename = "example_mha_fwd_bhsd.py"
         cmd = '{} --clock-control none --metrics="{}" \
@@ -269,12 +273,13 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
             seq_len,
             seq_len,
             head_dim,
-            "causal True" if causal else "causal \"\"",
+            "causal True" if causal else 'causal ""',
             best_config["block_M"],
             best_config["block_N"],
             best_config["num_stages"],
             best_config["threads"],
-            log_file)
+            log_file,
+        )
     elif fn == "gqa_fwd_bshd":
         filename = "example_gqa_fwd_bshd.py"
         cmd = '{} --clock-control none --metrics="{}" \
@@ -288,13 +293,14 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
             heads,
             seq_len,
             head_dim,
-            "causal True" if causal else "causal \"\"",
+            "causal True" if causal else 'causal ""',
             groups,
             best_config["block_M"],
             best_config["block_N"],
             best_config["num_stages"],
             best_config["threads"],
-            log_file)
+            log_file,
+        )
     elif fn == "mha_bwd_bshd":
         filename = "example_mha_bwd_bshd.py"
         cmd = '{} --clock-control none --metrics="{}" \
@@ -308,12 +314,13 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
             heads,
             seq_len,
             head_dim,
-            "causal True" if causal else "causal \"\"",
+            "causal True" if causal else 'causal ""',
             best_config["block_M"],
             best_config["block_N"],
             best_config["num_stages"],
             best_config["threads"],
-            log_file)
+            log_file,
+        )
     elif fn == "mha_bwd_bhsd":
         filename = "example_mha_bwd_bhsd.py"
         cmd = '{} --clock-control none --metrics="{}" \
@@ -327,12 +334,13 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
             heads,
             seq_len,
             head_dim,
-            "causal True" if causal else "causal \"\"",
+            "causal True" if causal else 'causal ""',
             best_config["block_M"],
             best_config["block_N"],
             best_config["num_stages"],
             best_config["threads"],
-            log_file)
+            log_file,
+        )
     elif fn == "gqa_bwd_bshd":
         filename = "example_gqa_bwd.py"
         cmd = '{} --clock-control none --metrics="{}" \
@@ -347,13 +355,14 @@ def run_tilelang_cycle_on_device(batch, heads, seq_len, head_dim, groups, causal
             seq_len,
             head_dim,
             head_dim,
-            "causal True" if causal else "causal \"\"",
+            "causal True" if causal else 'causal ""',
             groups,
             best_config["block_M"],
             best_config["block_N"],
             best_config["num_stages"],
             best_config["threads"],
-            log_file)
+            log_file,
+        )
 
     run_cmd(cmd)
     cycle, tc, detail = read_cycle_from_nculog(log_file, mode, "tilelang")

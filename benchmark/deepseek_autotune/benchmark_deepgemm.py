@@ -7,7 +7,6 @@ Tunable parameters: block_N, num_stages, threads, enable_rasteration
 import argparse
 
 import torch
-import tilelang
 import tilelang.language as T
 from tilelang.autotuner import autotune
 from tilelang import jit
@@ -18,7 +17,6 @@ from utils import (
     per_token_cast_to_fp8,
     per_block_cast_to_fp8,
     ref_deepgemm_fp8,
-    calc_diff,
     print_benchmark_summary,
     bench_ref,
     inject_pass_configs_from_env,
@@ -110,8 +108,7 @@ def deepgemm_fp8(
     return main
 
 
-def run_profile(M, N, K, in_dtype_str, out_dtype_str,
-                 block_N, num_stages, threads, enable_rasteration):
+def run_profile(M, N, K, in_dtype_str, out_dtype_str, block_N, num_stages, threads, enable_rasteration):
     """Run the kernel once with an explicit config for ncu/acu profiling."""
     import torch
 
@@ -127,9 +124,16 @@ def run_profile(M, N, K, in_dtype_str, out_dtype_str,
 
     inject_pass_configs_from_env(deepgemm_fp8)
     kernel = deepgemm_fp8(
-        M, N, K, in_dtype, out_dtype, accum_dtype,
-        block_N=block_N, num_stages=num_stages,
-        threads=threads, enable_rasteration=enable_rasteration,
+        M,
+        N,
+        K,
+        in_dtype,
+        out_dtype,
+        accum_dtype,
+        block_N=block_N,
+        num_stages=num_stages,
+        threads=threads,
+        enable_rasteration=enable_rasteration,
     )
     kernel(A_fp8, B_fp8, scales_a, scales_b)
 
@@ -147,7 +151,6 @@ def run_profile_ref(M, N, K, in_dtype_str, out_dtype_str):
 
 def main(M=1024, N=1024, K=8192, in_dtype_str="float8_e4m3fn", out_dtype_str="bfloat16"):
     """Run autotune and print results."""
-    from tilelang.profiler import do_bench
 
     in_dtype = getattr(T, in_dtype_str)
     out_dtype = getattr(T, out_dtype_str)
@@ -174,9 +177,12 @@ def main(M=1024, N=1024, K=8192, in_dtype_str="float8_e4m3fn", out_dtype_str="bf
     print_benchmark_summary(
         "DeepGEMM FP8",
         f"M={M}, N={N}, K={K}",
-        best_latency, tflops,
-        ref_latency, ref_tflops,
-        "Reference", best_config,
+        best_latency,
+        tflops,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
     )
 
     return best_latency, tflops, best_config, ref_latency
@@ -189,20 +195,20 @@ if __name__ == "__main__":
     parser.add_argument("--k", type=int, default=8192)
     parser.add_argument("--in_dtype", type=str, default="float8_e4m3fn")
     parser.add_argument("--out_dtype", type=str, default="bfloat16")
-    parser.add_argument("--profile", action="store_true",
-                        help="Run kernel once with given config for ncu/acu profiling")
-    parser.add_argument("--profile-ref", action="store_true",
-                        help="Run reference once for ncu/acu profiling")
+    parser.add_argument("--profile", action="store_true", help="Run kernel once with given config for ncu/acu profiling")
+    parser.add_argument("--profile-ref", action="store_true", help="Run reference once for ncu/acu profiling")
     parser.add_argument("--block_N", type=int, default=None)
     parser.add_argument("--num_stages", type=int, default=None)
     parser.add_argument("--threads", type=int, default=None)
-    parser.add_argument("--enable_rasteration", type=lambda v: v.lower() in ("true", "1", "yes"),
-                        default=None, help="Enable rasteration (true/false)")
+    parser.add_argument(
+        "--enable_rasteration", type=lambda v: v.lower() in ("true", "1", "yes"), default=None, help="Enable rasteration (true/false)"
+    )
     args = parser.parse_args()
 
     if args.profile:
-        run_profile(args.m, args.n, args.k, args.in_dtype, args.out_dtype,
-                    args.block_N, args.num_stages, args.threads, args.enable_rasteration)
+        run_profile(
+            args.m, args.n, args.k, args.in_dtype, args.out_dtype, args.block_N, args.num_stages, args.threads, args.enable_rasteration
+        )
     elif args.profile_ref:
         run_profile_ref(args.m, args.n, args.k, args.in_dtype, args.out_dtype)
     else:

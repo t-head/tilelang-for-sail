@@ -14,23 +14,26 @@ from tvm.testing.utils import requires_cuda, requires_package, requires_llvm, re
 from tilelang.utils.tensor import torch_assert_close as torch_assert_close
 from .perf_regression import process_func, regression
 
-__all__ = [
-    "requires_package",
-    "requires_cuda",
-    "requires_metal",
-    "requires_rocm",
-    "requires_llvm",
-    "requires_cdna",
-    "requires_cuda_or_cdna",
-    "requires_gfx950",
-    "requires_ppu",
-    "requires_ppu_compute_version",
-    "main",
-    "requires_cuda_compute_version",
-    "process_func",
-    "regression",
-] + [f"requires_cuda_compute_version_{op}" for op in ("ge", "gt", "le", "lt", "eq")
-] + [f"requires_ppu_compute_version_{op}" for op in ("ge", "gt", "le", "lt", "eq")]
+__all__ = (
+    [
+        "requires_package",
+        "requires_cuda",
+        "requires_metal",
+        "requires_rocm",
+        "requires_llvm",
+        "requires_cdna",
+        "requires_cuda_or_cdna",
+        "requires_gfx950",
+        "requires_ppu",
+        "requires_ppu_compute_version",
+        "main",
+        "requires_cuda_compute_version",
+        "process_func",
+        "regression",
+    ]
+    + [f"requires_cuda_compute_version_{op}" for op in ("ge", "gt", "le", "lt", "eq")]
+    + [f"requires_ppu_compute_version_{op}" for op in ("ge", "gt", "le", "lt", "eq")]
+)
 
 
 def _check_is_gfx950() -> bool:

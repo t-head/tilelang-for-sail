@@ -119,7 +119,8 @@ TL_DEVICE unsigned __pack_half2(const bfloat16_t x, const bfloat16_t y) {
 }
 
 // Pack two bfloat16_t values.
-TL_DEVICE unsigned __pack_ppu_bfloat162(const bfloat16_t x, const bfloat16_t y) {
+TL_DEVICE unsigned __pack_ppu_bfloat162(const bfloat16_t x,
+                                        const bfloat16_t y) {
   unsigned v0 = *((unsigned short *)&x);
   unsigned v1 = *((unsigned short *)&y);
   return (v1 << 16) | v0;
@@ -525,9 +526,7 @@ TL_DEVICE __ppu_bfloat162 add2(__ppu_bfloat162 a, __ppu_bfloat162 b) {
   return __hadd2(a, b);
 }
 
-TL_DEVICE __half2 add2(__half2 a, __half2 b) {
-  return __hadd2(a, b);
-}
+TL_DEVICE __half2 add2(__half2 a, __half2 b) { return __hadd2(a, b); }
 
 // Note: uint1 bridge overloads removed -- the HGGC codegen now emits
 // explicit casts to __ppu_bfloat162 or __half2 based on the TIR dtype,
@@ -543,9 +542,7 @@ TL_DEVICE __ppu_bfloat162 sub2(__ppu_bfloat162 a, __ppu_bfloat162 b) {
   return __hsub2(a, b);
 }
 
-TL_DEVICE __half2 sub2(__half2 a, __half2 b) {
-  return __hsub2(a, b);
-}
+TL_DEVICE __half2 sub2(__half2 a, __half2 b) { return __hsub2(a, b); }
 
 // --- mul2 ----------------------------------------------------------------
 
@@ -557,9 +554,7 @@ TL_DEVICE __ppu_bfloat162 mul2(__ppu_bfloat162 a, __ppu_bfloat162 b) {
   return __hmul2(a, b);
 }
 
-TL_DEVICE __half2 mul2(__half2 a, __half2 b) {
-  return __hmul2(a, b);
-}
+TL_DEVICE __half2 mul2(__half2 a, __half2 b) { return __hmul2(a, b); }
 
 // --- fma2 ----------------------------------------------------------------
 
@@ -568,7 +563,7 @@ TL_DEVICE float2 fma2(float2 a, float2 b, float2 c) {
 }
 
 TL_DEVICE __ppu_bfloat162 fma2(__ppu_bfloat162 a, __ppu_bfloat162 b,
-                              __ppu_bfloat162 c) {
+                               __ppu_bfloat162 c) {
   return __hfma2(a, b, c);
 }
 
@@ -596,9 +591,7 @@ TL_DEVICE __ppu_bfloat162 max2(__ppu_bfloat162 a, __ppu_bfloat162 b) {
   return __hmax2(a, b);
 }
 
-TL_DEVICE __half2 max2(__half2 a, __half2 b) {
-  return __hmax2(a, b);
-}
+TL_DEVICE __half2 max2(__half2 a, __half2 b) { return __hmax2(a, b); }
 
 // --- min2 ----------------------------------------------------------------
 
@@ -610,9 +603,7 @@ TL_DEVICE __ppu_bfloat162 min2(__ppu_bfloat162 a, __ppu_bfloat162 b) {
   return __hmin2(a, b);
 }
 
-TL_DEVICE __half2 min2(__half2 a, __half2 b) {
-  return __hmin2(a, b);
-}
+TL_DEVICE __half2 min2(__half2 a, __half2 b) { return __hmin2(a, b); }
 
 // --- max2_nan ------------------------------------------------------------
 
@@ -620,9 +611,7 @@ TL_DEVICE __ppu_bfloat162 max2_nan(__ppu_bfloat162 a, __ppu_bfloat162 b) {
   return __hmax2_nan(a, b);
 }
 
-TL_DEVICE __half2 max2_nan(__half2 a, __half2 b) {
-  return __hmax2_nan(a, b);
-}
+TL_DEVICE __half2 max2_nan(__half2 a, __half2 b) { return __hmax2_nan(a, b); }
 
 // --- min2_nan ------------------------------------------------------------
 
@@ -630,21 +619,15 @@ TL_DEVICE __ppu_bfloat162 min2_nan(__ppu_bfloat162 a, __ppu_bfloat162 b) {
   return __hmin2_nan(a, b);
 }
 
-TL_DEVICE __half2 min2_nan(__half2 a, __half2 b) {
-  return __hmin2_nan(a, b);
-}
+TL_DEVICE __half2 min2_nan(__half2 a, __half2 b) { return __hmin2_nan(a, b); }
 
 // --- abs2 ----------------------------------------------------------------
 
 TL_DEVICE float2 abs2(float2 a) { return make_float2(fabsf(a.x), fabsf(a.y)); }
 
-TL_DEVICE __ppu_bfloat162 abs2(__ppu_bfloat162 a) {
-  return __habs2(a);
-}
+TL_DEVICE __ppu_bfloat162 abs2(__ppu_bfloat162 a) { return __habs2(a); }
 
-TL_DEVICE __half2 abs2(__half2 a) {
-  return __habs2(a);
-}
+TL_DEVICE __half2 abs2(__half2 a) { return __habs2(a); }
 
 } // namespace tl
 

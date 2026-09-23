@@ -24,8 +24,12 @@ def rng_init(seed, seq=None, off=0, generator="acrandStatePhilox4_32_10_t") -> t
         The random number generator state handle.
     """
     assert generator in [
-        "curandStateMRG32k3a_t", "curandStatePhilox4_32_10_t", "curandStateXORWOW_t",
-        "acrandStateMRG32k3a_t", "acrandStatePhilox4_32_10_t", "acrandStateXORWOW_t"
+        "curandStateMRG32k3a_t",
+        "curandStatePhilox4_32_10_t",
+        "curandStateXORWOW_t",
+        "acrandStateMRG32k3a_t",
+        "acrandStatePhilox4_32_10_t",
+        "acrandStateXORWOW_t",
     ]
     seed = tirx.convert(seed)
     if seq is None:

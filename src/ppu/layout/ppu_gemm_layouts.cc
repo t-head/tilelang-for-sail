@@ -45,7 +45,7 @@ SwizzleShapeInfo GetSwizzleShapeInfoChecked(const Buffer &buffer) {
   return SwizzleShapeInfo{*stride, *continuous, buffer->dtype.bits()};
 }
 
-}  // namespace
+} // namespace
 
 static Layout ExpandLayout2D(const Layout &base, const Buffer &buffer) {
   Array<PrimExpr> leading_shape;
@@ -247,12 +247,12 @@ Layout MakeGemmBLayoutPaddedPPU(int stride, int continuous, int element_size,
   if ((element_size * continuous) % 256 == 0)
     padded += 128 / element_size;
   if (!k_inner) {
-    PrimExpr row_swizzled = FloorMod(i, 4) * 2 +
-                            FloorDiv(FloorMod(i, 8), 4) + FloorDiv(i, 8) * 8;
+    PrimExpr row_swizzled =
+        FloorMod(i, 4) * 2 + FloorDiv(FloorMod(i, 8), 4) + FloorDiv(i, 8) * 8;
     return Layout(Array{i, j}, {row_swizzled * padded + j});
   }
-  PrimExpr col_swizzled = FloorMod(j, 4) * 2 +
-                          FloorDiv(FloorMod(j, 8), 4) + FloorDiv(j, 8) * 8;
+  PrimExpr col_swizzled =
+      FloorMod(j, 4) * 2 + FloorDiv(FloorMod(j, 8), 4) + FloorDiv(j, 8) * 8;
   return Layout(Array{i, j}, {i * padded + col_swizzled});
 }
 
@@ -292,16 +292,16 @@ Layout MakeGemmABLayoutPPU(int mat_stride, int mat_continuous, int continuity,
   return MakeGemmABLayoutPadded(mat_stride, mat_continuous, element_size);
 }
 
-Layout MakePPUSwizzledLayout(const Buffer &buffer, bool k_inner,
-                             bool allow_pad, bool is_gemm_rs) {
+Layout MakePPUSwizzledLayout(const Buffer &buffer, bool k_inner, bool allow_pad,
+                             bool is_gemm_rs) {
   // B-shared RS layout only when requested by the PPU GEMM implementation.
   auto info = GetSwizzleShapeInfoChecked(buffer);
   Layout base;
   if (allow_pad) {
-    base = MakeGemmABLayoutPPU(
-        static_cast<int>(info.stride), static_cast<int>(info.continuous),
-        static_cast<int>(info.continuous), info.element_size, k_inner,
-        is_gemm_rs);
+    base = MakeGemmABLayoutPPU(static_cast<int>(info.stride),
+                               static_cast<int>(info.continuous),
+                               static_cast<int>(info.continuous),
+                               info.element_size, k_inner, is_gemm_rs);
   } else {
     base = MakeGemmABLayoutHopper(
         static_cast<int>(info.stride), static_cast<int>(info.continuous),
@@ -316,14 +316,12 @@ Layout MakePPUSwizzledLayout(const Buffer &buffer, bool k_inner,
 
 TVM_FFI_STATIC_INIT_BLOCK() {
   namespace refl = reflection;
-  refl::GlobalDef()
-      .def("tl.make_ppu_swizzled_layout",
-           [](const Buffer &buffer, bool k_inner, bool allow_pad,
-              bool is_gemm_rs) {
-             return MakePPUSwizzledLayout(buffer, k_inner, allow_pad,
-                                          is_gemm_rs);
-           });
+  refl::GlobalDef().def(
+      "tl.make_ppu_swizzled_layout",
+      [](const Buffer &buffer, bool k_inner, bool allow_pad, bool is_gemm_rs) {
+        return MakePPUSwizzledLayout(buffer, k_inner, allow_pad, is_gemm_rs);
+      });
 }
 
-}  // namespace tl
-}  // namespace tvm
+} // namespace tl
+} // namespace tvm

@@ -3,11 +3,11 @@
  * \file reorder_aiu_loads.cc
  *
  * In stage=0 scenarios, aiu_load instructions are reordered within each SeqStmt
- * so that loads whose dst buffers are consumed earlier appear first. This enables
- * better overlap between loads and computation by issuing loads in consumption
- * order. The pass preserves correctness by only moving loads forward (never
- * backward) and by ensuring all address dependencies are satisfied at the
- * insertion point.
+ * so that loads whose dst buffers are consumed earlier appear first. This
+ * enables better overlap between loads and computation by issuing loads in
+ * consumption order. The pass preserves correctness by only moving loads
+ * forward (never backward) and by ensuring all address dependencies are
+ * satisfied at the insertion point.
  */
 #include <tvm/ffi/reflection/registry.h>
 #include <tvm/tirx/analysis.h>
@@ -39,7 +39,8 @@ using namespace ffi;
 static const VarNode *ExtractAIULoadDstVar(const Stmt &stmt) {
   const VarNode *result = nullptr;
   PostOrderVisit(stmt, [&](const ObjectRef &node) {
-    if (result) return;
+    if (result)
+      return;
     if (auto *call = node.as<CallNode>()) {
       if (call->op.same_as(tl::ppu_aiu_load()) && call->args.size() > 0) {
         if (auto *access_call = call->args[0].as<CallNode>()) {
@@ -63,7 +64,8 @@ static const VarNode *ExtractAIULoadDstVar(const Stmt &stmt) {
 static bool IsAIULoadStmt(const Stmt &stmt) {
   bool found = false;
   PostOrderVisit(stmt, [&](const ObjectRef &node) {
-    if (found) return;
+    if (found)
+      return;
     if (auto *call = node.as<CallNode>()) {
       if (call->op.same_as(tl::ppu_aiu_load())) {
         found = true;
@@ -81,7 +83,8 @@ static bool UsesAnyVar(const Stmt &stmt,
                        const std::unordered_set<const VarNode *> &vars) {
   bool found = false;
   PostOrderVisit(stmt, [&](const ObjectRef &node) {
-    if (found) return;
+    if (found)
+      return;
     if (auto *load = node.as<BufferLoadNode>()) {
       if (vars.count(load->buffer->data.get())) {
         found = true;
@@ -104,7 +107,10 @@ static bool UsesAnyVar(const Stmt &stmt,
       if (!found) {
         for (const auto &arg : call->args) {
           if (auto *var = arg.as<VarNode>()) {
-            if (vars.count(var)) { found = true; break; }
+            if (vars.count(var)) {
+              found = true;
+              break;
+            }
           }
         }
       }
@@ -142,13 +148,14 @@ static const VarNode *GetDefinedVar(const Stmt &stmt) {
 }
 
 class AIULoadReorder : public StmtExprMutator {
- public:
+public:
   Stmt VisitStmt_(const ForNode *op) final {
     // Check num_stages annotation
     auto num_stages_anno = op->annotations.Get("num_stages");
     if (num_stages_anno) {
       auto *int_imm = num_stages_anno->as<IntImmNode>();
-      if (!int_imm) return tvm::ffi::GetRef<Stmt>(op);
+      if (!int_imm)
+        return tvm::ffi::GetRef<Stmt>(op);
       int num_stages = int_imm->value;
       if (num_stages > 0) {
         // stage > 0: load scheduling is handled by InjectSoftwarePipeline
@@ -173,10 +180,9 @@ class AIULoadReorder : public StmtExprMutator {
     //    For/Block/If containers)
     std::vector<int> load_indices;
     for (int i = 0; i < static_cast<int>(seq.size()); ++i) {
-      bool is_container = seq[i].as<ForNode>() ||
-                          seq[i].as<SBlockRealizeNode>() ||
-                          seq[i].as<SBlockNode>() ||
-                          seq[i].as<IfThenElseNode>();
+      bool is_container =
+          seq[i].as<ForNode>() || seq[i].as<SBlockRealizeNode>() ||
+          seq[i].as<SBlockNode>() || seq[i].as<IfThenElseNode>();
       if (!is_container && IsAIULoadStmt(seq[i])) {
         load_indices.push_back(i);
       }
@@ -190,19 +196,20 @@ class AIULoadReorder : public StmtExprMutator {
     struct LoadInfo {
       int original_idx;
       const VarNode *dst_var;
-      int first_use_pos;  // position in SeqStmt where dst is first consumed
+      int first_use_pos; // position in SeqStmt where dst is first consumed
     };
     std::vector<LoadInfo> load_infos;
 
     for (int idx : load_indices) {
       const VarNode *dst_var = ExtractAIULoadDstVar(seq[idx]);
-      if (!dst_var) continue;
+      if (!dst_var)
+        continue;
 
       // 4. Scan forward to find first use of dst buffer
       std::unordered_set<const VarNode *> dst_vars;
       dst_vars.insert(dst_var);
 
-      int first_use = static_cast<int>(seq.size());  // default: end
+      int first_use = static_cast<int>(seq.size()); // default: end
       for (int j = idx + 1; j < static_cast<int>(seq.size()); ++j) {
         if (UsesAnyVar(seq[j], dst_vars)) {
           first_use = j;
@@ -253,8 +260,8 @@ class AIULoadReorder : public StmtExprMutator {
     // For each load, determine its bundle (load + address dependencies) and
     // target insertion position
     struct MoveAction {
-      std::vector<int> bundle_indices;  // indices to move (in original order)
-      int target_pos;                   // insert before this position
+      std::vector<int> bundle_indices; // indices to move (in original order)
+      int target_pos;                  // insert before this position
     };
     std::vector<MoveAction> actions;
 
@@ -338,7 +345,8 @@ class AIULoadReorder : public StmtExprMutator {
       // Find the earliest available slot where all deps are satisfied
       int assigned_slot = -1;
       for (size_t s = 0; s < sorted_load_slots.size(); ++s) {
-        if (slot_used[s]) continue;
+        if (slot_used[s])
+          continue;
         int slot_pos = sorted_load_slots[s];
 
         // Check: all non-load dependencies of this load must be before slot_pos
@@ -399,7 +407,8 @@ class AIULoadReorder : public StmtExprMutator {
       std::ostringstream oss;
       oss << "ReorderAIULoads: final order = [";
       for (size_t i = 0; i < load_infos.size(); ++i) {
-        if (i > 0) oss << ", ";
+        if (i > 0)
+          oss << ", ";
         oss << load_infos[i].dst_var->name_hint << "@" << final_assignment[i];
       }
       oss << "]";
@@ -449,5 +458,5 @@ TVM_FFI_STATIC_INIT_BLOCK() {
   refl::GlobalDef().def("tl.ppu.transform.ReorderAIULoads", ReorderAIULoads);
 }
 
-}  // namespace tl
-}  // namespace tvm
+} // namespace tl
+} // namespace tvm

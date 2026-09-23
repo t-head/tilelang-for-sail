@@ -57,8 +57,7 @@ def _get_hg_driver():
     ppu_sdk = os.environ.get("PPU_SDK")
     if not ppu_sdk:
         raise RuntimeError(
-            "PPU_SDK environment variable is not set. "
-            "Please source the PPU SDK envsetup.sh (e.g. source $PPU_SDK/envsetup.sh ppu)"
+            "PPU_SDK environment variable is not set. Please source the PPU SDK envsetup.sh (e.g. source $PPU_SDK/envsetup.sh ppu)"
         )
     candidates = [
         osp.join(ppu_sdk, "lib", "libhggc.so"),
@@ -352,6 +351,7 @@ class NVRTCLibraryGenerator(LibraryGenerator):
         extra_flags = cfg.get(PassConfigKey.TL_DEVICE_COMPILE_FLAGS, None)
         if extra_flags:
             import shlex
+
             if isinstance(extra_flags, str):
                 options += shlex.split(extra_flags)
             else:
@@ -370,9 +370,7 @@ class NVRTCLibraryGenerator(LibraryGenerator):
         src.close()
         self.srcpath = src.name
 
-        binary = hgcc.compile_ppu(
-            self.lib_code, target=self.target, options=options, verbose=verbose
-        )
+        binary = hgcc.compile_ppu(self.lib_code, target=self.target, options=options, verbose=verbose)
 
         # Write binary to .hgbin file
         self.libpath = self.srcpath.replace(".hg", ".hgbin")

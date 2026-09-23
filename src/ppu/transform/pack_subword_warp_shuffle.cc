@@ -132,8 +132,8 @@ MatchConditionalSourceLaneStore(const Stmt &stmt) {
     return std::nullopt;
   }
 
-  return ConditionalSourceLaneStore{GetRef<BufferStore>(store_node),
-                                    condition, std::move(true_shuffle.value()),
+  return ConditionalSourceLaneStore{GetRef<BufferStore>(store_node), condition,
+                                    std::move(true_shuffle.value()),
                                     std::move(false_shuffle.value()),
                                     cast->annotations};
 }
@@ -161,9 +161,8 @@ MatchUnconditionalSourceLaneStore(const Stmt &stmt) {
 }
 
 class PackSubwordWarpShuffleRewriter : public StmtExprMutator {
- public:
-  explicit PackSubwordWarpShuffleRewriter(int ppu_arch)
-      : ppu_arch_(ppu_arch) {}
+public:
+  explicit PackSubwordWarpShuffleRewriter(int ppu_arch) : ppu_arch_(ppu_arch) {}
 
   Stmt VisitStmt_(const ForNode *op) final {
     Stmt visited = StmtExprMutator::VisitStmt_(op);
@@ -184,8 +183,7 @@ class PackSubwordWarpShuffleRewriter : public StmtExprMutator {
     }
 
     Var pack_var(loop->loop_var->name_hint + "_pack", loop->loop_var.dtype());
-    PrimExpr pack_base =
-        loop->min + pack_var * make_const(pack_var.dtype(), 4);
+    PrimExpr pack_base = loop->min + pack_var * make_const(pack_var.dtype(), 4);
     std::array<ConditionalSourceLaneStore, 4> group;
     bool conditional_group_matched = true;
     for (size_t j = 0; j < 4; ++j) {
@@ -254,11 +252,11 @@ class PackSubwordWarpShuffleRewriter : public StmtExprMutator {
     if (!ShouldPack(unconditional_group)) {
       return visited;
     }
-    return For(unconditional_pack_var, make_zero(unconditional_pack_var.dtype()),
+    return For(unconditional_pack_var,
+               make_zero(unconditional_pack_var.dtype()),
                make_const(loop->extent.dtype(), extent->value / factor),
                loop->kind, PackUnconditionalLaneGroup(unconditional_group),
-               loop->thread_binding, loop->annotations, loop->step,
-               loop->span);
+               loop->thread_binding, loop->annotations, loop->step, loop->span);
   }
 
   Stmt VisitStmt_(const SeqStmtNode *op) final {
@@ -333,7 +331,7 @@ class PackSubwordWarpShuffleRewriter : public StmtExprMutator {
     return SeqStmt::Flatten(rewritten);
   }
 
- private:
+private:
   enum class PackDecision { kKeepScalar, kGeneric, kFP8Fast };
 
   Stmt SafeScalarConditionalStore(const ConditionalSourceLaneStore &item) {
@@ -350,8 +348,7 @@ class PackSubwordWarpShuffleRewriter : public StmtExprMutator {
 
   template <typename BoundStore, typename Matcher>
   std::optional<BoundStore> MatchBoundStoreImpl(const Array<Stmt> &seq,
-                                                size_t start,
-                                                Matcher matcher) {
+                                                size_t start, Matcher matcher) {
     Map<Var, PrimExpr> bindings;
     std::vector<Var> bound_vars;
     size_t cursor = start;
@@ -398,9 +395,8 @@ class PackSubwordWarpShuffleRewriter : public StmtExprMutator {
   std::optional<BoundConditionalSourceLaneStore>
   MatchBoundConditionalSourceLaneStore(const Array<Stmt> &seq, size_t start) {
     return MatchBoundStoreImpl<BoundConditionalSourceLaneStore>(
-        seq, start, [](const Stmt &stmt) {
-          return MatchConditionalSourceLaneStore(stmt);
-        });
+        seq, start,
+        [](const Stmt &stmt) { return MatchConditionalSourceLaneStore(stmt); });
   }
 
   std::optional<Stmt> InlineFlatBinds(const Stmt &body) {
@@ -458,8 +454,7 @@ class PackSubwordWarpShuffleRewriter : public StmtExprMutator {
     return 0;
   }
 
-  size_t CountDistinctSourceLanes(
-      const std::array<PrimExpr, 4> &source_lanes) {
+  size_t CountDistinctSourceLanes(const std::array<PrimExpr, 4> &source_lanes) {
     std::vector<PrimExpr> distinct;
     for (const PrimExpr &lane : source_lanes) {
       bool seen = false;
@@ -513,8 +508,8 @@ class PackSubwordWarpShuffleRewriter : public StmtExprMutator {
            CountDistinctSourceLanes(lanes) <= 2;
   }
 
-  PackDecision ShouldPack(
-      const std::array<ConditionalSourceLaneStore, 4> &group) {
+  PackDecision
+  ShouldPack(const std::array<ConditionalSourceLaneStore, 4> &group) {
     const Buffer &buffer = group[0].store->buffer;
     DataType dtype = buffer->dtype;
     if (SubwordPackFactor(dtype) != 4) {
@@ -563,15 +558,14 @@ class PackSubwordWarpShuffleRewriter : public StmtExprMutator {
         Equal(false_lanes[1], true_lanes[1]) &&
         Equal(false_lanes[2], true_lanes[2]) &&
         Equal(false_lanes[3], true_lanes[3]) &&
-        analyzer_.CanProveEqual(lane1,
-                                lane0 + make_const(lane0.dtype(), 1));
+        analyzer_.CanProveEqual(lane1, lane0 + make_const(lane0.dtype(), 1));
     bool same_two_lane_values =
         Equal(group[0].true_shuffle.value, group[2].true_shuffle.value) &&
         Equal(group[1].true_shuffle.value, group[3].true_shuffle.value) &&
         Equal(group[0].false_shuffle.value, group[2].false_shuffle.value) &&
         Equal(group[1].false_shuffle.value, group[3].false_shuffle.value);
     return same_two_lanes && same_two_lane_values ? PackDecision::kFP8Fast
-                                                   : PackDecision::kGeneric;
+                                                  : PackDecision::kGeneric;
   }
 
   // Source byte j stays in byte position j before the shuffle.  For each
@@ -596,9 +590,9 @@ class PackSubwordWarpShuffleRewriter : public StmtExprMutator {
     }
 
     auto shuffle_word = [&](const PrimExpr &lane) {
-      return Call(DataType::UInt(32), tl::shfl_sync(),
-                  {control_ref->args[0], packed_source, lane,
-                   control_ref->args[3]});
+      return Call(
+          DataType::UInt(32), tl::shfl_sync(),
+          {control_ref->args[0], packed_source, lane, control_ref->args[3]});
     };
     PrimExpr result = shuffle_word(distinct_lanes[0]);
     for (size_t index = 1; index < distinct_lanes.size(); ++index) {
@@ -710,28 +704,27 @@ class PackSubwordWarpShuffleRewriter : public StmtExprMutator {
         group[0].false_shuffle.value, group[1].false_shuffle.value};
     PrimExpr source_f32x4 = Shuffle::Concat(source_values);
     DataType fp8x4_dtype = subword_dtype.with_lanes(4);
-    PrimExpr source_fp8x4 = Cast(fp8x4_dtype, source_f32x4,
-                                group[0].cast_annotations);
+    PrimExpr source_fp8x4 =
+        Cast(fp8x4_dtype, source_f32x4, group[0].cast_annotations);
     PrimExpr source_u32_value =
         Call(DataType::UInt(32), builtin::reinterpret(), {source_fp8x4});
     Var source_u32("packed_fp8", DataType::UInt(32));
 
     const Call &scalar_call = control_ref;
     auto packed_shuffle = [&](const PrimExpr &lane) {
-      return Call(DataType::UInt(32), tl::shfl_sync(),
-                  {scalar_call->args[0], source_u32, lane,
-                   scalar_call->args[3]});
+      return Call(
+          DataType::UInt(32), tl::shfl_sync(),
+          {scalar_call->args[0], source_u32, lane, scalar_call->args[3]});
     };
     PrimExpr shuffled0 = packed_shuffle(lane0);
     PrimExpr shuffled1 = packed_shuffle(lane1);
 
     PrimExpr selector =
-        Select(group[0].condition,
-               make_const(DataType::UInt(32), 0x5410),
+        Select(group[0].condition, make_const(DataType::UInt(32), 0x5410),
                make_const(DataType::UInt(32), 0x7632));
-    PrimExpr packed_result = Call(
-        DataType::UInt(32), builtin::call_pure_extern(),
-        {StringImm("__byte_perm"), shuffled0, shuffled1, selector});
+    PrimExpr packed_result =
+        Call(DataType::UInt(32), builtin::call_pure_extern(),
+             {StringImm("__byte_perm"), shuffled0, shuffled1, selector});
     PrimExpr result_fp8x4 =
         Call(fp8x4_dtype, builtin::reinterpret(), {packed_result});
 
@@ -745,13 +738,12 @@ class PackSubwordWarpShuffleRewriter : public StmtExprMutator {
   int ppu_arch_;
 };
 
-}  // namespace
+} // namespace
 
 using namespace tirx::transform;
 
 tvm::transform::Pass PackSubwordWarpShuffle() {
-  auto pass_func = [=](PrimFunc f, const IRModule &m,
-                       const PassContext &ctx) {
+  auto pass_func = [=](PrimFunc f, const IRModule &m, const PassContext &ctx) {
     auto target = f->GetAttr<Target>(tvm::attr::kTarget);
     if (!target.has_value() || !TargetIsPPU(target.value())) {
       return f;
@@ -773,5 +765,5 @@ TVM_FFI_STATIC_INIT_BLOCK() {
                         PackSubwordWarpShuffle);
 }
 
-}  // namespace tl
-}  // namespace tvm
+} // namespace tl
+} // namespace tvm

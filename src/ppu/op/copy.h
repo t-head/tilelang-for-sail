@@ -50,7 +50,6 @@ struct CopyInstSelection {
 CopyInstSelection SelectCopyInstForLowering(const CopyNode &op,
                                             const CopyAnalysisContext &ctx);
 
-
 } // namespace ppu
 } // namespace tl
 } // namespace tvm
