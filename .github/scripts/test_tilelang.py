@@ -1,0 +1,849 @@
+#!/usr/bin/env python3
+
+import argparse
+import concurrent.futures
+import os
+import signal
+import subprocess
+import sys
+import re
+import threading
+import time
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field, asdict
+from typing import List, Optional, Tuple
+import json
+
+
+# ---------------------------------------------------------------------------
+# 全局配置
+# ---------------------------------------------------------------------------
+
+# 单个用例最长运行时间（秒），超时后强制终止并判定为 FAIL
+TEST_TIMEOUT_SECONDS = 1 * 60 * 10
+
+
+# ---------------------------------------------------------------------------
+# 数据结构
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TestConfig:
+    """单个测试的配置信息"""
+    file_path: str                       # 测试文件路径
+    test_filter: Optional[str] = None    # pytest -k 过滤或 ::node_id
+    extra_args: List[str] = field(default_factory=list)  # 额外 pytest 参数
+
+    @property
+    def display_name(self) -> str:
+        """用于日志输出的可读名称"""
+        name = self.file_path
+        if self.test_filter:
+            name = f"{name}::{self.test_filter}"
+        return name
+
+
+@dataclass
+class TestResult:
+    """单个测试运行的结果"""
+    config: TestConfig
+    returncode: int = -1
+    duration: float = 0.0
+    xml_path: Optional[str] = None
+    stdout: str = ""
+    stderr: str = ""
+    # XML-parsed counts for accurate pass/fail/skip determination
+    xml_tests: int = 0
+    xml_failures: int = 0
+    xml_errors: int = 0
+    xml_skipped: int = 0
+    timed_out: bool = False  # 用例超时被强制终止
+
+    @property
+    def passed(self) -> bool:
+        return self.returncode == 0
+
+    @property
+    def skipped(self) -> bool:
+        """Test is considered skipped if all tests were skipped (none failed/errored)."""
+        # 超时的用例一律判定为 FAIL，不算跳过
+        if self.timed_out:
+            return False
+        # pytest exit code 5 means no tests were collected (all deselected/skipped)
+        if self.returncode == 5:
+            return True
+        # If XML was parsed and shows all tests are skipped with no real failures
+        if (self.xml_tests > 0
+                and self.xml_failures == 0
+                and self.xml_errors == 0
+                and self.xml_skipped > 0
+                and self.xml_skipped == self.xml_tests):
+            return True
+        # Non-zero return code but XML shows no failures/errors, only skips
+        if (self.returncode != 0
+                and self.xml_tests > 0
+                and self.xml_failures == 0
+                and self.xml_errors == 0
+                and self.xml_skipped > 0):
+            return True
+        return False
+
+    @property
+    def failed(self) -> bool:
+        """Test is a real failure (not passed, not skipped)."""
+        return not self.passed and not self.skipped
+
+    @property
+    def status_label(self) -> str:
+        # 1. 显式失败 / 错误 / 超时 → FAIL
+        if self.xml_failures > 0 or self.xml_errors > 0:
+            return "FAIL"
+        if self.timed_out:
+            return "FAIL"
+        # 2. 任意 skip（含"部分 skip"和"全 skip"）优先于 PASS，
+        #    避免 returncode == 0 但存在被 pytest 跳过的用例时被误判成 PASS
+        if self.xml_skipped > 0:
+            return "SKIP"
+        if self.returncode == 5:
+            return "SKIP"
+        # 3. 兜底判定
+        if self.returncode == 0:
+            return "PASS"
+        return "FAIL"
+
+
+# ---------------------------------------------------------------------------
+# scan_cases
+# ---------------------------------------------------------------------------
+
+test_dir = os.getcwd()
+
+def collect_tests(target_dir):
+    result = subprocess.run(
+        ["pytest", target_dir[0], "--collect-only", "-q"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True
+    )
+
+    if result.returncode != 0:
+        print(f"Warning: sub process pytest failed, here's log:\n\n{result.stdout}\n")
+    tests = []
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line or "::" not in line:
+            continue
+
+        file_part, test_part = line.split("::", 1)
+
+        tests.append(
+            TestConfig(
+                file_path=os.path.join(target_dir[1], file_part),
+                test_filter=test_part,
+            )
+        )
+
+    return tests
+
+
+def load_skip():
+    platform = os.environ.get("CI_TEST_PLATFORM")
+    skip_list_file = "{}_skip.json".format(platform)
+    if not os.path.exists(skip_list_file):
+        print(f"skip list file not exists: {skip_list_file}")
+        return set()
+
+    with open(skip_list_file) as f:
+        data = json.load(f)
+
+    return {(x["file_path"], x["test_filter"]) for x in data}
+
+def scan_cases(test_dir: Tuple[str, str]) -> List[TestConfig]:
+    collected = collect_tests(test_dir)
+    print(f"Collected test: {len(collected)}")
+
+    skip_set = load_skip()
+    print(f"skipped test: {len(skip_set)}")
+
+    filtered = [
+        t for t in collected
+        if (t.file_path, t.test_filter) not in skip_set
+    ]
+    print(f"filtered test: {len(filtered)}")
+
+    return filtered
+
+# ---------------------------------------------------------------------------
+# XML 结果解析
+# ---------------------------------------------------------------------------
+
+def parse_junit_xml_counts(xml_path: str) -> Tuple[int, int, int, int]:
+    """
+    解析 JUnit XML 文件，提取测试统计数据。
+
+    通过检查每个 <testcase> 的子元素来确定状态：
+      - <failure> 子元素 → 失败
+      - <error> 子元素 → 错误
+      - <skipped> 子元素 → 跳过
+      - 无上述子元素 → 通过
+
+    参数:
+        xml_path: JUnit XML 文件路径
+
+    返回:
+        (tests, failures, errors, skipped) 元组
+    """
+    if not xml_path or not os.path.exists(xml_path):
+        return (0, 0, 0, 0)
+
+    try:
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+    except (ET.ParseError, Exception):
+        return (0, 0, 0, 0)
+
+    # Collect all <testsuite> elements
+    testsuites: List[ET.Element] = []
+    if root.tag == "testsuites":
+        testsuites = root.findall("testsuite")
+    elif root.tag == "testsuite":
+        testsuites = [root]
+    else:
+        return (0, 0, 0, 0)
+
+    total_tests = 0
+    total_failures = 0
+    total_errors = 0
+    total_skipped = 0
+
+    for ts in testsuites:
+        for tc in ts.findall("testcase"):
+            total_tests += 1
+            # Check child elements to determine status
+            if tc.find("failure") is not None:
+                total_failures += 1
+            elif tc.find("error") is not None:
+                total_errors += 1
+            elif tc.find("skipped") is not None:
+                total_skipped += 1
+            # else: passed (no child element indicating failure/error/skip)
+
+    return (total_tests, total_failures, total_errors, total_skipped)
+
+
+# ---------------------------------------------------------------------------
+# 测试执行
+# ---------------------------------------------------------------------------
+
+def run_single_test(
+    config: TestConfig,
+    index: int,
+    verbose: bool = False,
+    timeout: int = TEST_TIMEOUT_SECONDS,
+) -> TestResult:
+    """
+    运行单个测试（Python pytest 或二进制可执行文件），生成临时 JUnit XML 结果文件。
+
+    根据 config.test_type 分派到对应的执行逻辑：
+      - "python": 使用 pytest --junitxml 生成 XML
+      - "binary": 运行二进制，尝试 gtest XML 输出或自动生成 XML
+
+    参数:
+        config:  测试配置
+        index:   测试序号（用于生成唯一临时文件名）
+        verbose: 是否输出详细信息
+        timeout: 单个用例的最长运行时间（秒），超时后强制终止并判定为 FAIL
+
+    返回:
+        TestResult 包含执行结果、计时和 XML 路径
+    """
+    return _run_python_test(config, index, verbose, timeout)
+
+
+def _run_python_test(
+    config: TestConfig,
+    index: int,
+    verbose: bool = False,
+    timeout: int = TEST_TIMEOUT_SECONDS,
+) -> TestResult:
+    """
+    运行单个 pytest 测试，生成临时 JUnit XML 结果文件。
+
+    若运行时间超过 timeout 秒，则强制终止进程并判定为 FAIL。
+    """
+    result = TestResult(config=config)
+    temp_xml = f"results_{index}.xml"
+
+    # 构建 pytest 命令
+    target = config.file_path
+    if config.test_filter:
+        target = f"{target}::{config.test_filter}"
+
+    cmd: List[str] = [
+        "pytest", "-v", "-s",
+        "--color=yes", "--durations=0", "--showlocals",
+        target,
+        f"--junitxml={temp_xml}",
+    ]
+    # 追加额外参数（如 -x, --timeout 等）
+    if config.extra_args:
+        cmd.extend(config.extra_args)
+
+    # 打印运行信息
+    print(f"\n{'='*70}")
+    print(f"[{index + 1}] 正在运行 [Python]: {config.display_name}")
+    print(f"    命令: {' '.join(cmd)}")
+    if verbose:
+        print(f"    文件路径: {config.file_path} | 存在: {os.path.exists(config.file_path)}")
+    print(f"{'='*70}")
+
+    start_time = time.time()
+    proc = None
+    try:
+        # 使用 Popen + 进程组，确保超时时能杀掉整个进程树（含 GPU 子进程）
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            preexec_fn=os.setsid,  # 创建新进程组
+        )
+        stdout, stderr = proc.communicate(timeout=timeout)
+        result.returncode = proc.returncode
+        result.stdout = stdout or ""
+        result.stderr = stderr or ""
+
+        # verbose 模式：正常结束后打印完整输出
+        if verbose and stdout:
+            print(stdout)
+
+        if proc.returncode == 0:
+            print(f"  ✅ 测试通过: {config.display_name}")
+        elif proc.returncode == 5:
+            print(f"  ⏭️ 无测试被收集 (返回码=5): {config.display_name}")
+        else:
+            print(f"  ❌ 测试失败 (返回码={proc.returncode}): {config.display_name}")
+            # 失败时打印 stderr 帮助调试
+            if result.stderr:
+                print(f"  --- stderr 输出 (最后 20 行) ---")
+                for line in result.stderr.strip().splitlines()[-20:]:
+                    print(f"    {line}")
+
+    except subprocess.TimeoutExpired:
+        # 超时：杀掉整个进程组（包含孙进程）
+        if proc is not None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+            # 收集超时前已有的输出
+            stdout, stderr = proc.communicate()
+            result.stdout = stdout or ""
+            result.stderr = stderr or ""
+        result.timed_out = True
+        result.returncode = -9  # 以负返回码标记被强制终止
+        print(f"  ❌ 测试超时 (超过 {timeout} 秒)，已强制终止并判定为 FAIL: {config.display_name}")
+        # 打印超时前捕获的部分输出
+        if result.stdout:
+            print(f"  --- stdout 输出 (最后 20 行) ---")
+            for line in result.stdout.strip().splitlines()[-20:]:
+                print(f"    {line}")
+    except FileNotFoundError:
+        print(f"  ❌ 找不到 pytest 命令，请确认已安装 pytest")
+        result.returncode = -1
+    except Exception as e:
+        print(f"  ❌ 执行异常: {e}")
+        result.returncode = -1
+    finally:
+        # 无论成功或失败，都记录生成的 XML 文件
+        result.duration = time.time() - start_time
+        if os.path.exists(temp_xml):
+            result.xml_path = temp_xml
+            # Parse XML to get accurate test counts (pass/fail/skip)
+            counts = parse_junit_xml_counts(temp_xml)
+            result.xml_tests, result.xml_failures, result.xml_errors, result.xml_skipped = counts
+            if verbose:
+                print(f"  📄 已生成临时 XML: {temp_xml}")
+                print(f"     XML 统计: tests={counts[0]}, failures={counts[1]}, "
+                      f"errors={counts[2]}, skipped={counts[3]}")
+        else:
+            if verbose:
+                print(f"  ⚠️ 未生成 XML 文件: {temp_xml}")
+
+    # Re-evaluate status after XML parsing: skipped tests aren't failures
+    if result.skipped and not result.passed:
+        print(f"  ⏭️ 测试被跳过 (非失败): {config.display_name}")
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# JUnit XML 合并
+# ---------------------------------------------------------------------------
+
+def merge_junit_xml(
+    xml_files: List[str],
+    output_path: str,
+    verbose: bool = False,
+) -> bool:
+    """
+    将多个 JUnit XML 结果文件合并为一个。
+
+    支持两种常见 pytest 输出结构:
+      - <testsuites><testsuite>...</testsuite></testsuites>
+      - <testsuite>...</testsuite>  (直接作为根元素)
+
+    参数:
+        xml_files:   待合并的 XML 文件路径列表
+        output_path: 合并后的输出文件路径
+        verbose:     是否输出详细信息
+
+    返回:
+        合并是否成功（True/False）
+    """
+    # 初始化聚合统计
+    total_tests = 0
+    total_failures = 0
+    total_errors = 0
+    total_skipped = 0
+    total_time = 0.0
+    all_testcases: List[ET.Element] = []
+
+    if not xml_files:
+        print("⚠️ 没有 XML 文件需要合并，将生成空的结果文件")
+    else:
+        for xml_file in xml_files:
+            # 检查文件是否存在且非空
+            if not os.path.exists(xml_file):
+                print(f"  ⚠️ 跳过不存在的文件: {xml_file}")
+                continue
+            if os.path.getsize(xml_file) == 0:
+                print(f"  ⚠️ 跳过空文件: {xml_file}")
+                continue
+
+            try:
+                tree = ET.parse(xml_file)
+                root = tree.getroot()
+            except ET.ParseError as e:
+                print(f"  ⚠️ 解析 {xml_file} 失败 (XML 格式错误): {e}")
+                continue
+            except Exception as e:
+                print(f"  ⚠️ 读取 {xml_file} 失败: {e}")
+                continue
+
+            # 收集所有 <testsuite> 元素
+            testsuites: List[ET.Element] = []
+            if root.tag == "testsuites":
+                # 结构: <testsuites><testsuite>...</testsuite></testsuites>
+                testsuites = root.findall("testsuite")
+            elif root.tag == "testsuite":
+                # 结构: <testsuite>...</testsuite> 直接作为根
+                testsuites = [root]
+            else:
+                print(f"  ⚠️ {xml_file} 根元素非 testsuites/testsuite，跳过")
+                continue
+
+            file_test_count = 0
+            for ts in testsuites:
+                # 提取并聚合统计
+                total_tests += int(ts.get("tests", "0"))
+                total_failures += int(ts.get("failures", "0"))
+                total_errors += int(ts.get("errors", "0"))
+                total_skipped += int(ts.get("skipped", "0"))
+                try:
+                    total_time += float(ts.get("time", "0.0"))
+                except ValueError:
+                    pass
+
+                # 提取所有 testcase 元素 
+                for tc in ts.findall("testcase"):
+                    normalized_name = re.sub(r'[^0-9a-zA-Z]+', '_', tc.get("classname")) + "_" + tc.get("name")
+                    tc.set("name", normalized_name)
+                    all_testcases.append(tc)
+                    file_test_count += 1
+
+            if verbose:
+                print(f"  📋 已合并 {xml_file}: {file_test_count} 个测试用例")
+
+    # 构建最终的 XML 结构
+    # tests 计数只反映非跳过的测试用例
+    merged_tests = total_tests
+    final_root = ET.Element("testsuites")
+    merged_suite = ET.SubElement(
+        final_root,
+        "testsuite",
+        name="pytest-merged",
+        tests=str(merged_tests),
+        failures=str(total_failures),
+        errors=str(total_errors),
+        skipped=str(total_skipped),
+        time=f"{total_time:.3f}",
+    )
+    for tc in all_testcases:
+        merged_suite.append(tc)
+
+    # 写入最终 XML
+    try:
+        final_tree = ET.ElementTree(final_root)
+        ET.indent(final_tree, space="  ")  # Python 3.9+ 格式化输出
+    except AttributeError:
+        # Python < 3.9 没有 ET.indent，跳过格式化
+        final_tree = ET.ElementTree(final_root)
+
+    final_tree.write(output_path, encoding="utf-8", xml_declaration=True)
+    print(f"\n✅ 测试结果已合并到: {output_path}")
+    print(f"   测试总数={total_tests}, 失败={total_failures}, "
+          f"错误={total_errors}, 跳过={total_skipped}, "
+          f"耗时={total_time:.3f}s")
+    return True
+
+
+# ---------------------------------------------------------------------------
+# 清理临时文件
+# ---------------------------------------------------------------------------
+
+def cleanup_temp_files(xml_files: List[str], verbose: bool = False) -> None:
+    """
+    清理临时生成的 XML 文件。
+
+    参数:
+        xml_files: 待清理的文件路径列表
+        verbose:   是否输出详细信息
+    """
+    if not xml_files:
+        return
+
+    cleaned = 0
+    for f in xml_files:
+        try:
+            if os.path.exists(f):
+                os.remove(f)
+                cleaned += 1
+                if verbose:
+                    print(f"  🗑️ 已删除: {f}")
+        except OSError as e:
+            print(f"  ⚠️ 删除 {f} 失败: {e}")
+
+    print(f"🧹 清理完成: 已删除 {cleaned}/{len(xml_files)} 个临时文件")
+
+
+# ---------------------------------------------------------------------------
+# 摘要报告
+# ---------------------------------------------------------------------------
+
+def print_summary(results: List[TestResult], output_xml: str) -> None:
+    """
+    打印测试执行的摘要表格。
+
+    参数:
+        results:    所有测试运行结果
+        output_xml: 合并后的 XML 文件路径
+    """
+    print(f"\n{'='*70}")
+    print("                          测试执行摘要")
+    print(f"{'='*70}")
+
+    if not results:
+        print("  (无测试运行)")
+    else:
+        # 表头
+        print(f"  {'序号':<6}{'状态':<8}{'耗时':>10}  {'测试用例'}")
+        print(f"  {'-'*6}{'-'*8}{'-'*10}  {'-'*40}")
+
+        passed_count = 0
+        failed_count = 0
+        skipped_count = 0
+        total_duration = 0.0
+
+        for i, r in enumerate(results, start=1):
+            status = r.status_label
+            duration_str = f"{r.duration:.2f}s"
+            name = r.config.display_name
+            # 截断过长的名称
+            if len(name) > 120:
+                name = "..." + name[-117:]
+
+            if status == "PASS":
+                marker = "✅"
+            elif status == "SKIP":
+                marker = "⏭️"
+            else:
+                marker = "❌"
+            print(f"  {i:<6}{marker} {status:<5}{duration_str:>10}  {name}")
+
+            if status == "PASS":
+                passed_count += 1
+            elif status == "SKIP":
+                skipped_count += 1
+            else:
+                failed_count += 1
+            total_duration += r.duration
+
+        print(f"  {'-'*6}{'-'*8}{'-'*10}  {'-'*40}")
+        print(f"  {'合计':<6}{'':8}{total_duration:>9.2f}s  "
+              f"通过={passed_count}, 失败={failed_count}, "
+              f"跳过={skipped_count}, 总计={len(results)}")
+
+    print(f"\n  📄 合并结果文件: {os.path.abspath(output_xml)}")
+    print(f"{'='*70}\n")
+
+
+# ---------------------------------------------------------------------------
+# 失败用例输出
+# ---------------------------------------------------------------------------
+
+def dump_fail_list(results: List[TestResult], output_path: str = "fail_list.json") -> None:
+    """
+    将失败的测试用例输出为 JSON 文件，格式与 ppu0010_v0.1.11_skip.json 一致。
+
+    参数:
+        results:     所有测试运行结果
+        output_path: 输出文件路径 (默认: fail_list.json)
+    """
+    fail_entries = []
+    for r in results:
+        if r.failed:
+            fail_entries.append({
+                "file_path": r.config.file_path,
+                "test_filter": r.config.test_filter or "",
+                "extra_args": list(r.config.extra_args),
+                "reason": "TIMEOUT" if r.timed_out else "N/A",
+            })
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        print(f"Fail cases list:\n{fail_entries}")
+        json.dump(fail_entries, f, indent=2, ensure_ascii=False)
+
+    print(f"\n{'='*70}")
+    print(f"📝 失败用例列表已保存到: {output_path}")
+    print(f"   共 {len(fail_entries)} 个失败用例")
+    print(f"{'='*70}\n")
+
+
+def dump_skip_list(results: List[TestResult], output_path: str = "skip_list.json") -> None:
+    """
+    将被 pytest 跳过（含部分 skip 与全 skip）的用例输出为 JSON 文件，
+    避免它们在 fail_list / 合并 XML 里不可见。
+
+    参数:
+        results:     所有测试运行结果
+        output_path: 输出文件路径 (默认: skip_list.json)
+    """
+    skip_entries = []
+    for r in results:
+        if r.status_label != "SKIP":
+            continue
+        skip_entries.append({
+            "file_path": r.config.file_path,
+            "test_filter": r.config.test_filter or "",
+            "extra_args": list(r.config.extra_args),
+            "reason": "pytest.skip",
+            "xml_tests": r.xml_tests,
+            "xml_skipped": r.xml_skipped,
+        })
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        print(f"Skip cases list:\n{skip_entries}")
+        json.dump(skip_entries, f, indent=2, ensure_ascii=False)
+
+    print(f"\n{'='*70}")
+    print(f"📝 跳过用例列表已保存到: {output_path}")
+    print(f"   共 {len(skip_entries)} 个跳过用例（含部分 skip 文件）")
+    print(f"{'='*70}\n")
+
+
+# ---------------------------------------------------------------------------
+# 主流程
+# ---------------------------------------------------------------------------
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """
+    主入口：解析命令行参数，运行测试，合并结果，输出摘要。
+
+    参数:
+        argv: 命令行参数列表（默认使用 sys.argv）
+
+    返回:
+        退出码（0=全部通过，1=有失败）
+    """
+    parser = argparse.ArgumentParser(
+        description="通用 pytest 测试运行与 JUnit XML 合并框架",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "示例用法:\n"
+            "  python test_ppu0010_v0.1.8.py\n"
+            "  python test_ppu0010_v0.1.8.py -o result.xml --test-dir /path/to/repo\n"
+            "  python test_ppu0010_v0.1.8.py --keep-temp -v\n"
+        ),
+    )
+    parser.add_argument(
+        "--output", "-o",
+        default="test-results.xml",
+        help="合并后的 XML 输出文件路径 (默认: test-results.xml)",
+    )
+    parser.add_argument(
+        "--keep-temp",
+        action="store_true",
+        help="保留临时 XML 文件，不在合并后删除",
+    )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="输出详细信息",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=TEST_TIMEOUT_SECONDS,
+        help="单个用例最长运行时间（秒），超时强制终止并判定为 FAIL (默认: 7200，即 2 小时)",
+    )
+    parser.add_argument(
+        "--maxfail",
+        type=int,
+        default=0,
+        help="Stop after N real failures (0=no limit)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel test workers (default 1=serial)",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Max test cases per directory group (0=no limit)",
+    )
+
+    args = parser.parse_args(argv)
+
+    # Examples subdirectories to test (under examples/, which has pytest.ini)
+    # pytest.ini makes rootdir=examples/ → collected paths relative to examples/
+    # Add/remove entries here to control which example dirs are tested
+    EXAMPLE_SUBDIRS = [
+        "flash_attention",
+        "gemm",
+        "ppu",
+        "chained_dot",
+        "analyze",
+        "attention_sink",
+        "blocksparse_attention",
+        "cast",
+        "convolution",
+        "deepseek_mhc",
+        "deepseek_nsa",
+        "deepseek_v4",
+        "elementwise",
+        "gdn",
+        "gemm_splitk",
+        "gemm_streamk",
+        "gemv",
+        "kda",
+        "norm",
+        "seer_attention",
+        "topk",
+    ]
+    EXAMPLE_PREFIX = "examples"
+
+    test_dirs: List[Tuple[str, str]] = [
+        (f"{EXAMPLE_PREFIX}/{d}", EXAMPLE_PREFIX) for d in EXAMPLE_SUBDIRS
+    ] + [
+        # testing/ has no pytest.ini → rootdir higher → output includes testing/ prefix
+        ("testing", "."),
+    ]
+    test_configs: List[TestConfig] = []
+    for dir_tuple in test_dirs:
+        # scan_cases 已完成 skip 过滤；--limit 在过滤之后、调度之前对每个
+        # 目录组做截断（take first N per group），既能覆盖多个目录又快速跑通。
+        group = scan_cases(dir_tuple)
+        if args.limit > 0 and len(group) > args.limit:
+            print(f"✂️ 目录组 {dir_tuple[0]}: 应用 --limit={args.limit}，"
+                  f"保留前 {args.limit} 个用例（收集 {len(group)} 个）")
+            group = group[:args.limit]
+        test_configs.extend(group)
+
+    with open("tests.json", "w") as f:
+        json.dump([asdict(t) for t in test_configs], f, indent=2)
+
+    if not test_configs:
+        print("⚠️ 没有配置任何测试用例")
+
+    print(f"📋 共 {len(test_configs)} 个测试用例待运行")
+    print(f"📄 输出文件: {args.output}")
+    workers = max(1, args.workers)
+    print(f"🧵 并行 worker 数: {workers}"
+          + (f" | --maxfail={args.maxfail}" if args.maxfail > 0 else "")
+          + (f" | --limit={args.limit}/目录组" if args.limit > 0 else ""))
+
+    # 每个用例复用 run_single_test，其内部已用 Popen + os.setsid 进程组 +
+    # timeout + SIGKILL + 独立 results_{idx}.xml 保证隔离；这里仅在其外层
+    # 用线程池并发调度。线程只是阻塞等待 communicate，无需跨进程 pickle。
+    results: List[TestResult] = []
+    results_lock = threading.Lock()
+    # 线程安全的“真实失败”计数，用于 --maxfail 早停
+    fail_lock = threading.Lock()
+    fail_count = 0
+    stop_event = threading.Event()
+
+    def _worker(idx: int, cfg: TestConfig) -> None:
+        nonlocal fail_count
+        # maxfail 已触发时，尚未开始的用例直接跳过（不再启动新子进程）
+        if stop_event.is_set():
+            return
+        result = run_single_test(cfg, idx, verbose=args.verbose, timeout=args.timeout)
+        with results_lock:
+            results.append(result)
+        # 沿用现有 TestResult.failed 口径统计真实失败（不含 skip）
+        if result.failed and args.maxfail > 0:
+            with fail_lock:
+                fail_count += 1
+                if fail_count >= args.maxfail:
+                    stop_event.set()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        # idx 唯一：以 enumerate 序号绑定每个用例，保证 results_{idx}.xml 不冲突
+        future_map = {
+            executor.submit(_worker, idx, cfg): idx
+            for idx, cfg in enumerate(test_configs)
+        }
+        for future in concurrent.futures.as_completed(future_map):
+            # 触发早停后，取消尚未开始的任务；已提交/在跑的照常完成
+            if stop_event.is_set():
+                for pending in future_map:
+                    pending.cancel()
+            # 传播 worker 内的意外异常
+            future.result()
+
+    if args.maxfail > 0 and stop_event.is_set():
+        print(f"\n🛑 已达到 --maxfail={args.maxfail} 真实失败阈值，提前停止调度新用例")
+
+    xml_files: List[str] = [
+        r.xml_path for r in results if r.xml_path is not None
+    ]
+
+    print(f"\n{'─'*70}")
+    print("正在合并 JUnit XML 结果...")
+    merge_junit_xml(xml_files, args.output, verbose=args.verbose)
+
+    if not args.keep_temp:
+        cleanup_temp_files(xml_files, verbose=args.verbose)
+    else:
+        print(f"ℹ️ 保留临时文件 (--keep-temp): {xml_files}")
+
+    print_summary(results, args.output)
+
+    # 输出失败用例列表
+    dump_fail_list(results)
+
+    # 输出被 pytest 跳过的用例列表（含部分 skip 与全 skip），避免它们在产物里不可见
+    dump_skip_list(results)
+
+    # Only actual failures count — skipped tests are not failures
+    has_failures = any(r.failed for r in results)
+    return 1 if has_failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
