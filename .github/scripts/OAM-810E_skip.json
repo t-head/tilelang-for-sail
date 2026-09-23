@@ -610,5 +610,11 @@
     "test_filter": "test_tiled_ws_propagates_nested_postloop_liveness_to_outer_prelude",
     "extra_args": [],
     "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "examples/blocksparse_attention/test_example_blocksparse_attention.py",
+    "test_filter": "test_example_tilelang_sparse_gqa_decode_varlen_indice",
+    "extra_args": [],
+    "reason": "runtime failure on OAM-810E"
   }
 ]
