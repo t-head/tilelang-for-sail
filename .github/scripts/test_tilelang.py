@@ -749,9 +749,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     test_dirs: List[Tuple[str, str]] = [
         (f"{EXAMPLE_PREFIX}/{d}", EXAMPLE_PREFIX) for d in EXAMPLE_SUBDIRS
-    ] + [
-        # testing/ has no pytest.ini → rootdir higher → output includes testing/ prefix
-        ("testing", "."),
+    ]
+
+    # testing/ sub-directories to scan (skip non-PPU targets: cpu, metal, webgpu)
+    TESTING_SKIP_DIRS = {"cpu", "metal", "webgpu"}
+    testing_subdirs = sorted(
+        d for d in os.listdir("testing/python")
+        if os.path.isdir(os.path.join("testing/python", d)) and d not in TESTING_SKIP_DIRS
+    )
+    test_dirs += [
+        (f"testing/python/{d}", ".") for d in testing_subdirs
     ]
     test_configs: List[TestConfig] = []
     for dir_tuple in test_dirs:
