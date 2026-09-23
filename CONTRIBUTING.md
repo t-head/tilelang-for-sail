@@ -18,9 +18,9 @@ That would be awesome if you want to contribute something to TileLang PPU!
 
 ## Branch Strategy
 
-- **`master`** — Primary development branch. Day-to-day development happens here.
-- **`v0.1.11`, `v0.1.12`, `v0.1.13`, etc.** — Branches corresponding to upstream TileLang release tags, used for tracking PPU adaptation work against specific upstream versions. These branches also accept continued development and commits.
-- For feature work, create a `feat/xxx` branch from `master` or the relevant version branch, and submit an MR when done.
+- **`master`** — The main development branch. All day-to-day development and integration happen here.
+- **`v0.1.11`, `v0.1.12`, `v0.1.13`, ...** — Version branches tracking upstream TileLang release tags. Each branch carries the PPU adaptation for a specific upstream version and remains open to continued development and commits.
+- **`<type>/xxx`** — Working branches, named after the change type: `feat/xxx`, `fix/xxx`, `refactor/xxx`, `docs/xxx`, etc. Branch off from `master` or the relevant version branch, and open a merge request when ready.
 
 ## Report Bugs
 
