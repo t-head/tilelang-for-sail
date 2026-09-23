@@ -27,6 +27,7 @@ $GITHUB_STEP_SUMMARY.
 import argparse
 import json
 import os
+import re
 import sys
 import xml.etree.ElementTree as ET
 
@@ -34,6 +35,14 @@ import xml.etree.ElementTree as ET
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+
+
+def _strip_ansi(text):
+    """Remove ANSI escape sequences from *text*."""
+    return _ANSI_RE.sub('', text)
+
 
 def _parse_xml(xml_path):
     """Parse a JUnit XML and return (testcases_list, stats_dict) or None."""
@@ -73,10 +82,10 @@ def _parse_xml(xml_path):
         msg = ""
         if f is not None:
             status = "fail"
-            msg = (f.text or "")[:200]
+            msg = _strip_ansi((f.get("message", "") or "") + (f.text or ""))[:200]
         elif e is not None:
             status = "error"
-            msg = (e.text or "")[:200]
+            msg = _strip_ansi((e.get("message", "") or "") + (e.text or ""))[:200]
         else:
             status = "pass"
         testcases.append(

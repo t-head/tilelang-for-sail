@@ -351,7 +351,7 @@
     "file_path": "examples/gemm/test_example_gemm.py",
     "test_filter": "test_example_gemm_intrinsics",
     "extra_args": [],
-    "reason": "Unsupported TensorCoreIntrinEmitter"
+    "reason": "PPU codegen requires n==16 but gemm_intrinsics uses n=8"
   },
   {
     "file_path": "examples/gemm_fp8/test_example_gemm_fp8.py",
@@ -588,16 +588,16 @@
     "reason": "Move to ppu dir."
   },
   {
-    "file_path": "examples/analyze/test_example_analyze.py",
+    "file_path": "examples/gemm_analyze/test_example_gemm.py",
     "test_filter": "test_example_gemm_analyze",
     "extra_args": [],
-    "reason": "Temporarily disabled: use_cuda is being removed"
+    "reason": "analyze module targets CUDA device, not available on PPU"
   },
   {
-    "file_path": "examples/analyze/test_example_analyze.py",
+    "file_path": "examples/conv_analyze/test_example_conv.py",
     "test_filter": "test_example_conv_analyze",
     "extra_args": [],
-    "reason": "Temporarily disabled: use_cuda is being removed"
+    "reason": "analyze module targets CUDA device, not available on PPU"
   },
   {
     "file_path": "testing/python/carver/test_tilelang_carver_recommend_hints.py",
