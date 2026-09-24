@@ -663,8 +663,10 @@ def merge_junit_xml(
                 with contextlib.suppress(ValueError):
                     total_time += float(ts.get("time", "0.0"))
 
-                # 提取所有 testcase 元素 
+                # 提取所有 testcase 元素，剔除含 <skipped> 子元素的用例
                 for tc in ts.findall("testcase"):
+                    if tc.find("skipped") is not None:
+                        continue
                     normalized_name = re.sub(r'[^0-9a-zA-Z]+', '_', tc.get("classname")) + "_" + tc.get("name")
                     tc.set("name", normalized_name)
                     all_testcases.append(tc)
@@ -674,8 +676,8 @@ def merge_junit_xml(
                 print(f"  📋 已合并 {xml_file}: {file_test_count} 个测试用例")
 
     # 构建最终的 XML 结构
-    # tests 计数只反映非跳过的测试用例
-    merged_tests = total_tests
+    # tests 计数减去被剔除的 skipped 用例；skipped 属性归零
+    merged_tests = total_tests - total_skipped
     final_root = ET.Element("testsuites")
     merged_suite = ET.SubElement(
         final_root,
@@ -684,7 +686,7 @@ def merge_junit_xml(
         tests=str(merged_tests),
         failures=str(total_failures),
         errors=str(total_errors),
-        skipped=str(total_skipped),
+        skipped="0",
         time=f"{total_time:.3f}",
     )
     for tc in all_testcases:
@@ -777,7 +779,10 @@ def print_summary(results: List[TestResult], output_xml: str) -> None:
                 marker = "⏭️"
             else:
                 marker = "❌"
-            print(f"  {i:<6}{marker} {status:<5}{duration_str:>10}  {name}")
+
+            # 运行期 skip 的用例不逐条列出，只计数
+            if status != "SKIP":
+                print(f"  {i:<6}{marker} {status:<5}{duration_str:>10}  {name}")
 
             if status == "PASS":
                 passed_count += 1
@@ -830,33 +835,17 @@ def dump_fail_list(results: List[TestResult], output_path: str = "fail_list.json
 
 def dump_skip_list(results: List[TestResult], output_path: str = "skip_list.json") -> None:
     """
-    将被 pytest 跳过（含部分 skip 与全 skip）的用例输出为 JSON 文件，
-    避免它们在 fail_list / 合并 XML 里不可见。
+    运行期 skip 不需要持久化——写空列表保持文件契约即可。
 
     参数:
         results:     所有测试运行结果
         output_path: 输出文件路径 (默认: skip_list.json)
     """
-    skip_entries = []
-    for r in results:
-        if r.status_label != "SKIP":
-            continue
-        skip_entries.append({
-            "file_path": r.config.file_path,
-            "test_filter": r.config.test_filter or "",
-            "extra_args": list(r.config.extra_args),
-            "reason": "pytest.skip",
-            "xml_tests": r.xml_tests,
-            "xml_skipped": r.xml_skipped,
-        })
-
     with open(output_path, "w", encoding="utf-8") as f:
-        print(f"Skip cases list:\n{skip_entries}")
-        json.dump(skip_entries, f, indent=2, ensure_ascii=False)
+        json.dump([], f, indent=2, ensure_ascii=False)
 
     print(f"\n{'='*70}")
-    print(f"📝 跳过用例列表已保存到: {output_path}")
-    print(f"   共 {len(skip_entries)} 个跳过用例（含部分 skip 文件）")
+    print(f"📝 跳过用例列表已保存到: {output_path}（运行期 skip 不写入）")
     print(f"{'='*70}\n")
 
 
