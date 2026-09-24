@@ -576,7 +576,7 @@ jobs:
 
             # ---- Run tests ----
             cd /workspace/source
-            python .github/scripts/test_tilelang.py -o test_result.xml -v --timeout 600 --workers 4 || TEST_RC=$?
+            python .github/scripts/test_tilelang.py -o test_result.xml -v --timeout 600 --workers 8 || TEST_RC=$?
             TEST_RC=${TEST_RC:-0}
 
             # ---- Copy results to NAS ----
