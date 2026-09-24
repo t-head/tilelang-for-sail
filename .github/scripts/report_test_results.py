@@ -76,6 +76,10 @@ def _parse_xml(xml_path):
 
     testcases = []
     for tc in root.findall(".//testcase"):
+        # Skip testcases with <skipped> child — runtime skips should not
+        # appear in the report at all.
+        if tc.find("skipped") is not None:
+            continue
         f = tc.find("failure")
         e = tc.find("error")
         msg = ""
@@ -109,6 +113,8 @@ def _status_icon(status):
         return "❌"
     if status == "error":
         return "⚠️"
+    if status == "skip":
+        return "⏭️"
     return "✅"
 
 
@@ -193,14 +199,15 @@ def _report_single_board(args):
         print("🎉 All tests passed — no failures to display.")
     print()
 
-    # Full test list (collapsible)
-    if testcases:
+    # Full test list (collapsible) — exclude skipped
+    visible_cases = [tc for tc in testcases if tc["status"] not in ("skip",)]
+    if visible_cases:
         print("<details>")
-        print(f"<summary>📋 All Test Cases ({len(testcases)} tests)</summary>")
+        print(f"<summary>📋 All Test Cases ({len(visible_cases)} tests)</summary>")
         print()
         print("| Status | Test | Time |")
         print("|--------|------|------|")
-        for tc in testcases:
+        for tc in visible_cases:
             print(f'| {_status_icon(tc["status"])} | {tc["name"]} | {tc["time"]}s |')
         print()
         print("</details>")
@@ -344,14 +351,15 @@ def _report_combined(args):
             print("🎉 All tests passed — no failures to display.")
         print()
 
-        # Collapsible full test list
-        if testcases:
+        # Collapsible full test list — exclude skipped
+        visible_cases = [tc for tc in testcases if tc["status"] not in ("skip",)]
+        if visible_cases:
             print("<details>")
-            print(f"<summary>📋 All Test Cases ({len(testcases)} tests)</summary>")
+            print(f"<summary>📋 All Test Cases ({len(visible_cases)} tests)</summary>")
             print()
             print("| Status | Test | Time |")
             print("|--------|------|------|")
-            for tc in testcases:
+            for tc in visible_cases:
                 print(
                     f"| {_status_icon(tc['status'])} "
                     f"| {tc['name']} | {tc['time']}s |"
