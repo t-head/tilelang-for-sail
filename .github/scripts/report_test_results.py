@@ -25,6 +25,7 @@ $GITHUB_STEP_SUMMARY.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -61,10 +62,8 @@ def _parse_xml(xml_path):
         fail += int(ts.get("failures", 0))
         err += int(ts.get("errors", 0))
         skip += int(ts.get("skipped", 0))
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             time_s += float(ts.get("time", 0))
-        except (TypeError, ValueError):
-            pass
 
     passed = total - fail - err - skip
     stats = {

@@ -1408,5 +1408,311 @@
     "test_filter": "test_simple_pipeline",
     "extra_args": [],
     "reason": "cudafree BTV 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_gqa_fwd_varlen",
+    "extra_args": [],
+    "reason": "ModuleNotFoundError: No module named 'flash_attn' - CI 20260923"
+  },
+  {
+    "file_path": "examples/blocksparse_attention/test_example_blocksparse_attention.py",
+    "test_filter": "test_example_tilelang_block_sparse_attn",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/chained_dot/test_chained_dot.py",
+    "test_filter": "test_chained_dot",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/chained_dot/test_chained_dot.py",
+    "test_filter": "test_chained_dot2_transB",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/chained_dot/test_chained_dot.py",
+    "test_filter": "test_chained_dot3_transB",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/chained_dot/test_chained_dot.py",
+    "test_filter": "test_modify_chained_dot",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/deepseek_nsa/test_example_tilelang_nsa.py",
+    "test_filter": "test_example_tilelang_nsa_fwd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/deepseek_nsa/test_example_tilelang_nsa.py",
+    "test_filter": "test_example_tilelang_nsa_fwd_decode",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/gemm/test_example_gemm.py",
+    "test_filter": "test_example_gemm",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/gemm_splitk/test_example_gemm_splitk.py",
+    "test_filter": "test_example_tilelang_gemm_splitk",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/gemm_splitk/test_example_gemm_splitk.py",
+    "test_filter": "test_example_tilelang_gemm_splitk_vectorize_atomicadd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/gemv/test_example_gemv.py",
+    "test_filter": "test_example_gemv",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/chained_dot/test_ppu_example_chained_dot.py",
+    "test_filter": "test_chained_dot",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/chained_dot/test_ppu_example_chained_dot.py",
+    "test_filter": "test_chained_dot2_transB",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/chained_dot/test_ppu_example_chained_dot.py",
+    "test_filter": "test_chained_dot3_transB",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/chained_dot/test_ppu_example_chained_dot.py",
+    "test_filter": "test_modify_chained_dot",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_gqa_bwd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_gqa_fwd_bshd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_mha_bwd_bhsd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_mha_bwd_bshd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_mha_fwd_bhsd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_mha_fwd_bshd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_decoding/test_example_flash_decoding.py",
+    "test_filter": "test_example_example_gqa_decode",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_decoding/test_example_flash_decoding.py",
+    "test_filter": "test_example_example_gqa_decode_varlen_logits",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_decoding/test_example_flash_decoding.py",
+    "test_filter": "test_example_example_mha_inference",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/gemm/test_ppu_example_gemm.py",
+    "test_filter": "test_example_gemm",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/gemm/test_ppu_example_gemm.py",
+    "test_filter": "test_example_gemm_persistent",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/gemm_fp8/test_example_tilelang_gemm_fp8.py",
+    "test_filter": "test_example_gemm_fp8",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/seer_attention/test_block_sparse_attn_tilelang.py",
+    "test_filter": "test_block_sparse_attn_tilelang",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_gemm_cython.py",
+    "test_filter": "test_matmul_float_variable",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_gemm_cython.py",
+    "test_filter": "test_matmul_int_variable",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/kernel/test_tilelang_kernel_gemm_aiu_swizzle.py",
+    "test_filter": "test_128b_swizzle",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/kernel/test_tilelang_kernel_gemm_aiu_swizzle.py",
+    "test_filter": "test_128b_swizzle_constraint_trigger",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/kernel/test_tilelang_kernel_gemm_aiu_swizzle.py",
+    "test_filter": "test_64b_swizzle",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/kernel/test_tilelang_kernel_gemm_aiu_swizzle.py",
+    "test_filter": "test_64b_swizzle_constraint_trigger",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_eager_jit.py",
+    "test_filter": "test_jit2_gemm",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/profiler/test_tilelang_profiler_dynamic_symbolic.py",
+    "test_filter": "test_profiler_dynamic_symbolic_correctness[m=128]",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/profiler/test_tilelang_profiler_dynamic_symbolic.py",
+    "test_filter": "test_profiler_dynamic_symbolic_correctness[m=256]",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/profiler/test_tilelang_profiler_dynamic_symbolic.py",
+    "test_filter": "test_profiler_dynamic_symbolic_correctness[m=512]",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_bwd_dqkwg",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_bwd_dv",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_bwd_gla_dA",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_bwd_intra",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_delta_bwd",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_delta_h_fwd",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_intra_token_parallel",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_o",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_wy_fast",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_wy_fast_bwd",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/blocksparse_attention/test_example_blocksparse_attention.py",
+    "test_filter": "test_block_sparse_attn_triton",
+    "extra_args": [],
+    "reason": "rc=1 failure on 890P 20260924"
+  },
+  {
+    "file_path": "examples/cast/test_example_cast.py",
+    "test_filter": "test_example_per_token_cast_to_fp8",
+    "extra_args": [],
+    "reason": "rc=1 failure on 890P 20260924"
   }
 ]
