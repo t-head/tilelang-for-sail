@@ -616,5 +616,23 @@
     "test_filter": "test_example_tilelang_sparse_gqa_decode_varlen_indice",
     "extra_args": [],
     "reason": "runtime failure on OAM-810E"
+  },
+  {
+    "file_path": "examples/blocksparse_attention/test_example_blocksparse_attention.py",
+    "test_filter": "test_example_tilelang_sparse_gqa_decode_varlen_mask",
+    "extra_args": [],
+    "reason": "ModuleNotFoundError: No module named 'flash_attn'"
+  },
+  {
+    "file_path": "testing/python/ppu/kernel/test_tilelang_kernel_gemm_batched.py",
+    "test_filter": "test_gemm_f16f16f16_nn",
+    "extra_args": [],
+    "reason": "torch.AcceleratorError: CUDA error: device-side assert triggered"
+  },
+  {
+    "file_path": "testing/python/ppu/language/test_tilelang_language_async_copy_gemm_sm80.py",
+    "test_filter": "test_copy_and_async_copy_gemm_codegen_equivalent_sm80",
+    "extra_args": [],
+    "reason": "AttributeError: module 'tilelang.cuda_ffi_api' has no attribute 'LowerBlackwell2SM'"
   }
 ]
