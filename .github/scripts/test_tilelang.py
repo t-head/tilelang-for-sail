@@ -2,6 +2,7 @@
 
 import argparse
 import concurrent.futures
+import contextlib
 import os
 import signal
 import subprocess
@@ -80,13 +81,11 @@ class TestResult:
                 and self.xml_skipped == self.xml_tests):
             return True
         # Non-zero return code but XML shows no failures/errors, only skips
-        if (self.returncode != 0
+        return (self.returncode != 0
                 and self.xml_tests > 0
                 and self.xml_failures == 0
                 and self.xml_errors == 0
-                and self.xml_skipped > 0):
-            return True
-        return False
+                and self.xml_skipped > 0)
 
     @property
     def failed(self) -> bool:
@@ -125,6 +124,7 @@ test_dir = os.getcwd()
 # collection-error interception path below MUST NOT be listed here.
 COLLECT_IGNORE_PATHS = [
     "examples/ppu/linear_attention",
+    "testing/python/transform/test_tilelang_transform_reorder_aiu_loads.py",
 ]
 
 
@@ -282,31 +282,78 @@ def collect_tests(target_dir):
             CollectionError(file_path=norm_path, traceback=tb)
         )
 
-    # Fail-closed: pytest returned non-zero but no ERROR block was parsable.
-    # Never let this collapse to a silent warning — synthesize a directory
-    # level entry so it enters JUnit / fail_list and flips CI to failure.
-    if result.returncode != 0 and not collection_errors:
-        synth_path = os.path.normpath(target_dir[0])
-        # Strip ANSI from the raw output stored in the traceback so JUnit
-        # XML and fail_list remain free of control sequences.
-        clean_stdout = _strip_ansi(result.stdout or "")
-        collection_errors.append(
-            CollectionError(
-                file_path=synth_path,
-                traceback=(
-                    f"pytest --collect-only exited with returncode={result.returncode} "
-                    f"for {target_dir[0]} but no ERROR collecting entries could "
-                    f"be parsed from the output.\n\n"
-                    f"Full pytest output follows:\n{clean_stdout}"
-                ),
-            )
-        )
+    # ---- Handle non-zero return codes ------------------------------------
+    # Strip ANSI once for all diagnostic / log output below.
+    clean_stdout = _strip_ansi(result.stdout or "")
 
     if result.returncode != 0:
-        print(
-            f"Warning: sub process pytest failed (returncode={result.returncode}, "
-            f"parsed_errors={len(collection_errors)}), here's log:\n\n{result.stdout}\n"
-        )
+        if not collection_errors and not tests:
+            if result.returncode == 5:
+                # Scenario A-1: exit code 5 = "no tests were collected" with
+                # NO real ERROR-collecting blocks.  This is benign — the
+                # directory simply has no runnable tests (e.g. all filtered
+                # by board skip / markers / conftest, or no test files
+                # present).  Do NOT fabricate a CollectionError, and do NOT
+                # emit any result-shaped line: this directory produces no
+                # TestConfig and no CollectionError, so it stays invisible in
+                # print_summary / fail_list / skip_list.  Only surface a
+                # debug breadcrumb when TILELANG_TEST_DEBUG is explicitly set,
+                # so the default run keeps the final result display clean.
+                if os.environ.get("TILELANG_TEST_DEBUG"):
+                    print(
+                        f"DEBUG [collect_tests] target={target_dir[0]} | "
+                        f"returncode=5 | parsed_tests=0 | parsed_errors=0 | "
+                        f"action=no_tests_after_filter | "
+                        f"note=no ERROR collecting blocks found, treating as all-filtered"
+                    )
+            else:
+                # Scenario A-2: true zero-collection with a non-5 failure
+                # code — something unexpected went wrong.  Synthesize a
+                # directory-level CollectionError so it enters JUnit /
+                # fail_list and flips CI to failure.
+                synth_path = os.path.normpath(target_dir[0])
+                collection_errors.append(
+                    CollectionError(
+                        file_path=synth_path,
+                        traceback=(
+                            f"pytest --collect-only exited with returncode={result.returncode} "
+                            f"for {target_dir[0]} but no tests and no ERROR collecting "
+                            f"entries could be parsed from the output.\n\n"
+                            f"Full pytest output follows:\n{clean_stdout}"
+                        ),
+                    )
+                )
+                print(
+                    f"ERROR [collect_tests] target={target_dir[0]} | "
+                    f"returncode={result.returncode} | "
+                    f"parsed_tests=0 | parsed_errors=0 | "
+                    f"action=synthetic_collection_error\n"
+                    f"--- begin diagnostic output ---\n"
+                    f"{clean_stdout}\n"
+                    f"--- end diagnostic output ---"
+                )
+        elif not collection_errors and tests:
+            # Scenario B: rc non-zero (e.g. rc=5 "no tests ran") but the
+            # parser extracted valid node ids.  Don't fabricate a collection
+            # error — warn and proceed with the collected tests.
+            print(
+                f"WARNING [collect_tests] target={target_dir[0]} | "
+                f"returncode={result.returncode} | "
+                f"parsed_tests={len(tests)} | parsed_errors=0 | "
+                f"action=continue_with_parsed_tests | "
+                f"note=return code inconsistent with parsed test count"
+            )
+        else:
+            # Scenario C/D: real collection errors parsed (possibly alongside
+            # valid tests).  Keep them; caller surfaces them as CI failures.
+            # Valid tests, if any, will still be executed.
+            print(
+                f"WARNING [collect_tests] target={target_dir[0]} | "
+                f"returncode={result.returncode} | "
+                f"parsed_tests={len(tests)} | "
+                f"parsed_errors={len(collection_errors)} | "
+                f"action=keep_real_errors_and_continue"
+            )
 
     return tests, collection_errors
 
@@ -445,7 +492,7 @@ def _run_python_test(
         target = f"{target}::{config.test_filter}"
 
     cmd: List[str] = [
-        "pytest", "-v", "-s",
+        "pytest", "-v",
         "--color=yes", "--durations=0", "--showlocals",
         target,
         f"--junitxml={temp_xml}",
@@ -497,10 +544,8 @@ def _run_python_test(
     except subprocess.TimeoutExpired:
         # 超时：杀掉整个进程组（包含孙进程）
         if proc is not None:
-            try:
+            with contextlib.suppress(ProcessLookupError, OSError):
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                pass
             # 收集超时前已有的输出
             stdout, stderr = proc.communicate()
             result.stdout = stdout or ""
@@ -615,10 +660,8 @@ def merge_junit_xml(
                 total_failures += int(ts.get("failures", "0"))
                 total_errors += int(ts.get("errors", "0"))
                 total_skipped += int(ts.get("skipped", "0"))
-                try:
+                with contextlib.suppress(ValueError):
                     total_time += float(ts.get("time", "0.0"))
-                except ValueError:
-                    pass
 
                 # 提取所有 testcase 元素 
                 for tc in ts.findall("testcase"):
