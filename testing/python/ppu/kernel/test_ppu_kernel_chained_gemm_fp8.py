@@ -18,12 +18,7 @@ def _mma_c_layout():
     return T.Fragment(
         (M, K),
         forward_thread_fn=lambda i, j: (i % 8) * 4 + (j % 8) // 2,
-        forward_index_fn=lambda i, j: (
-            (j // 16) * 8
-            + ((j % 16) // 8) * 4
-            + (i // 8) * 2
-            + j % 2
-        ),
+        forward_index_fn=lambda i, j: (j // 16) * 8 + ((j % 16) // 8) * 4 + (i // 8) * 2 + j % 2,
     )
 
 
@@ -68,12 +63,7 @@ def _chained_gemm(
         # physical per-lane indices, then express the C -> A ownership change
         # entirely with warp shuffles.  No shared-memory bridge is involved.
         for i, j in T.Parallel(M, K, loop_layout=c_layout):
-            score_registers[
-                (j // 16) * 8
-                + ((j % 16) // 8) * 4
-                + (i // 8) * 2
-                + j % 2
-            ] = scores[i, j]
+            score_registers[(j // 16) * 8 + ((j % 16) // 8) * 4 + (i // 8) * 2 + j % 2] = scores[i, j]
 
         lane = T.get_lane_idx()
         quad = lane % 4
@@ -91,9 +81,7 @@ def _chained_gemm(
                 score_registers[atom * 8 + 4 + row_half * 2 + byte % 2],
                 source_lane,
             )
-            probabilities[i, j] = T.cast(
-                T.if_then_else(quad < 2, low, high), FP8
-            )
+            probabilities[i, j] = T.cast(T.if_then_else(quad < 2, low, high), FP8)
 
         T.clear(result)
         T.gemm(
@@ -121,15 +109,9 @@ def test_fp8_chained_gemm_with_packed_register_relayout():
     for scale in (0.125, 0.25, 0.5):
         for seed in range(5):
             torch.manual_seed(seed)
-            q = (
-                torch.randn((M, K), device="cuda", dtype=torch.float16) * scale
-            ).to(fp8_dtype)
-            k = (
-                torch.randn((K, K), device="cuda", dtype=torch.float16) * scale
-            ).to(fp8_dtype)
-            v = (
-                torch.randn((N, K), device="cuda", dtype=torch.float16) * scale
-            ).to(fp8_dtype)
+            q = (torch.randn((M, K), device="cuda", dtype=torch.float16) * scale).to(fp8_dtype)
+            k = (torch.randn((K, K), device="cuda", dtype=torch.float16) * scale).to(fp8_dtype)
+            v = (torch.randn((N, K), device="cuda", dtype=torch.float16) * scale).to(fp8_dtype)
 
             actual = kernel(q, k, v)
             probabilities = (q.float() @ k.float().T).to(fp8_dtype)

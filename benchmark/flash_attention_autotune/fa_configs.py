@@ -1,6 +1,3 @@
-import itertools
-import argparse
-
 import tilelang
 
 
@@ -14,6 +11,7 @@ def with_aiu_lower_tuning(configs):
     """
     try:
         from tilelang.contrib import hgcc
+
         _arch = hgcc.get_target_compute_version()
         _compute_version = hgcc.parse_compute_version(_arch)
         if _compute_version != (1, 5):
@@ -25,15 +23,12 @@ def with_aiu_lower_tuning(configs):
     for cfg in configs:
         for val in (True, False):
             new_cfg = dict(cfg)
-            new_cfg["pass_configs"] = {
-                tilelang.PassConfigKey.TL_DISABLE_AIU_LOWER: val
-            }
+            new_cfg["pass_configs"] = {tilelang.PassConfigKey.TL_DISABLE_AIU_LOWER: val}
             expanded.append(new_cfg)
     return expanded
 
 
 class FlashAttentionTuneSpace:
-
     def __init__(
         self,
         block_sizes_M=(64, 128),
@@ -67,10 +62,12 @@ def get_configs(user_config=None):
                     continue
 
                 for num_stages in config.num_stages_range:
-                    valid_configs.append({
-                        "block_M": block_M,
-                        "block_N": block_N,
-                        "num_stages": num_stages,
-                        "threads": threads,
-                    })
+                    valid_configs.append(
+                        {
+                            "block_M": block_M,
+                            "block_N": block_N,
+                            "num_stages": num_stages,
+                            "threads": threads,
+                        }
+                    )
     return with_aiu_lower_tuning(valid_configs)

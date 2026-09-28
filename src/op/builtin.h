@@ -1425,9 +1425,11 @@ TVM_DLL const Op &tix_ldmatrix_swzl();
 TVM_DLL const Op &ppu_to_uniform_b32();
 
 /*!
- * \brief PPU AIU intrinsic for loading global tensor tiles into swizzled shared memory.
+ * \brief PPU AIU intrinsic for loading global tensor tiles into swizzled shared
+ * memory.
  *
- * ppu_aiu_load(smem_ptr, gmem_ptr, dim_c, dim_w, cube_c, cube_w, stride_w_bytes, start_c, start_w, swzl_mode)
+ * ppu_aiu_load(smem_ptr, gmem_ptr, dim_c, dim_w, cube_c, cube_w,
+ * stride_w_bytes, start_c, start_w, swzl_mode)
  */
 TVM_DLL const Op &ppu_aiu_load();
 

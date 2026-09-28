@@ -351,16 +351,6 @@ def test_atomic_addx2_float():
     run_atomic_addx2(32, 64, 8, 16, dtype=T.float32)
 
 
-def test_atomic_add_mixed_dtype_fp16():
-    run_atomic_add_mixed_dtype(8, T.float32, T.float16)
-    run_atomic_addx2_mixed_dtype(32, 64, 8, 16, T.float32, T.float16)
-
-
-def test_atomic_add_mixed_dtype_bf16():
-    run_atomic_add_mixed_dtype(8, T.float32, T.bfloat16)
-    run_atomic_addx2_mixed_dtype(32, 64, 8, 16, T.float32, T.bfloat16)
-
-
 @tilelang.testing.requires_cuda
 def test_atomic_add_mixed_dtype_fp16():
     run_atomic_add_mixed_dtype(8, T.float32, T.float16)

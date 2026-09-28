@@ -182,7 +182,6 @@ def _do_bench_impl(
     device_idx: int | None,
     cache_size: int,
     early_stop_baseline: float | None = None,
-
 ) -> float | list[float]:
     # Initial function call and synchronization
     fn()

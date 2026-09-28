@@ -59,9 +59,7 @@ bool TargetPPUHasLdmatrix(Target target) {
   return true;
 }
 
-bool TargetPPUHasStmatrix(Target target) {
-  return false;
-}
+bool TargetPPUHasStmatrix(Target target) { return false; }
 
 bool IsPpuVectorizableFP8(DataType dtype) {
   // NOTE: E8M0 is a special type of FP8 which is not handled here.
@@ -120,8 +118,7 @@ bool IsPpuVectorizableCast(DataType from_ty, DataType target_ty) {
 TVM_FFI_STATIC_INIT_BLOCK() {
   namespace refl = tvm::ffi::reflection;
   refl::GlobalDef()
-      .def("tl.TargetIsPPU",
-           [](Target target) { return TargetIsPPU(target); })
+      .def("tl.TargetIsPPU", [](Target target) { return TargetIsPPU(target); })
       .def("tl.TargetHasAiuCopy",
            [](Target target) { return TargetHasAiuCopy(target); })
       .def("tl.TargetPPUGetWarpSize",

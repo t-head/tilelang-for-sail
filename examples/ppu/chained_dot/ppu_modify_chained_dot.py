@@ -3,6 +3,7 @@ import tilelang.language as T
 from tilelang.transform import PassConfigKey
 import torch
 
+
 def print_float16_hex(tensor):
     assert tensor.dtype == torch.float16
     uint_tensor = tensor.view(torch.uint16)
@@ -11,21 +12,26 @@ def print_float16_hex(tensor):
     for row in hex_array:
         print(row)
 
+
 # Chained dot product (a @ b @ b @ b) plus an independent computation (v @ b).
 # Extends the chain to b^3 but also introduces a separate branch from a new input v.
-@tilelang.jit(out_idx=[3, 4, 5, 6], verbose=False, pass_configs={PassConfigKey.TL_DISABLE_AIU_LOWER: False, PassConfigKey.TL_DISABLE_LDMAT_SWZL: False})
+@tilelang.jit(
+    out_idx=[3, 4, 5, 6],
+    verbose=False,
+    pass_configs={PassConfigKey.TL_DISABLE_AIU_LOWER: False, PassConfigKey.TL_DISABLE_LDMAT_SWZL: False},
+)
 def matmul(M, N, K, block_M, block_N, block_K, dtype="float16", accum_dtype="float"):
-    thread_num = min((M//block_M) * (N//block_N) * 32, 128)
+    thread_num = min((M // block_M) * (N // block_N) * 32, 128)
 
     @T.prim_func
     def gemm(
-            A: T.Tensor((M, K), dtype),
-            B: T.Tensor((K, N), dtype),
-            V: T.Tensor((N, N), dtype),
-            C: T.Tensor((M, N), dtype),
-            D: T.Tensor((M, N), dtype),
-            E: T.Tensor((M, N), dtype),
-            F: T.Tensor((M, N), dtype),
+        A: T.Tensor((M, K), dtype),
+        B: T.Tensor((K, N), dtype),
+        V: T.Tensor((N, N), dtype),
+        C: T.Tensor((M, N), dtype),
+        D: T.Tensor((M, N), dtype),
+        E: T.Tensor((M, N), dtype),
+        F: T.Tensor((M, N), dtype),
     ):
         with T.Kernel(T.ceildiv(N, block_N), T.ceildiv(M, block_M), threads=thread_num) as (bx, by):
             A_shared = T.alloc_shared((block_M, block_K), dtype)

@@ -79,14 +79,17 @@ def _make_matmul(pass_configs=None):
             T.copy(C_local, C[by * block_M, bx * block_N])
 
         return C
+
     return matmul
 
 
 # AIU bulk copy and ldmat.swzl both enabled
-matmul = _make_matmul(pass_configs={
-    PassConfigKey.TL_DISABLE_AIU_LOWER: False,
-    PassConfigKey.TL_DISABLE_LDMAT_SWZL: False,
-})
+matmul = _make_matmul(
+    pass_configs={
+        PassConfigKey.TL_DISABLE_AIU_LOWER: False,
+        PassConfigKey.TL_DISABLE_LDMAT_SWZL: False,
+    }
+)
 
 # Uses default pass_configs (TL_DISABLE_LDMAT_SWZL=True, swzl disabled)
 matmul_default = _make_matmul()
@@ -101,8 +104,8 @@ def run_case(M, N, K, block_M, block_N, block_K, num_stages, trans_A, trans_B, k
     print(f"{'=' * 60}", flush=True)
 
     compiled = kernel_func.compile(
-        M=M, N=N, K=K, block_M=block_M, block_N=block_N, block_K=block_K,
-        num_stages=num_stages, trans_A=trans_A, trans_B=trans_B)
+        M=M, N=N, K=K, block_M=block_M, block_N=block_N, block_K=block_K, num_stages=num_stages, trans_A=trans_A, trans_B=trans_B
+    )
     print("kernel compiled.", flush=True)
 
     device = torch.device("cuda")

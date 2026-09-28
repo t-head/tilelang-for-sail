@@ -22,11 +22,14 @@ from utils import print_benchmark_summary, bench_ref, inject_pass_configs_from_e
 
 
 @autotune(configs=get_mhc_big_fuse_configs(), warmup=5, rep=20, skip_check=True)
-@jit(out_idx=[5, 6, 7], pass_configs={
-    tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
-    tilelang.PassConfigKey.TL_DISABLE_TMA_LOWER: True,
-    tilelang.PassConfigKey.TL_PTXAS_REGISTER_USAGE_LEVEL: 10,
-})
+@jit(
+    out_idx=[5, 6, 7],
+    pass_configs={
+        tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
+        tilelang.PassConfigKey.TL_DISABLE_TMA_LOWER: True,
+        tilelang.PassConfigKey.TL_PTXAS_REGISTER_USAGE_LEVEL: 10,
+    },
+)
 def mhc_big_fuse(
     hidden_size: int,
     rms_eps: float,
@@ -156,12 +159,12 @@ def sinkhorn_normalize_ref(x: torch.Tensor, repeat: int, eps: float) -> torch.Te
     return x
 
 
-def ref_big_fuse(residual, gemm_out_mul, gemm_out_sqrsum, hc_scale, hc_base,
-                 rms_eps, hc_pre_eps, hc_sinkhorn_eps, hc_post_mult_value, sinkhorn_repeat):
+def ref_big_fuse(
+    residual, gemm_out_mul, gemm_out_sqrsum, hc_scale, hc_base, rms_eps, hc_pre_eps, hc_sinkhorn_eps, hc_post_mult_value, sinkhorn_repeat
+):
     """Reference big_fuse: RMS norm + split mixes + sinkhorn + apply pre mix."""
     hc_mult = residual.shape[1]
     hidden_size = residual.shape[2]
-    n_splits = gemm_out_mul.shape[0]
 
     # RMS norm + aggregate splits
     sqrsum = gemm_out_sqrsum.sum(dim=0)  # [num_tokens]
@@ -171,8 +174,8 @@ def ref_big_fuse(residual, gemm_out_mul, gemm_out_sqrsum, hc_scale, hc_base,
 
     # Split mixes
     pre_mix = (mixes[:, :hc_mult] * hc_scale[0] + hc_base[:hc_mult]).sigmoid() + hc_pre_eps
-    post_mix = (mixes[:, hc_mult:2*hc_mult] * hc_scale[1] + hc_base[hc_mult:2*hc_mult]).sigmoid() * hc_post_mult_value
-    comb_raw = mixes[:, 2*hc_mult:] * hc_scale[2] + hc_base[2*hc_mult:]
+    post_mix = (mixes[:, hc_mult : 2 * hc_mult] * hc_scale[1] + hc_base[hc_mult : 2 * hc_mult]).sigmoid() * hc_post_mult_value
+    comb_raw = mixes[:, 2 * hc_mult :] * hc_scale[2] + hc_base[2 * hc_mult :]
     comb_raw = comb_raw.view(-1, hc_mult, hc_mult)
 
     # Sinkhorn
@@ -184,9 +187,18 @@ def ref_big_fuse(residual, gemm_out_mul, gemm_out_sqrsum, hc_scale, hc_base,
     return post_mix, comb_mix.view(-1, hc_mult * hc_mult), layer_input
 
 
-def run_profile(n, hidden_size, hc_mult, threads, num_stages,
-                 rms_eps=1e-6, hc_pre_eps=1e-6,
-                 hc_sinkhorn_eps=1e-6, hc_post_mult_value=1.0, sinkhorn_repeat=10):
+def run_profile(
+    n,
+    hidden_size,
+    hc_mult,
+    threads,
+    num_stages,
+    rms_eps=1e-6,
+    hc_pre_eps=1e-6,
+    hc_sinkhorn_eps=1e-6,
+    hc_post_mult_value=1.0,
+    sinkhorn_repeat=10,
+):
     """Run the kernel once with an explicit config for ncu/acu profiling."""
     import torch
 
@@ -202,16 +214,23 @@ def run_profile(n, hidden_size, hc_mult, threads, num_stages,
     inject_pass_configs_from_env(mhc_big_fuse)
     with set_autotune_inputs(gemm_out_mul, gemm_out_sqrsum, hc_scale, hc_base, residual):
         kernel = mhc_big_fuse(
-            hidden_size, rms_eps, hc_pre_eps, hc_sinkhorn_eps,
-            hc_post_mult_value, sinkhorn_repeat, n_splits, hc_mult,
-            threads=threads, num_stages=num_stages,
+            hidden_size,
+            rms_eps,
+            hc_pre_eps,
+            hc_sinkhorn_eps,
+            hc_post_mult_value,
+            sinkhorn_repeat,
+            n_splits,
+            hc_mult,
+            threads=threads,
+            num_stages=num_stages,
         )
     kernel(gemm_out_mul, gemm_out_sqrsum, hc_scale, hc_base, residual)
 
 
-def run_profile_ref(n, hidden_size, hc_mult,
-                     rms_eps=1e-6, hc_pre_eps=1e-6,
-                     hc_sinkhorn_eps=1e-6, hc_post_mult_value=1.0, sinkhorn_repeat=10):
+def run_profile_ref(
+    n, hidden_size, hc_mult, rms_eps=1e-6, hc_pre_eps=1e-6, hc_sinkhorn_eps=1e-6, hc_post_mult_value=1.0, sinkhorn_repeat=10
+):
     """Run the reference once for ncu/acu profiling."""
     import torch
 
@@ -224,14 +243,24 @@ def run_profile_ref(n, hidden_size, hc_mult,
     hc_base = torch.randn(hc_mult3, dtype=torch.float32, device="cuda") * 0.1
     residual = torch.randn(n, hc_mult, hidden_size, dtype=torch.bfloat16, device="cuda")
 
-    ref_big_fuse(residual, gemm_out_mul, gemm_out_sqrsum, hc_scale, hc_base,
-                 rms_eps, hc_pre_eps, hc_sinkhorn_eps, hc_post_mult_value, sinkhorn_repeat)
+    ref_big_fuse(
+        residual,
+        gemm_out_mul,
+        gemm_out_sqrsum,
+        hc_scale,
+        hc_base,
+        rms_eps,
+        hc_pre_eps,
+        hc_sinkhorn_eps,
+        hc_post_mult_value,
+        sinkhorn_repeat,
+    )
 
 
-def main(n=1024, hidden_size=2560, hc_mult=4, rms_eps=1e-6, hc_pre_eps=1e-6,
-         hc_sinkhorn_eps=1e-6, hc_post_mult_value=1.0, sinkhorn_repeat=10):
+def main(
+    n=1024, hidden_size=2560, hc_mult=4, rms_eps=1e-6, hc_pre_eps=1e-6, hc_sinkhorn_eps=1e-6, hc_post_mult_value=1.0, sinkhorn_repeat=10
+):
     """Run autotune for big_fuse and print results."""
-    from tilelang.profiler import do_bench
 
     n_splits = 1
     hc_mult3 = hc_mult * 2 + hc_mult * hc_mult
@@ -245,8 +274,14 @@ def main(n=1024, hidden_size=2560, hc_mult=4, rms_eps=1e-6, hc_pre_eps=1e-6,
 
     with set_autotune_inputs(gemm_out_mul, gemm_out_sqrsum, hc_scale, hc_base, residual):
         best_result = mhc_big_fuse(
-            hidden_size, rms_eps, hc_pre_eps, hc_sinkhorn_eps,
-            hc_post_mult_value, sinkhorn_repeat, n_splits, hc_mult,
+            hidden_size,
+            rms_eps,
+            hc_pre_eps,
+            hc_sinkhorn_eps,
+            hc_post_mult_value,
+            sinkhorn_repeat,
+            n_splits,
+            hc_mult,
         )
 
     best_latency = best_result.latency
@@ -255,13 +290,22 @@ def main(n=1024, hidden_size=2560, hc_mult=4, rms_eps=1e-6, hc_pre_eps=1e-6,
     # FLOPs estimate: mainly the weighted sum (pre_apply_mix) + sinkhorn iterations
     # pre_apply_mix: n * hc_mult * hidden_size * 2 (mul + add)
     # sinkhorn: n * hc_mult^2 * sinkhorn_repeat * ~6 ops
-    total_flops = (2 * n * hc_mult * hidden_size +
-                   n * hc_mult * hc_mult * sinkhorn_repeat * 6)
+    total_flops = 2 * n * hc_mult * hidden_size + n * hc_mult * hc_mult * sinkhorn_repeat * 6
 
     # Reference
     def ref_fn():
-        return ref_big_fuse(residual, gemm_out_mul, gemm_out_sqrsum, hc_scale, hc_base,
-                            rms_eps, hc_pre_eps, hc_sinkhorn_eps, hc_post_mult_value, sinkhorn_repeat)
+        return ref_big_fuse(
+            residual,
+            gemm_out_mul,
+            gemm_out_sqrsum,
+            hc_scale,
+            hc_base,
+            rms_eps,
+            hc_pre_eps,
+            hc_sinkhorn_eps,
+            hc_post_mult_value,
+            sinkhorn_repeat,
+        )
 
     ref_latency = bench_ref(ref_fn)
     ref_tflops = total_flops / ref_latency * 1e-9 if ref_latency > 0 else 0
@@ -269,9 +313,12 @@ def main(n=1024, hidden_size=2560, hc_mult=4, rms_eps=1e-6, hc_pre_eps=1e-6,
     print_benchmark_summary(
         "mHC BigFuse",
         f"n={n}, hidden_size={hidden_size}, hc_mult={hc_mult}",
-        best_latency, total_flops / best_latency * 1e-9,
-        ref_latency, ref_tflops,
-        "Reference", best_config,
+        best_latency,
+        total_flops / best_latency * 1e-9,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
     )
 
     return best_latency, total_flops / best_latency * 1e-9, best_config, ref_latency
@@ -282,17 +329,14 @@ if __name__ == "__main__":
     parser.add_argument("--n", type=int, default=1024)
     parser.add_argument("--hidden_size", type=int, default=2560)
     parser.add_argument("--hc_mult", type=int, default=4)
-    parser.add_argument("--profile", action="store_true",
-                        help="Run kernel once with given config for ncu/acu profiling")
-    parser.add_argument("--profile-ref", action="store_true",
-                        help="Run reference once for ncu/acu profiling")
+    parser.add_argument("--profile", action="store_true", help="Run kernel once with given config for ncu/acu profiling")
+    parser.add_argument("--profile-ref", action="store_true", help="Run reference once for ncu/acu profiling")
     parser.add_argument("--threads", type=int, default=None)
     parser.add_argument("--num_stages", type=int, default=None)
     args = parser.parse_args()
 
     if args.profile:
-        run_profile(args.n, args.hidden_size, args.hc_mult,
-                    args.threads, args.num_stages)
+        run_profile(args.n, args.hidden_size, args.hc_mult, args.threads, args.num_stages)
     elif args.profile_ref:
         run_profile_ref(args.n, args.hidden_size, args.hc_mult)
     else:

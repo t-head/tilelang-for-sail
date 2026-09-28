@@ -72,8 +72,6 @@ def sparse_mla_fwd(
     dtype = T.bfloat16
     accum_dtype = T.float32
 
-    G = kv_group
-    H = head_kv
     padded_H = max(tilelang.math.next_power_of_2(head_kv), 16)
     BI = block_I
     NI = tilelang.cdiv(topk, block_I)
@@ -101,8 +99,6 @@ def sparse_mla_fwd(
             Q_tail_shared = T.alloc_shared([H_per_block, D_tail], dtype)
             KV_shared = T.alloc_shared([BI, D], dtype)
             K_tail_shared = T.alloc_shared([BI, D_tail], dtype)
-            O_shared = T.alloc_shared([H_per_block, D], dtype)
-            Lse_shared = T.alloc_shared([H_per_block], accum_dtype)
             mask = T.alloc_fragment([BI], "bool")
 
             acc_o = T.alloc_fragment([H_per_block, D], accum_dtype)
@@ -170,8 +166,7 @@ def sparse_mla_fwd(
     return main
 
 
-def run_profile(batch, seq_len, seq_len_kv, heads, kv_group, topk, dim, tail_dim,
-                 block_I, num_stages, threads):
+def run_profile(batch, seq_len, seq_len_kv, heads, kv_group, topk, dim, tail_dim, block_I, num_stages, threads):
     """Run the kernel once with an explicit config for ncu/acu profiling."""
     import torch
 
@@ -185,14 +180,20 @@ def run_profile(batch, seq_len, seq_len_kv, heads, kv_group, topk, dim, tail_dim
         for t in range(seq_len):
             for h in range(kv_group):
                 valid = max(1, t)
-                idx = torch.randperm(valid, device="cuda")[:min(topk, valid)]
-                Indices[b, t, h, :len(idx)] = idx
+                idx = torch.randperm(valid, device="cuda")[: min(topk, valid)]
+                Indices[b, t, h, : len(idx)] = idx
     inject_pass_configs_from_env(sparse_mla_fwd)
     with set_autotune_inputs(Q, KV, Indices):
         kernel = sparse_mla_fwd(
-            heads, dim, tail_dim, topk, kv_group,
+            heads,
+            dim,
+            tail_dim,
+            topk,
+            kv_group,
             is_causal=True,
-            block_I=block_I, num_stages=num_stages, threads=threads,
+            block_I=block_I,
+            num_stages=num_stages,
+            threads=threads,
         )
     kernel(Q, KV, Indices)
 
@@ -213,8 +214,8 @@ def run_profile_ref(batch, seq_len, seq_len_kv, heads, kv_group, topk, dim, tail
         for t in range(seq_len):
             for h in range(kv_group):
                 valid = max(1, t)
-                idx = torch.randperm(valid, device="cuda")[:min(topk, valid)]
-                Indices_ref[b, t, h, :len(idx)] = idx
+                idx = torch.randperm(valid, device="cuda")[: min(topk, valid)]
+                Indices_ref[b, t, h, : len(idx)] = idx
 
     for bi in range(batch):
         flash_mla_sparse_fwd(Q[bi], KV[bi], Indices_ref[bi], sm_scale, dim)
@@ -222,7 +223,6 @@ def run_profile_ref(batch, seq_len, seq_len_kv, heads, kv_group, topk, dim, tail
 
 def main(batch=1, seq_len=4096, seq_len_kv=4096, heads=128, kv_group=1, topk=2048, dim=512, tail_dim=64):
     """Run autotune and print results."""
-    from tilelang.profiler import do_bench
 
     dtype = torch.bfloat16
     dim_qk = dim + tail_dim
@@ -241,12 +241,9 @@ def main(batch=1, seq_len=4096, seq_len_kv=4096, heads=128, kv_group=1, topk=204
         for t in range(seq_len):
             for h in range(kv_group):
                 valid = max(1, t)
-                idx = torch.randperm(valid, device="cuda")[:min(topk, valid)]
-                Indices[b, t, h, :len(idx)] = idx
-                Indices_ref[b, t, h, :len(idx)] = idx
-    Output = torch.zeros(batch, seq_len, heads, dim, dtype=dtype, device="cuda")
-    Lse = torch.zeros(batch, seq_len, heads, dtype=torch.float32, device="cuda")
-
+                idx = torch.randperm(valid, device="cuda")[: min(topk, valid)]
+                Indices[b, t, h, : len(idx)] = idx
+                Indices_ref[b, t, h, : len(idx)] = idx
     with set_autotune_inputs(Q, KV, Indices):
         best_result = sparse_mla_fwd(heads, dim, tail_dim, topk, kv_group, is_causal=True)
 
@@ -273,9 +270,12 @@ def main(batch=1, seq_len=4096, seq_len_kv=4096, heads=128, kv_group=1, topk=204
     print_benchmark_summary(
         "V32 Sparse MLA Fwd",
         f"batch={batch}, seq={seq_len}, heads={heads}, topk={topk}",
-        best_latency, total_flops / best_latency * 1e-9,
-        ref_latency, ref_tflops,
-        "FlashMLA", best_config,
+        best_latency,
+        total_flops / best_latency * 1e-9,
+        ref_latency,
+        ref_tflops,
+        "FlashMLA",
+        best_config,
     )
 
     return best_latency, total_flops / best_latency * 1e-9, best_config, ref_latency
@@ -291,21 +291,28 @@ if __name__ == "__main__":
     parser.add_argument("--topk", type=int, default=2048)
     parser.add_argument("--dim", type=int, default=512)
     parser.add_argument("--tail_dim", type=int, default=64)
-    parser.add_argument("--profile", action="store_true",
-                        help="Run kernel once with given config for ncu/acu profiling")
-    parser.add_argument("--profile-ref", action="store_true",
-                        help="Run reference once for ncu/acu profiling")
+    parser.add_argument("--profile", action="store_true", help="Run kernel once with given config for ncu/acu profiling")
+    parser.add_argument("--profile-ref", action="store_true", help="Run reference once for ncu/acu profiling")
     parser.add_argument("--block_I", type=int, default=None)
     parser.add_argument("--num_stages", type=int, default=None)
     parser.add_argument("--threads", type=int, default=None)
     args = parser.parse_args()
 
     if args.profile:
-        run_profile(args.batch, args.seq_len, args.seq_len_kv, args.heads,
-                    args.kv_group, args.topk, args.dim, args.tail_dim,
-                    args.block_I, args.num_stages, args.threads)
+        run_profile(
+            args.batch,
+            args.seq_len,
+            args.seq_len_kv,
+            args.heads,
+            args.kv_group,
+            args.topk,
+            args.dim,
+            args.tail_dim,
+            args.block_I,
+            args.num_stages,
+            args.threads,
+        )
     elif args.profile_ref:
-        run_profile_ref(args.batch, args.seq_len, args.seq_len_kv, args.heads,
-                        args.kv_group, args.topk, args.dim, args.tail_dim)
+        run_profile_ref(args.batch, args.seq_len, args.seq_len_kv, args.heads, args.kv_group, args.topk, args.dim, args.tail_dim)
     else:
         main(args.batch, args.seq_len, args.seq_len_kv, args.heads, args.kv_group, args.topk, args.dim, args.tail_dim)

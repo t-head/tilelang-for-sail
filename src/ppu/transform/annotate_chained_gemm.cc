@@ -36,13 +36,15 @@ public:
   Stmt VisitStmt_(const BufferStoreNode *op) final {
     Stmt result = StmtExprMutator::VisitStmt_(op);
     const auto *store = result.as<BufferStoreNode>();
-    if (!store) return result;
+    if (!store)
+      return result;
     if (!IsFragmentBuffer(store->buffer) && !IsLocalBuffer(store->buffer)) {
       return result;
     }
     bool rhs_has_chain = false;
     PostOrderVisit(store->value, [&](const ObjectRef &node) {
-      if (rhs_has_chain) return;
+      if (rhs_has_chain)
+        return;
       if (const auto *load = node.as<BufferLoadNode>()) {
         if (load->buffer.defined() &&
             chained_data_vars_.count(load->buffer->data.get()) != 0) {

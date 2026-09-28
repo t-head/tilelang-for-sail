@@ -8,9 +8,7 @@ namespace tl {
 namespace detail {
 
 // Provide architecture-specific defaults so callers may omit arguments.
-TL_DEVICE constexpr int default_warp_size() {
-  return 32;
-}
+TL_DEVICE constexpr int default_warp_size() { return 32; }
 
 TL_DEVICE constexpr int default_warps_per_group() { return 4; }
 

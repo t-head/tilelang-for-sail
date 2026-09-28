@@ -3,11 +3,11 @@
 	url = https://github.com/NVIDIA/cutlass
 [submodule "3rdparty/tvm"]
 	path = 3rdparty/tvm
-	url = https://github.com/tile-ai/tvm
+	url = https://github.com/TileLang/tvm
 [submodule "3rdparty/composable_kernel"]
 	path = 3rdparty/composable_kernel
 	url = https://github.com/ROCm/composable_kernel
 [submodule "3rdparty/actlize"]
 	path = 3rdparty/actlize
-	url = git@gitlab.alibaba-inc.com:PPU-Libraries/actlize.git
+	url = https://github.com/t-head/actlize
 	branch = v1.0.0

@@ -307,9 +307,7 @@ std::string GetTileLangFP4Type(DataType type) {
   return stream.str();
 }
 
-CodeGenTileLangPPU::CodeGenTileLangPPU() {
-  restrict_keyword_ = "__restrict__";
-}
+CodeGenTileLangPPU::CodeGenTileLangPPU() { restrict_keyword_ = "__restrict__"; }
 
 void CodeGenTileLangPPU::ReserveKeywordsAsUnique_() {
   CodeGenC::ReserveKeywordsAsUnique();
@@ -1013,8 +1011,8 @@ void CodeGenTileLangPPU::PrintType(DataType t, std::ostream &os) { // NOLINT(*)
 }
 
 void CodeGenTileLangPPU::PrintVecBinaryOp(const std::string &op, DataType t,
-                                           PrimExpr lhs, PrimExpr rhs,
-                                           std::ostream &os) { // NOLINT(*)
+                                          PrimExpr lhs, PrimExpr rhs,
+                                          std::ostream &os) { // NOLINT(*)
   // Fast-path for packed x2 arithmetic (float32x2, bfloat16x2, float16x2).
   //
   // For float32x2: TIX `.f32x2` instructions are available higher arch.
@@ -1230,8 +1228,8 @@ void CodeGenTileLangPPU::PrintVecBinaryOp(const std::string &op, DataType t,
 }
 
 void CodeGenTileLangPPU::PrintVecElemLoad(const std::string &vec, DataType t,
-                                           int i,
-                                           std::ostream &os) { // NOLINT(*)
+                                          int i,
+                                          std::ostream &os) { // NOLINT(*)
   if (t.is_scalar()) {
     os << vec;
     return;
@@ -1327,7 +1325,7 @@ void CodeGenTileLangPPU::PrintVecElemLoad(const std::string &vec, DataType t,
 }
 
 void CodeGenTileLangPPU::PrintVecElemStore(const std::string &vec, DataType t,
-                                            int i, const std::string &value) {
+                                           int i, const std::string &value) {
   this->PrintIndent();
   static const char access[] = {'x', 'y', 'z', 'w'};
   ICHECK(i >= 0 && i < 256 / t.bits());
@@ -1464,7 +1462,7 @@ void CodeGenTileLangPPU::PrintStorageSync(const CallNode *op) {
 }
 
 void CodeGenTileLangPPU::PrintStorageScope(const std::string &scope,
-                                            std::ostream &os) { // NOLINT(*)
+                                           std::ostream &os) { // NOLINT(*)
   ICHECK_NE(scope, "global")
       << "Cannot allocate global memory when targeting HGGC. You must pass "
          "all global arrays as input instead";
@@ -1477,7 +1475,7 @@ void CodeGenTileLangPPU::PrintStorageScope(const std::string &scope,
 }
 
 std::string CodeGenTileLangPPU::CastFromTo(std::string value, DataType from,
-                                            DataType target) {
+                                           DataType target) {
   if (from == target)
     return value;
   std::ostringstream os;
@@ -1727,9 +1725,8 @@ void CodeGenTileLangPPU::VisitExpr_(const CastNode *op, std::ostream &os) {
     // Use __tl_cvt_fp8x2_to_bfloat162 for vectorized conversion (fp8x2 ->
     // bfloat162)
     if (lanes == 2 || lanes == 4 || lanes == 8) {
-      PrintVectorizedCast("__tl_cvt_fp8x2_to_bfloat162",
-                          "__hg_fp8x2_storage_t", "__ppu_bfloat162",
-                          ", " + type_suffix, true, true);
+      PrintVectorizedCast("__tl_cvt_fp8x2_to_bfloat162", "__hg_fp8x2_storage_t",
+                          "__ppu_bfloat162", ", " + type_suffix, true, true);
       return;
     }
   }
@@ -1968,9 +1965,9 @@ void CodeGenTileLangPPU::VisitExpr_(const MaxNode *op, std::ostream &os) {
 }
 
 void CodeGenTileLangPPU::PrintCallExtern(Type ret_type, String global_symbol,
-                                          const Array<PrimExpr> &args,
-                                          bool skip_first_arg,
-                                          std::ostream &os) { // NOLINT(*)
+                                         const Array<PrimExpr> &args,
+                                         bool skip_first_arg,
+                                         std::ostream &os) { // NOLINT(*)
   DataType ret_dtype = GetRuntimeDataType(ret_type);
   if (ret_dtype.is_fixed_length_vector()) {
     //
@@ -2027,8 +2024,8 @@ void CodeGenTileLangPPU::PrintCallExtern(Type ret_type, String global_symbol,
 
 // Print a reference expression to a buffer.
 std::string CodeGenTileLangPPU::GetBufferRef(DataType t,
-                                              const BufferNode *buffer,
-                                              PrimExpr index) {
+                                             const BufferNode *buffer,
+                                             PrimExpr index) {
   const VarNode *buffer_var = buffer->data.get();
   std::ostringstream os;
   std::string vid = GetVarID(buffer_var);
@@ -2122,9 +2119,8 @@ std::string CodeGenTileLangPPU::GetBufferRef(DataType t,
   return os.str();
 }
 
-std::string CodeGenTileLangPPU::GetVecLoad(DataType t,
-                                            const BufferNode *buffer,
-                                            PrimExpr base) {
+std::string CodeGenTileLangPPU::GetVecLoad(DataType t, const BufferNode *buffer,
+                                           PrimExpr base) {
   const VarNode *buffer_var = buffer->data.get();
   std::string scope;
   if (alloc_storage_scope_.count(buffer_var)) {
@@ -2146,8 +2142,8 @@ std::string CodeGenTileLangPPU::GetVecLoad(DataType t,
 }
 
 void CodeGenTileLangPPU::PrintVecStore(const BufferNode *buffer, DataType t,
-                                        PrimExpr base,
-                                        const std::string &value) {
+                                       PrimExpr base,
+                                       const std::string &value) {
   const VarNode *buffer_var = buffer->data.get();
   std::string scope;
   if (alloc_storage_scope_.count(buffer_var)) {
@@ -2370,22 +2366,25 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     print_extern_call_stmt("tl::mbarrier_cp_async_arrive_noinc");
   } else if (op->op.same_as(tl::mbarrier_expect_tx()) ||
              op->op.same_as(tl::mbarrier_wait_parity())) {
-    LOG(FATAL) << "PPU only supports ppu0010/ppu0015; hardware mbarrier operations "
-                  "require ppu0015+ TMA/mbarrier support.";
+    LOG(FATAL)
+        << "PPU only supports ppu0010/ppu0015; hardware mbarrier operations "
+           "require ppu0015+ TMA/mbarrier support.";
   } else if (op->op.same_as(tl::no_set_max_nreg())) {
     return;
   } else if (op->op.same_as(tl::tma_load()) ||
              op->op.same_as(tl::tma_load_multicast())) {
-    LOG(FATAL) << "PPU only supports ppu0010/ppu0015; TMA load lowering requires "
-                  "ppu0015+ TMA.";
+    LOG(FATAL)
+        << "PPU only supports ppu0010/ppu0015; TMA load lowering requires "
+           "ppu0015+ TMA.";
   } else if (op->op.same_as(tl::ppu_aiu_load())) {
     ICHECK_EQ(op->args.size(), 10U);
     print_extern_call_stmt("tl::aiu_load");
   } else if (op->op.same_as(tl::tma_store()) ||
              op->op.same_as(tl::tma_load_gather4()) ||
              op->op.same_as(tl::tma_store_scatter4())) {
-    LOG(FATAL) << "PPU only supports ppu0010/ppu0015; TMA store/gather4/scatter4 "
-                  "lowering requires ppu0015+ TMA.";
+    LOG(FATAL)
+        << "PPU only supports ppu0010/ppu0015; TMA store/gather4/scatter4 "
+           "lowering requires ppu0015+ TMA.";
   } else if (op->op.same_as(tl::ptx_ldmatrix())) {
     int trans = Downcast<IntImm>(op->args[0])->value;
     int num = Downcast<IntImm>(op->args[1])->value;
@@ -2595,10 +2594,8 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     auto [m, n, k] = tl::codegen::ppu::tix::ParseMMAShape(shape);
 
     if (has_runtime_scales) {
-      ICHECK(dtype_a_enum ==
-                 tl::codegen::ppu::tix::DataType::kFloat4_e2m1fn &&
-             dtype_b_enum ==
-                 tl::codegen::ppu::tix::DataType::kFloat4_e2m1fn &&
+      ICHECK(dtype_a_enum == tl::codegen::ppu::tix::DataType::kFloat4_e2m1fn &&
+             dtype_b_enum == tl::codegen::ppu::tix::DataType::kFloat4_e2m1fn &&
              m == 16 && n == 16 && k == 64)
           << "Runtime MMA scales are only supported by PPU FP4 m16n16k64";
     }
@@ -2612,15 +2609,15 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
           "(C_offset)), reinterpret_cast<const (ARegType)*>((A_ptr) + "
           "(A_offset)), reinterpret_cast<const (BRegType)*>((B_ptr) + "
           "(B_offset)), static_cast<uint32_t>((ScaleA)), "
-          "static_cast<uint32_t>((ScaleB)), static_cast<uint32_t>((ScaleASel)), "
+          "static_cast<uint32_t>((ScaleB)), "
+          "static_cast<uint32_t>((ScaleASel)), "
           "static_cast<uint32_t>((ScaleBSel)));\n";
     } else {
-      mma_call =
-          "tl::mma_sync<(AType), (BType), (CType), (M), (N), (K), "
-          "(TransA), (TransB)>(reinterpret_cast<(CRegType)*>((C_ptr) + "
-          "(C_offset)), reinterpret_cast<const (ARegType)*>((A_ptr) + "
-          "(A_offset)), reinterpret_cast<const (BRegType)*>((B_ptr) + "
-          "(B_offset)));\n";
+      mma_call = "tl::mma_sync<(AType), (BType), (CType), (M), (N), (K), "
+                 "(TransA), (TransB)>(reinterpret_cast<(CRegType)*>((C_ptr) + "
+                 "(C_offset)), reinterpret_cast<const (ARegType)*>((A_ptr) + "
+                 "(A_offset)), reinterpret_cast<const (BRegType)*>((B_ptr) + "
+                 "(B_offset)));\n";
     }
     tl::codegen::ppu::Replacer replacer;
 
@@ -2636,8 +2633,8 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     }
     replacer.register_rule("(AType)", AType);
     replacer.register_rule("(BType)", BType);
-    replacer.register_rule("(CType)",
-                           tl::codegen::ppu::tix::DTypeEnumToString(dtype_c_enum));
+    replacer.register_rule(
+        "(CType)", tl::codegen::ppu::tix::DTypeEnumToString(dtype_c_enum));
     replacer.register_rule("(M)", std::to_string(m));
     replacer.register_rule("(N)", std::to_string(n));
     replacer.register_rule("(K)", std::to_string(k));
@@ -2662,8 +2659,9 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     this->PrintIndent();
     this->stream << replacer.rewrite(mma_call);
   } else if (op->op.same_as(tl::tma_store_cluster())) {
-    LOG(FATAL) << "PPU only supports ppu0010/ppu0015; TMA cluster-store lowering "
-                  "requires ppu0015+ TMA.";
+    LOG(FATAL)
+        << "PPU only supports ppu0010/ppu0015; TMA cluster-store lowering "
+           "requires ppu0015+ TMA.";
 
   } else if (op->op.same_as(tl::ptx_cluster_store())) {
     ICHECK_EQ(op->args.size(), 4U);
@@ -2690,8 +2688,9 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     this->stream << "}\n";
 
   } else if (op->op.same_as(tl::ptx_mma_sm70())) {
-    LOG(FATAL) << "T.ptx_mma_sm70() emits lower version tensor-core MMA, which is "
-               << "below PPU's supported ppu0010/ppu0015 targets.";
+    LOG(FATAL)
+        << "T.ptx_mma_sm70() emits lower version tensor-core MMA, which is "
+        << "below PPU's supported ppu0010/ppu0015 targets.";
   } else if (op->op.same_as(builtin::ptx_mma_sp())) {
     // arg 0: shape: mXnXkX
     // arg 1: A layout: row/col
@@ -2763,16 +2762,17 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
 
     replacer.register_rule("(AType)", AType);
     replacer.register_rule("(BType)", BType);
-    replacer.register_rule("(CType)",
-                           tl::codegen::ppu::tix::DTypeEnumToString(dtype_c_enum));
+    replacer.register_rule(
+        "(CType)", tl::codegen::ppu::tix::DTypeEnumToString(dtype_c_enum));
     replacer.register_rule("(M)", std::to_string(m));
     replacer.register_rule("(N)", std::to_string(n));
     replacer.register_rule("(K)", std::to_string(k));
     replacer.register_rule("(TransA)", A_layout == "row" ? "false" : "true");
     replacer.register_rule("(TransB)", B_layout == "row" ? "false" : "true");
-    replacer.register_rule("(SparseSel)", sparse_selector == 0
-                                              ? "PPU0010_ARCH::MMA::SparseSel::Zero"
-                                              : "PPU0010_ARCH::MMA::SparseSel::One");
+    replacer.register_rule("(SparseSel)",
+                           sparse_selector == 0
+                               ? "PPU0010_ARCH::MMA::SparseSel::Zero"
+                               : "PPU0010_ARCH::MMA::SparseSel::One");
     replacer.register_rule("(ARegType)", ARegType);
     replacer.register_rule("(BRegType)", BRegType);
     replacer.register_rule("(CRegType)",
@@ -2961,7 +2961,8 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
         barrier_name_ + "[" + std::to_string(barrier_id) + "]";
     this->stream << PrintArriveBarrierAsm(barrier);
   } else if (op->op.same_as(builtin::ptx_arrive_barrier_expect_tx())) {
-    LOG(FATAL) << "ptx_arrive_barrier_expect_tx is not supported on PPU backend";
+    LOG(FATAL)
+        << "ptx_arrive_barrier_expect_tx is not supported on PPU backend";
   } else if (op->op.same_as(builtin::ptx_wait_barrier())) {
     need_cast_smem_ptr_to_int_ = true;
     int barrier_id = Downcast<IntImm>(op->args[0])->value;
@@ -3440,14 +3441,17 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     need_intrin_h_ = true;
     os << "tl::tl_shuffle_elect<" << PrintExpr(op->args[0]) << ">()";
   } else if (op->op.same_as(tl::initialize_wgmma_descriptor())) {
-    LOG(FATAL) << "PPU only supports ppu0010/ppu0015; WGMMA descriptors require "
-               << "Hopper ppu0015+.";
+    LOG(FATAL)
+        << "PPU only supports ppu0010/ppu0015; WGMMA descriptors require "
+        << "Hopper ppu0015+.";
   } else if (op->op.same_as(tl::initialize_tcgen05_descriptor())) {
-    LOG(FATAL) << "PPU only supports ppu0010/ppu0015; TCGEN05 descriptors require "
-               << "Blackwell ppu0015+.";
+    LOG(FATAL)
+        << "PPU only supports ppu0010/ppu0015; TCGEN05 descriptors require "
+        << "Blackwell ppu0015+.";
   } else if (op->op.same_as(tl::increase_descriptor_offset())) {
-    LOG(FATAL) << "PPU does not support increase_descriptor_offset. "
-               << "WGMMA/Tcgen05 descriptor operations are not available on PPU.";
+    LOG(FATAL)
+        << "PPU does not support increase_descriptor_offset. "
+        << "WGMMA/Tcgen05 descriptor operations are not available on PPU.";
   } else if (HandleLateIntrinsicCall(op, os)) {
     // Handled by a helper to keep MSVC's parser away from the giant tail chain.
   } else {
@@ -3456,7 +3460,7 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
 }
 
 bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
-                                                  std::ostream &os) {
+                                                 std::ostream &os) {
   if (op->op.same_as(tl::__exp())) {
     PPUFastMath math_func;
     std::string func_name = math_func(op->dtype, "exp");
@@ -3895,8 +3899,9 @@ void CodeGenTileLangPPU::VisitStmt_(const AllocBufferNode *op) {
     LOG(FATAL) << "PPU does not support Tcgen05 SMEM descriptor operations. "
                << "Use ppu0010/ppu0015 MMA atoms instead.";
   } else if (scope == "local.descriptor.tcgen05_instr") {
-    LOG(FATAL) << "PPU does not support Tcgen05 instruction descriptor operations. "
-               << "Use ppu0010/ppu0015 MMA atoms instead.";
+    LOG(FATAL)
+        << "PPU does not support Tcgen05 instruction descriptor operations. "
+        << "Use ppu0010/ppu0015 MMA atoms instead.";
   } else {
     bool is_float4_unpacked_shared =
         alloc_dtype.is_float4_e2m1_unpacked() &&
@@ -4018,7 +4023,7 @@ void CodeGenTileLangPPU::VisitExpr_(const RampNode *op, std::ostream &os) {
 }
 
 void CodeGenTileLangPPU::VisitExpr_(const BufferLoadNode *op,
-                                     std::ostream &os) { // NOLINT(*)
+                                    std::ostream &os) { // NOLINT(*)
   ICHECK_EQ(op->indices.size(), 1)
       << "Load from non-flat memory not supported.";
   ICHECK(!op->predicate.defined())
@@ -4215,7 +4220,7 @@ void CodeGenTileLangPPU::VisitStmt_(const BufferStoreNode *op) {
 }
 
 void CodeGenTileLangPPU::VisitExpr_(const ShuffleNode *op,
-                                     std::ostream &os) { // NOLINT(*)
+                                    std::ostream &os) { // NOLINT(*)
   // For bfloat16x2 / float16x2 construction from two scalar lanes, emit a
   // proper pack intrinsic instead of the generic `uint1(a, b)` produced by
   // the base CodeGenC which is not valid HGGC.
@@ -4330,7 +4335,7 @@ void CodeGenTileLangPPU::VisitExpr_(const ShuffleNode *op,
 }
 
 void CodeGenTileLangPPU::VisitExpr_(const BroadcastNode *op,
-                                     std::ostream &os) { // NOLINT(*)
+                                    std::ostream &os) { // NOLINT(*)
   int lanes = static_cast<int>(Downcast<IntImm>(op->lanes)->value);
   if ((op->dtype.is_int() || op->dtype.is_uint()) && op->dtype.bits() == 8) {
     const int64_t *p = as_const_int(op->value);
@@ -4650,13 +4655,13 @@ inline void PrintConst(const FloatImmNode *op, std::ostream &os,
 }
 
 void CodeGenTileLangPPU::VisitExpr_(const FloatImmNode *op,
-                                     std::ostream &os) { // NOLINT(*)
+                                    std::ostream &os) { // NOLINT(*)
   PrintConst(op, os, this);
 }
 
 void CodeGenTileLangPPU::PrintWmmaScope(const std::string &scope, DataType t,
-                                         const VarNode *variable,
-                                         std::ostream &os) {
+                                        const VarNode *variable,
+                                        std::ostream &os) {
   std::stringstream type;
   PrintType(t, type);
   ICHECK(fragment_shapes.count(variable))
@@ -4683,22 +4688,22 @@ void CodeGenTileLangPPU::PrintWmmaScope(const std::string &scope, DataType t,
   if (scope == "wmma.matrix_a") {
     std::string layout_str = fragment_layouts[variable];
     ICHECK_NE(layout_str, "") << "Layout must be defined for matrix_a";
-    os << "awmma::fragment<awmma::matrix_a, " << shape_str << ", "
-       << type.str() << ", awmma::" << layout_str << ">";
+    os << "awmma::fragment<awmma::matrix_a, " << shape_str << ", " << type.str()
+       << ", awmma::" << layout_str << ">";
   } else if (scope == "wmma.matrix_b") {
     std::string layout_str = fragment_layouts[variable];
     ICHECK_NE(layout_str, "") << "Layout must be defined for matrix_b";
-    os << "awmma::fragment<awmma::matrix_b, " << shape_str << ", "
-       << type.str() << ", awmma::" << layout_str << ">";
+    os << "awmma::fragment<awmma::matrix_b, " << shape_str << ", " << type.str()
+       << ", awmma::" << layout_str << ">";
   } else if (scope == "wmma.accumulator") {
-    os << "awmma::fragment<awmma::accumulator, " << shape_str
-       << ", " << type.str() << ">";
+    os << "awmma::fragment<awmma::accumulator, " << shape_str << ", "
+       << type.str() << ">";
   }
 }
 
 int32_t CodeGenTileLangPPU::GetWmmaFragmentSize(const std::string &scope,
-                                                 const VarNode *variable,
-                                                 int32_t size) {
+                                                const VarNode *variable,
+                                                int32_t size) {
   ICHECK(fragment_shapes.count(variable))
       << "Cannot find shape of the wmma fragment " << variable->name_hint;
   std::string shape_str = fragment_shapes.at(variable);
@@ -4710,8 +4715,8 @@ int32_t CodeGenTileLangPPU::GetWmmaFragmentSize(const std::string &scope,
 }
 
 void CodeGenTileLangPPU::HandleVolatileLoads(const std::string &value,
-                                              const BufferLoadNode *op,
-                                              std::ostream &os) {
+                                             const BufferLoadNode *op,
+                                             std::ostream &os) {
   // Cast away volatile qualifier for fp16 types. That is, only loads and
   // stores are volatile. The loaded objects are not marked as volatile.
   //
@@ -4726,8 +4731,8 @@ void CodeGenTileLangPPU::HandleVolatileLoads(const std::string &value,
 }
 
 void CodeGenTileLangPPU::PrintVecElemLoadExpr(DataType t, int i,
-                                               const std::string &value,
-                                               std::ostream &os) {
+                                              const std::string &value,
+                                              std::ostream &os) {
   ICHECK_GT(t.lanes(), 1);
   if (t.bits() == 8 && (t.is_int() || t.is_uint())) {
     if (!(t.lanes() == 2 || t.lanes() == 3)) {
@@ -4793,8 +4798,8 @@ void CodeGenTileLangPPU::PrintVecElemLoadExpr(DataType t, int i,
 }
 
 void CodeGenTileLangPPU::PrintFunctionSignature(const String &function_name,
-                                                 const PrimFunc &func,
-                                                 std::ostream &os) {
+                                                const PrimFunc &func,
+                                                std::ostream &os) {
   PrintFuncPrefix(os);
   CodeGenC::PrintType(func->ret_type, os);
   CodeGenC::PrintExtraAttrs(func, os);
@@ -4873,8 +4878,7 @@ void CodeGenTileLangPPU::PrintFunctionSignature(const String &function_name,
   }
 }
 
-void CodeGenTileLangPPU::AddFunction(const GlobalVar &gvar,
-                                      const PrimFunc &f) {
+void CodeGenTileLangPPU::AddFunction(const GlobalVar &gvar, const PrimFunc &f) {
   auto code_block_source = f->GetAttr<String>(tl::attr::kCodeBlockSource);
   if (code_block_source) {
     auto global_symbol = f->GetAttr<String>(tvm::attr::kGlobalSymbol);

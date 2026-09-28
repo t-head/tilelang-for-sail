@@ -19,6 +19,7 @@ def with_aiu_lower_tuning(configs):
     """
     try:
         from tilelang.contrib import hgcc
+
         _arch = hgcc.get_target_compute_version()
         _compute_version = hgcc.parse_compute_version(_arch)
         if _compute_version != (1, 5):
@@ -30,9 +31,7 @@ def with_aiu_lower_tuning(configs):
     for cfg in configs:
         for val in (True, False):
             new_cfg = dict(cfg)
-            new_cfg["pass_configs"] = {
-                tilelang.PassConfigKey.TL_DISABLE_AIU_LOWER: val
-            }
+            new_cfg["pass_configs"] = {tilelang.PassConfigKey.TL_DISABLE_AIU_LOWER: val}
             expanded.append(new_cfg)
     return expanded
 
@@ -40,6 +39,7 @@ def with_aiu_lower_tuning(configs):
 # ---------------------------------------------------------------------------
 # DeepGEMM FP8 configs
 # ---------------------------------------------------------------------------
+
 
 def get_deepgemm_configs():
     """Tunable configs for FP8 2xAcc GEMM kernel."""
@@ -49,15 +49,13 @@ def get_deepgemm_configs():
         threads=[128, 256],
         enable_rasteration=[True, False],
     )
-    return with_aiu_lower_tuning([
-        {k: v for k, v in zip(iter_params, values)}
-        for values in itertools.product(*iter_params.values())
-    ])
+    return with_aiu_lower_tuning([{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())])
 
 
 # ---------------------------------------------------------------------------
 # MLA decode configs
 # ---------------------------------------------------------------------------
+
 
 def get_mla_configs():
     """Tunable configs for MLA decode kernel."""
@@ -79,6 +77,7 @@ def get_mla_configs():
 # Paged MLA decode configs
 # ---------------------------------------------------------------------------
 
+
 def get_mla_paged_configs():
     """Tunable configs for paged MLA decode kernel.
 
@@ -90,15 +89,13 @@ def get_mla_paged_configs():
         num_stages=[1, 2, 3],
         threads=[128, 256],
     )
-    return with_aiu_lower_tuning([
-        {k: v for k, v in zip(iter_params, values)}
-        for values in itertools.product(*iter_params.values())
-    ])
+    return with_aiu_lower_tuning([{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())])
 
 
 # ---------------------------------------------------------------------------
 # NSA (Native Sparse Attention) configs
 # ---------------------------------------------------------------------------
+
 
 def get_nsa_configs():
     """Tunable configs for NSA fwd kernel."""
@@ -106,15 +103,13 @@ def get_nsa_configs():
         num_stages=[1, 2, 3],
         threads=[32, 64, 128],
     )
-    return with_aiu_lower_tuning([
-        {k: v for k, v in zip(iter_params, values)}
-        for values in itertools.product(*iter_params.values())
-    ])
+    return with_aiu_lower_tuning([{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())])
 
 
 # ---------------------------------------------------------------------------
 # mHC (Multi-Head Contribution) configs
 # ---------------------------------------------------------------------------
+
 
 def get_mhc_pre_configs():
     """Tunable configs for mHC pre kernel (big_fuse + gemm_sqrsum)."""
@@ -123,15 +118,13 @@ def get_mhc_pre_configs():
         hidden_block=[128, 256, 512],
         num_stages=[1, 2, 3],
     )
-    return with_aiu_lower_tuning([
-        {k: v for k, v in zip(iter_params, values)}
-        for values in itertools.product(*iter_params.values())
-    ])
+    return with_aiu_lower_tuning([{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())])
 
 
 # ---------------------------------------------------------------------------
 # mHC big_fuse configs
 # ---------------------------------------------------------------------------
+
 
 def get_mhc_big_fuse_configs():
     """Tunable configs for mHC pre big_fuse kernel."""
@@ -139,15 +132,13 @@ def get_mhc_big_fuse_configs():
         threads=[64, 96],
         num_stages=[1, 2, 3],
     )
-    return with_aiu_lower_tuning([
-        {k: v for k, v in zip(iter_params, values)}
-        for values in itertools.product(*iter_params.values())
-    ])
+    return with_aiu_lower_tuning([{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())])
 
 
 # ---------------------------------------------------------------------------
 # mHC post configs
 # ---------------------------------------------------------------------------
+
 
 def get_mhc_post_configs():
     """Tunable configs for mHC post kernel."""
@@ -155,15 +146,13 @@ def get_mhc_post_configs():
         n_thr=[64, 128, 256],
         h_blk=[256, 512, 1024],
     )
-    return with_aiu_lower_tuning([
-        {k: v for k, v in zip(iter_params, values)}
-        for values in itertools.product(*iter_params.values())
-    ])
+    return with_aiu_lower_tuning([{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())])
 
 
 # ---------------------------------------------------------------------------
 # NSA decode configs
 # ---------------------------------------------------------------------------
+
 
 def get_nsa_decode_configs():
     """Tunable configs for NSA decode kernel."""
@@ -171,15 +160,13 @@ def get_nsa_decode_configs():
         num_stages=[0, 1, 2, 3],
         threads=[32, 64],
     )
-    return with_aiu_lower_tuning([
-        {k: v for k, v in zip(iter_params, values)}
-        for values in itertools.product(*iter_params.values())
-    ])
+    return with_aiu_lower_tuning([{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())])
 
 
 # ---------------------------------------------------------------------------
 # V32 sparse MLA fwd configs
 # ---------------------------------------------------------------------------
+
 
 def get_v32_configs():
     """Tunable configs for DeepSeek V32 sparse MLA fwd kernel."""
@@ -188,7 +175,4 @@ def get_v32_configs():
         num_stages=[1, 2, 3],
         threads=[128, 256],
     )
-    return with_aiu_lower_tuning([
-        {k: v for k, v in zip(iter_params, values)}
-        for values in itertools.product(*iter_params.values())
-    ])
+    return with_aiu_lower_tuning([{k: v for k, v in zip(iter_params, values)} for values in itertools.product(*iter_params.values())])

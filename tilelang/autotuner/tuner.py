@@ -846,10 +846,7 @@ class AutoTuner:
             n_repeat=rep,
             input_tensors=jit_input_tensors_cache,
             backend=backend,
-            early_stop_baseline=(
-                self._early_stop_best_latency * self._early_stop_factor
-                if self._early_stop_enabled else None
-            ),
+            early_stop_baseline=(self._early_stop_best_latency * self._early_stop_factor if self._early_stop_enabled else None),
         )
 
         if ref_latency_cache is None and ref_prog is not None:

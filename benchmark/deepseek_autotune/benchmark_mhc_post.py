@@ -21,11 +21,14 @@ from utils import print_benchmark_summary, bench_ref, inject_pass_configs_from_e
 
 
 @autotune(configs=get_mhc_post_configs(), warmup=5, rep=20, skip_check=True)
-@jit(out_idx=[4], pass_configs={
-    tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
-    tilelang.PassConfigKey.TL_DISABLE_TMA_LOWER: True,
-    tilelang.PassConfigKey.TL_PTXAS_REGISTER_USAGE_LEVEL: 10,
-})
+@jit(
+    out_idx=[4],
+    pass_configs={
+        tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
+        tilelang.PassConfigKey.TL_DISABLE_TMA_LOWER: True,
+        tilelang.PassConfigKey.TL_PTXAS_REGISTER_USAGE_LEVEL: 10,
+    },
+)
 def mhc_post(
     hc: int,
     hidden: int,
@@ -121,7 +124,6 @@ def run_profile_ref(n, hidden_size, hc_mult):
 
 def main(n=4096, hidden_size=2560, hc_mult=4):
     """Run autotune for mhc_post and print results."""
-    from tilelang.profiler import do_bench
 
     # Generate inputs matching the mhc_post signature:
     # a = comb_res_mix: [n, hc, hc]
@@ -155,9 +157,12 @@ def main(n=4096, hidden_size=2560, hc_mult=4):
     print_benchmark_summary(
         "mHC Post",
         f"n={n}, hidden_size={hidden_size}, hc_mult={hc_mult}",
-        best_latency, total_flops / best_latency * 1e-9,
-        ref_latency, ref_tflops,
-        "Reference", best_config,
+        best_latency,
+        total_flops / best_latency * 1e-9,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
     )
 
     return best_latency, total_flops / best_latency * 1e-9, best_config, ref_latency
@@ -168,17 +173,14 @@ if __name__ == "__main__":
     parser.add_argument("--n", type=int, default=4096)
     parser.add_argument("--hidden_size", type=int, default=2560)
     parser.add_argument("--hc_mult", type=int, default=4)
-    parser.add_argument("--profile", action="store_true",
-                        help="Run kernel once with given config for ncu/acu profiling")
-    parser.add_argument("--profile-ref", action="store_true",
-                        help="Run reference once for ncu/acu profiling")
+    parser.add_argument("--profile", action="store_true", help="Run kernel once with given config for ncu/acu profiling")
+    parser.add_argument("--profile-ref", action="store_true", help="Run reference once for ncu/acu profiling")
     parser.add_argument("--n_thr", type=int, default=None)
     parser.add_argument("--h_blk", type=int, default=None)
     args = parser.parse_args()
 
     if args.profile:
-        run_profile(args.n, args.hidden_size, args.hc_mult,
-                    args.n_thr, args.h_blk)
+        run_profile(args.n, args.hidden_size, args.hc_mult, args.n_thr, args.h_blk)
     elif args.profile_ref:
         run_profile_ref(args.n, args.hidden_size, args.hc_mult)
     else:

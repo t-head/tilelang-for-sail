@@ -38,14 +38,14 @@
 #include "../../op/parallel.h"
 #include "../../op/region.h"
 #include "../../op/utils.h"
-#include "arith/ir_mutator_with_analyzer.h"
-#include "arith/ir_visitor_with_analyzer.h"
-#include "backend/common/target_utils.h"
 #include "../../transform/common/loop_fusion_utils.h"
 #include "../../transform/common/pipeline_utils.h"
 #include "../../transform/common/union_find.h"
 #include "../../transform/layout_reducer.h"
 #include "../../transform/parallel_loop_layout_validator.h"
+#include "arith/ir_mutator_with_analyzer.h"
+#include "arith/ir_visitor_with_analyzer.h"
+#include "backend/common/target_utils.h"
 #include "tir/transforms/ir_utils.h"
 
 namespace tvm {
@@ -1361,9 +1361,8 @@ private:
     return IRMutatorWithAnalyzer::VisitStmt_(op);
   }
 
-  Optional<Buffer>
-  FindTransformedBuffer(const Map<Buffer, Buffer> &trans,
-                        const Buffer &buffer) const {
+  Optional<Buffer> FindTransformedBuffer(const Map<Buffer, Buffer> &trans,
+                                         const Buffer &buffer) const {
     if (trans.count(buffer)) {
       return trans[buffer];
     }
@@ -1386,7 +1385,8 @@ private:
       Call b_region = Downcast<Call>(call->args[1]);
       BufferLoad b_load = Downcast<BufferLoad>(b_region->args[0]);
       const auto &trans = result_.trans_buffer[call];
-      Optional<Buffer> transformed = FindTransformedBuffer(trans, b_load->buffer);
+      Optional<Buffer> transformed =
+          FindTransformedBuffer(trans, b_load->buffer);
       if (!transformed.defined()) {
         return GetRef<Stmt>(op);
       }
@@ -1430,7 +1430,7 @@ private:
   const LayoutInferenceResult result_;
 };
 
-}  // namespace
+} // namespace
 
 tvm::transform::Pass PpuLayoutInference() {
   using namespace tirx::transform;

@@ -153,16 +153,12 @@ def _gemm_impl(
         scale_A_shape = retrieve_shape(scale_A_region)
         scale_B_shape = retrieve_shape(scale_B_region)
         assert len(scale_A_shape) in (1, 2) and len(scale_B_shape) in (1, 2), (
-            "PPU MXFP4 T.gemm scales must be one-dimensional for a K=64 tile "
-            "or two-dimensional [K/64, M/N] regions for a larger K tile"
+            "PPU MXFP4 T.gemm scales must be one-dimensional for a K=64 tile or two-dimensional [K/64, M/N] regions for a larger K tile"
         )
-        assert len(scale_A_shape) == len(scale_B_shape), (
-            "PPU MXFP4 scale_A and scale_B regions must have the same rank"
-        )
+        assert len(scale_A_shape) == len(scale_B_shape), "PPU MXFP4 scale_A and scale_B regions must have the same rank"
         if len(scale_A_shape) == 1:
             assert prim_expr_equal(K, 64), (
-                "One-dimensional PPU MXFP4 scales are only valid for a K=64 tile; "
-                "use [K/64, M/N] scale regions for larger K tiles"
+                "One-dimensional PPU MXFP4 scales are only valid for a K=64 tile; use [K/64, M/N] scale regions for larger K tiles"
             )
         else:
             assert prim_expr_equal(scale_A_shape[-2] * 64, K) and prim_expr_equal(scale_B_shape[-2] * 64, K), (

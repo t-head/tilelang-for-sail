@@ -25,6 +25,7 @@ def register_hip_postproc(func: Callable[[str, Target], str], override: bool = T
     """
     tvm_ffi.register_global_func("tilelang_callback_hip_postproc", f=func, override=override)
 
+
 def register_hggc_postproc(func: Callable[[str, Target], str], override: bool = True):
     """Register a post-processing function for HGGC code generation.
 
@@ -34,6 +35,7 @@ def register_hggc_postproc(func: Callable[[str, Target], str], override: bool = 
         override: Whether to override existing registered function. Defaults to True.
     """
     tvm_ffi.register_global_func("tilelang_callback_ppu_postproc", f=func, override=override)
+
 
 def register_c_postproc(func: Callable[[str, Target], str], override: bool = True):
     """Register a post-processing function for C host code generation.
@@ -191,6 +193,7 @@ def register_metal_postproc_callback(func: Callable | bool = None, override: boo
         return _register
 
     raise TypeError("Invalid decorator usage")
+
 
 def register_hggc_postproc_callback(func: Callable | bool = None, override: bool = True):
     """Decorator for registering HGGC post-processing callback function.

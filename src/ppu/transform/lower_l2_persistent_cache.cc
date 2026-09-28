@@ -26,7 +26,7 @@ using namespace tirx;
 using namespace ffi;
 
 class LowerL2PersistentCache : public StmtExprMutator {
- public:
+public:
   static PrimFunc Substitute(PrimFunc &f) {
     PrimFuncNode *fptr = f.CopyOnWrite();
     LowerL2PersistentCache substituter;
@@ -101,7 +101,7 @@ class LowerL2PersistentCache : public StmtExprMutator {
     return f;
   }
 
- private:
+private:
   LowerL2PersistentCache() = default;
 };
 

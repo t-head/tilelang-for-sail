@@ -97,6 +97,7 @@ def tilelang_callback_cuda_validate(device_mod):
                 f"Available entries: {', '.join(kernel_names)}"
             )
 
+
 @tvm_ffi.register_global_func("tilelang_callback_ppu_validate", override=True)
 def tilelang_callback_ppu_validate(device_mod):
     for _, base_func in device_mod.functions.items():
@@ -125,6 +126,7 @@ def tilelang_callback_ppu_validate(device_mod):
                 f"`{expected_name}` to match a __global__ kernel in the provided HGGC source. "
                 f"Available entries: {', '.join(kernel_names)}"
             )
+
 
 @tvm_ffi.register_global_func("tilelang_callback_cuda_compile", override=True)
 def tilelang_callback_cuda_compile(code, target, pass_config=None):
@@ -220,6 +222,7 @@ def tilelang_callback_ppu_compile(code, target, pass_config=None):
     extra_flags = cfg.get(PassConfigKey.TL_DEVICE_COMPILE_FLAGS, None)
     if extra_flags:
         import shlex
+
         if isinstance(extra_flags, str):
             options += shlex.split(extra_flags)
         else:

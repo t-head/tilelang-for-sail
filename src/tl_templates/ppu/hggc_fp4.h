@@ -4,20 +4,20 @@
 
 #include "common.h"
 
-#include <hggc_fp16.h>
 #include <hggc_bf16.h>
-#include <hggc_fp8.h>  // hggcRoundMode via hgrt/hggc_device_types.h
+#include <hggc_fp16.h>
+#include <hggc_fp8.h> // hggcRoundMode via hgrt/hggc_device_types.h
 
 // ---------------------------------------------------------------------------
 // PPU FP4 storage typedefs
 // ---------------------------------------------------------------------------
 
-typedef unsigned char  __hg_fp4_storage_t;
-typedef unsigned char  __hg_fp4x2_storage_t;
+typedef unsigned char __hg_fp4_storage_t;
+typedef unsigned char __hg_fp4x2_storage_t;
 typedef unsigned short __hg_fp4x4_storage_t;
 
 typedef enum __hg_fp4_interpretation_t {
-  __HG_E2M1 = 0,  // e2m1 encoding
+  __HG_E2M1 = 0, // e2m1 encoding
 } __hg_fp4_interpretation_t;
 
 // ---------------------------------------------------------------------------
@@ -28,10 +28,9 @@ typedef enum __hg_fp4_interpretation_t {
 #if defined(__HGGC_ARCH__) && (__HGGC_ARCH__ >= 100)
 
 /// double -> fp4 e2m1 with satfinite and configurable rounding
-TL_DEVICE __hg_fp4_storage_t
-__hg_cvt_double_to_fp4(const double x,
-                       const __hg_fp4_interpretation_t fp4_interpretation,
-                       const enum hggcRoundMode rounding) {
+TL_DEVICE __hg_fp4_storage_t __hg_cvt_double_to_fp4(
+    const double x, const __hg_fp4_interpretation_t fp4_interpretation,
+    const enum hggcRoundMode rounding) {
   (void)fp4_interpretation;
   unsigned char out;
   unsigned long long int raw_bits;
@@ -41,12 +40,9 @@ __hg_cvt_double_to_fp4(const double x,
   const unsigned char FP4_MANTISSA_MASK = 0x1U;
   const unsigned short int FP4_EXP_BIAS = 1U;
   const unsigned long long int FP4_SIGNIFICAND_BITS = 2ULL;
-  const unsigned long long int FP4_MINDENORM_O2 =
-      0x3FD0000000000000ULL;
-  const unsigned long long int FP4_OVERFLOW_THRESHOLD =
-      0x4018000000000000ULL;
-  const unsigned long long int FP4_MINNORM =
-      0x3FF0000000000000ULL;
+  const unsigned long long int FP4_MINDENORM_O2 = 0x3FD0000000000000ULL;
+  const unsigned long long int FP4_OVERFLOW_THRESHOLD = 0x4018000000000000ULL;
+  const unsigned long long int FP4_MINNORM = 0x3FF0000000000000ULL;
   const unsigned long long int DP_INF_BITS = 0x7FF0000000000000ULL;
 
   const unsigned long long int FP4_DP_HALF_ULP =
@@ -68,7 +64,7 @@ __hg_cvt_double_to_fp4(const double x,
   } else if (abs_val > FP4_OVERFLOW_THRESHOLD) {
     // overflow or NaN -> clamp to maxnorm
     if (abs_val > DP_INF_BITS) {
-      sign_bits = 0U;  // NaN -> positive maxnorm
+      sign_bits = 0U; // NaN -> positive maxnorm
     }
     out = FP4_MAXNORM;
   } else if (abs_val >= FP4_MINNORM) {
@@ -103,18 +99,16 @@ __hg_cvt_double_to_fp4(const double x,
 }
 
 /// float -> fp4 e2m1 (widened to double internally)
-TL_DEVICE __hg_fp4_storage_t
-__hg_cvt_float_to_fp4(const float x,
-                      const __hg_fp4_interpretation_t fp4_interpretation,
-                      const enum hggcRoundMode rounding) {
+TL_DEVICE __hg_fp4_storage_t __hg_cvt_float_to_fp4(
+    const float x, const __hg_fp4_interpretation_t fp4_interpretation,
+    const enum hggcRoundMode rounding) {
   return __hg_cvt_double_to_fp4((double)x, fp4_interpretation, rounding);
 }
 
 /// half_raw -> fp4 e2m1 (via float widening)
-TL_DEVICE __hg_fp4_storage_t
-__hg_cvt_halfraw_to_fp4(const __half_raw x,
-                        const __hg_fp4_interpretation_t fp4_interpretation,
-                        const enum hggcRoundMode rounding) {
+TL_DEVICE __hg_fp4_storage_t __hg_cvt_halfraw_to_fp4(
+    const __half_raw x, const __hg_fp4_interpretation_t fp4_interpretation,
+    const enum hggcRoundMode rounding) {
   const float fval = __half2float(*reinterpret_cast<const __half *>(&x));
   return __hg_cvt_float_to_fp4(fval, fp4_interpretation, rounding);
 }
@@ -130,40 +124,35 @@ __hg_cvt_bfloat16raw_to_fp4(const __ppu_bfloat16_raw x,
 }
 
 /// double2 -> fp4x2 (pack two converted nibbles into one byte)
-TL_DEVICE __hg_fp4x2_storage_t
-__hg_cvt_double2_to_fp4x2(const double2 x,
-                          const __hg_fp4_interpretation_t fp4_interpretation,
-                          const enum hggcRoundMode rounding) {
+TL_DEVICE __hg_fp4x2_storage_t __hg_cvt_double2_to_fp4x2(
+    const double2 x, const __hg_fp4_interpretation_t fp4_interpretation,
+    const enum hggcRoundMode rounding) {
   __hg_fp4x2_storage_t packed = (__hg_fp4x2_storage_t)__hg_cvt_double_to_fp4(
       x.y, fp4_interpretation, rounding);
   packed = (__hg_fp4x2_storage_t)(packed << 4U);
-  packed = (__hg_fp4x2_storage_t)(packed |
-                                  __hg_cvt_double_to_fp4(x.x,
-                                                         fp4_interpretation,
-                                                         rounding));
+  packed =
+      (__hg_fp4x2_storage_t)(packed | __hg_cvt_double_to_fp4(
+                                          x.x, fp4_interpretation, rounding));
   return packed;
 }
 
 /// float2 -> fp4x2
-TL_DEVICE __hg_fp4x2_storage_t
-__hg_cvt_float2_to_fp4x2(const float2 x,
-                         const __hg_fp4_interpretation_t fp4_interpretation,
-                         const enum hggcRoundMode rounding) {
+TL_DEVICE __hg_fp4x2_storage_t __hg_cvt_float2_to_fp4x2(
+    const float2 x, const __hg_fp4_interpretation_t fp4_interpretation,
+    const enum hggcRoundMode rounding) {
   __hg_fp4x2_storage_t packed = (__hg_fp4x2_storage_t)__hg_cvt_float_to_fp4(
       x.y, fp4_interpretation, rounding);
   packed = (__hg_fp4x2_storage_t)(packed << 4U);
-  packed = (__hg_fp4x2_storage_t)(packed |
-                                  __hg_cvt_float_to_fp4(x.x,
-                                                        fp4_interpretation,
-                                                        rounding));
+  packed =
+      (__hg_fp4x2_storage_t)(packed | __hg_cvt_float_to_fp4(
+                                          x.x, fp4_interpretation, rounding));
   return packed;
 }
 
 /// half2_raw -> fp4x2
-TL_DEVICE __hg_fp4x2_storage_t
-__hg_cvt_halfraw2_to_fp4x2(const __half2_raw x,
-                           const __hg_fp4_interpretation_t fp4_interpretation,
-                           const enum hggcRoundMode rounding) {
+TL_DEVICE __hg_fp4x2_storage_t __hg_cvt_halfraw2_to_fp4x2(
+    const __half2_raw x, const __hg_fp4_interpretation_t fp4_interpretation,
+    const enum hggcRoundMode rounding) {
   __half_raw hr;
   hr.x = x.x;
   const __hg_fp4_storage_t lo_nibble =
@@ -182,15 +171,13 @@ TL_DEVICE __hg_fp4x2_storage_t __hg_cvt_bfloat16raw2_to_fp4x2(
   __ppu_bfloat16_raw br;
   br.x = x.y;
   __hg_fp4x2_storage_t packed =
-      (__hg_fp4x2_storage_t)__hg_cvt_bfloat16raw_to_fp4(br,
-                                                         fp4_interpretation,
-                                                         rounding);
+      (__hg_fp4x2_storage_t)__hg_cvt_bfloat16raw_to_fp4(br, fp4_interpretation,
+                                                        rounding);
   packed = (__hg_fp4x2_storage_t)(packed << 4U);
   br.x = x.x;
-  packed = (__hg_fp4x2_storage_t)(packed |
-                                  __hg_cvt_bfloat16raw_to_fp4(br,
-                                                              fp4_interpretation,
-                                                              rounding));
+  packed =
+      (__hg_fp4x2_storage_t)(packed | __hg_cvt_bfloat16raw_to_fp4(
+                                          br, fp4_interpretation, rounding));
   return packed;
 }
 
@@ -219,15 +206,14 @@ TL_DEVICE __half2_raw
 __hg_cvt_fp4x2_to_halfraw2(const __hg_fp4x2_storage_t x,
                            const __hg_fp4_interpretation_t fp4_interpretation) {
   __half2_raw out;
-  out.x =
-      __hg_cvt_fp4_to_halfraw((__hg_fp4_storage_t)x, fp4_interpretation).x;
-  out.y = __hg_cvt_fp4_to_halfraw((__hg_fp4_storage_t)(x >> 4U),
-                                  fp4_interpretation)
-              .x;
+  out.x = __hg_cvt_fp4_to_halfraw((__hg_fp4_storage_t)x, fp4_interpretation).x;
+  out.y =
+      __hg_cvt_fp4_to_halfraw((__hg_fp4_storage_t)(x >> 4U), fp4_interpretation)
+          .x;
   return out;
 }
 
-#endif  // __HGGC_ARCH__ >= 100
+#endif // __HGGC_ARCH__ >= 100
 
 // ---------------------------------------------------------------------------
 // PPU native FP4 C++ structs
@@ -316,8 +302,7 @@ TL_DEVICE double __tl_cvt_fp4_to_double(const __hg_fp4_storage_t input) {
 }
 
 /// @brief fp4_e2m1x2 -> double2 (via float2 intermediate)
-TL_DEVICE double2
-__tl_cvt_fp4x2_to_double2(const __hg_fp4x2_storage_t input) {
+TL_DEVICE double2 __tl_cvt_fp4x2_to_double2(const __hg_fp4x2_storage_t input) {
   float2 f2 = __tl_cvt_fp4x2_to_float2(input);
   double2 out;
   out.x = (double)(f2.x);
@@ -329,9 +314,8 @@ __tl_cvt_fp4x2_to_double2(const __hg_fp4x2_storage_t input) {
 
 /// @brief half -> fp4_e2m1
 TL_DEVICE __hg_fp4_storage_t __tl_cvt_half_to_fp4(const __half input) {
-  return __hg_cvt_halfraw_to_fp4(
-      *reinterpret_cast<const __half_raw *>(&input), __HG_E2M1,
-      hggcRoundNearest);
+  return __hg_cvt_halfraw_to_fp4(*reinterpret_cast<const __half_raw *>(&input),
+                                 __HG_E2M1, hggcRoundNearest);
 }
 
 /// @brief half2 -> fp4_e2m1x2
@@ -347,8 +331,7 @@ TL_DEVICE __hg_fp4_storage_t __tl_cvt_float_to_fp4(const float input) {
 }
 
 /// @brief float2 -> fp4_e2m1x2
-TL_DEVICE __hg_fp4x2_storage_t
-__tl_cvt_float2_to_fp4x2(const float2 input) {
+TL_DEVICE __hg_fp4x2_storage_t __tl_cvt_float2_to_fp4x2(const float2 input) {
   return __hg_cvt_float2_to_fp4x2(input, __HG_E2M1, hggcRoundNearest);
 }
 
@@ -374,12 +357,11 @@ TL_DEVICE __hg_fp4_storage_t __tl_cvt_double_to_fp4(const double input) {
 }
 
 /// @brief double2 -> fp4_e2m1x2
-TL_DEVICE __hg_fp4x2_storage_t
-__tl_cvt_double2_to_fp4x2(const double2 input) {
+TL_DEVICE __hg_fp4x2_storage_t __tl_cvt_double2_to_fp4x2(const double2 input) {
   return __hg_cvt_double2_to_fp4x2(input, __HG_E2M1, hggcRoundNearest);
 }
 
-#endif  // __HGGC_ARCH__ >= 100
+#endif // __HGGC_ARCH__ >= 100
 
 // ---------------------------------------------------------------------------
 // TileLang FP4 wrapper structs
@@ -520,8 +502,8 @@ TL_DEVICE fp4_e2_2_t make_fp4_e2_2_t(fp4_e2_t lo, fp4_e2_t hi) {
 }
 
 /// Pack four fp4 values
-TL_DEVICE fp4_e2_4_t make_fp4_e2_4_t(fp4_e2_t a0, fp4_e2_t a1,
-                                     fp4_e2_t a2, fp4_e2_t a3) {
+TL_DEVICE fp4_e2_4_t make_fp4_e2_4_t(fp4_e2_t a0, fp4_e2_t a1, fp4_e2_t a2,
+                                     fp4_e2_t a3) {
   fp4_e2_4_t out;
   out.x = make_fp4_e2_2_t(a0, a1);
   out.y = make_fp4_e2_2_t(a2, a3);
@@ -529,9 +511,8 @@ TL_DEVICE fp4_e2_4_t make_fp4_e2_4_t(fp4_e2_t a0, fp4_e2_t a1,
 }
 
 /// Pack eight fp4 values
-TL_DEVICE fp4_e2_8_t make_fp4_e2_8_t(fp4_e2_t a0, fp4_e2_t a1,
-                                     fp4_e2_t a2, fp4_e2_t a3,
-                                     fp4_e2_t a4, fp4_e2_t a5,
+TL_DEVICE fp4_e2_8_t make_fp4_e2_8_t(fp4_e2_t a0, fp4_e2_t a1, fp4_e2_t a2,
+                                     fp4_e2_t a3, fp4_e2_t a4, fp4_e2_t a5,
                                      fp4_e2_t a6, fp4_e2_t a7) {
   fp4_e2_8_t out;
   out.x = make_fp4_e2_4_t(a0, a1, a2, a3);
@@ -540,14 +521,12 @@ TL_DEVICE fp4_e2_8_t make_fp4_e2_8_t(fp4_e2_t a0, fp4_e2_t a1,
 }
 
 /// Pack sixteen fp4 values
-TL_DEVICE fp4_e2_16_t make_fp4_e2_16_t(fp4_e2_t a0, fp4_e2_t a1,
-                                       fp4_e2_t a2, fp4_e2_t a3,
-                                       fp4_e2_t a4, fp4_e2_t a5,
-                                       fp4_e2_t a6, fp4_e2_t a7,
-                                       fp4_e2_t b0, fp4_e2_t b1,
-                                       fp4_e2_t b2, fp4_e2_t b3,
-                                       fp4_e2_t b4, fp4_e2_t b5,
-                                       fp4_e2_t b6, fp4_e2_t b7) {
+TL_DEVICE fp4_e2_16_t make_fp4_e2_16_t(fp4_e2_t a0, fp4_e2_t a1, fp4_e2_t a2,
+                                       fp4_e2_t a3, fp4_e2_t a4, fp4_e2_t a5,
+                                       fp4_e2_t a6, fp4_e2_t a7, fp4_e2_t b0,
+                                       fp4_e2_t b1, fp4_e2_t b2, fp4_e2_t b3,
+                                       fp4_e2_t b4, fp4_e2_t b5, fp4_e2_t b6,
+                                       fp4_e2_t b7) {
   fp4_e2_16_t out;
   out.x = make_fp4_e2_8_t(a0, a1, a2, a3, a4, a5, a6, a7);
   out.y = make_fp4_e2_8_t(b0, b1, b2, b3, b4, b5, b6, b7);
@@ -556,18 +535,17 @@ TL_DEVICE fp4_e2_16_t make_fp4_e2_16_t(fp4_e2_t a0, fp4_e2_t a1,
 
 /// Pack thirty-two fp4 values
 TL_DEVICE fp4_e2_32_t make_fp4_e2_32_t(
-    fp4_e2_t a0,  fp4_e2_t a1,  fp4_e2_t a2,  fp4_e2_t a3,
-    fp4_e2_t a4,  fp4_e2_t a5,  fp4_e2_t a6,  fp4_e2_t a7,
-    fp4_e2_t a8,  fp4_e2_t a9,  fp4_e2_t a10, fp4_e2_t a11,
-    fp4_e2_t a12, fp4_e2_t a13, fp4_e2_t a14, fp4_e2_t a15,
-    fp4_e2_t b0,  fp4_e2_t b1,  fp4_e2_t b2,  fp4_e2_t b3,
-    fp4_e2_t b4,  fp4_e2_t b5,  fp4_e2_t b6,  fp4_e2_t b7,
-    fp4_e2_t b8,  fp4_e2_t b9,  fp4_e2_t b10, fp4_e2_t b11,
-    fp4_e2_t b12, fp4_e2_t b13, fp4_e2_t b14, fp4_e2_t b15) {
+    fp4_e2_t a0, fp4_e2_t a1, fp4_e2_t a2, fp4_e2_t a3, fp4_e2_t a4,
+    fp4_e2_t a5, fp4_e2_t a6, fp4_e2_t a7, fp4_e2_t a8, fp4_e2_t a9,
+    fp4_e2_t a10, fp4_e2_t a11, fp4_e2_t a12, fp4_e2_t a13, fp4_e2_t a14,
+    fp4_e2_t a15, fp4_e2_t b0, fp4_e2_t b1, fp4_e2_t b2, fp4_e2_t b3,
+    fp4_e2_t b4, fp4_e2_t b5, fp4_e2_t b6, fp4_e2_t b7, fp4_e2_t b8,
+    fp4_e2_t b9, fp4_e2_t b10, fp4_e2_t b11, fp4_e2_t b12, fp4_e2_t b13,
+    fp4_e2_t b14, fp4_e2_t b15) {
   fp4_e2_32_t out;
-  out.x = make_fp4_e2_16_t(a0, a1, a2, a3, a4, a5, a6, a7,
-                           a8, a9, a10, a11, a12, a13, a14, a15);
-  out.y = make_fp4_e2_16_t(b0, b1, b2, b3, b4, b5, b6, b7,
-                           b8, b9, b10, b11, b12, b13, b14, b15);
+  out.x = make_fp4_e2_16_t(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11,
+                           a12, a13, a14, a15);
+  out.y = make_fp4_e2_16_t(b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11,
+                           b12, b13, b14, b15);
   return out;
 }

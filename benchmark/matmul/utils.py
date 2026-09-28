@@ -1,6 +1,5 @@
 """Shared utilities for matmul autotune benchmarks."""
 
-import os
 import re
 import subprocess
 import tempfile
@@ -18,6 +17,7 @@ def with_aiu_lower_tuning(configs):
     """
     try:
         from tilelang.contrib import hgcc
+
         _arch = hgcc.get_target_compute_version()
         _compute_version = hgcc.parse_compute_version(_arch)
         if _compute_version != (1, 5):
@@ -29,9 +29,7 @@ def with_aiu_lower_tuning(configs):
     for cfg in configs:
         for val in (True, False):
             new_cfg = dict(cfg)
-            new_cfg["pass_configs"] = {
-                tilelang.PassConfigKey.TL_DISABLE_AIU_LOWER: val
-            }
+            new_cfg["pass_configs"] = {tilelang.PassConfigKey.TL_DISABLE_AIU_LOWER: val}
             expanded.append(new_cfg)
     return expanded
 
@@ -48,10 +46,20 @@ def _format_ratio(numerator, denominator):
     return "Invalid"
 
 
-def print_benchmark_summary(name, config_str, tilelang_latency, tilelang_tflops,
-                            ref_latency, ref_tflops, ref_name, best_config,
-                            tilelang_cycles=None, tilelang_tc=None,
-                            ref_cycles=None, ref_tc=None):
+def print_benchmark_summary(
+    name,
+    config_str,
+    tilelang_latency,
+    tilelang_tflops,
+    ref_latency,
+    ref_tflops,
+    ref_name,
+    best_config,
+    tilelang_cycles=None,
+    tilelang_tc=None,
+    ref_cycles=None,
+    ref_tc=None,
+):
     """Print a tabulate grid summary for a single benchmark configuration.
 
     When cycle/tensor-core profiling data is provided, those metrics are
@@ -67,21 +75,13 @@ def print_benchmark_summary(name, config_str, tilelang_latency, tilelang_tflops,
 
     table_data = [
         ["Metric", "TileLang", ref_name, "Ratio (TL/Ref)"],
-        ["Latency (ms)", f"{tilelang_latency * 1000:.4f}", f"{ref_latency * 1000:.4f}",
-         _format_ratio(tilelang_latency, ref_latency)],
-        ["TFlops", f"{tilelang_tflops:.2f}", f"{ref_tflops:.2f}",
-         _format_ratio(tilelang_tflops, ref_tflops)],
+        ["Latency (ms)", f"{tilelang_latency * 1000:.4f}", f"{ref_latency * 1000:.4f}", _format_ratio(tilelang_latency, ref_latency)],
+        ["TFlops", f"{tilelang_tflops:.2f}", f"{ref_tflops:.2f}", _format_ratio(tilelang_tflops, ref_tflops)],
     ]
     if tilelang_cycles is not None and ref_cycles is not None:
-        table_data.append(
-            ["Cycles", str(tilelang_cycles), str(ref_cycles),
-             _format_ratio(tilelang_cycles, ref_cycles)]
-        )
+        table_data.append(["Cycles", str(tilelang_cycles), str(ref_cycles), _format_ratio(tilelang_cycles, ref_cycles)])
     if tilelang_tc is not None and ref_tc is not None:
-        table_data.append(
-            ["Tensor Core Util (%)", f"{tilelang_tc:.2f}", f"{ref_tc:.2f}",
-             _format_ratio(tilelang_tc, ref_tc)]
-        )
+        table_data.append(["Tensor Core Util (%)", f"{tilelang_tc:.2f}", f"{ref_tc:.2f}", _format_ratio(tilelang_tc, ref_tc)])
     print(tabulate(table_data, headers="firstrow", tablefmt="grid"))
 
 
@@ -89,21 +89,15 @@ def print_benchmark_summary(name, config_str, tilelang_latency, tilelang_tflops,
 # Cycle / tensor-core profiling helpers (acu/ncu)
 # ---------------------------------------------------------------------------
 
-GPU_METRICS = (
-    "sm__cycles_active.max,"
-    "sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active"
-)
-PPU_METRICS = (
-    "ce__cycles_active.max,"
-    "cu__inst_executed_pipe_tensor_fp16.avg.pct_of_peak_sustained_active"
-)
+GPU_METRICS = "sm__cycles_active.max,sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active"
+PPU_METRICS = "ce__cycles_active.max,cu__inst_executed_pipe_tensor_fp16.avg.pct_of_peak_sustained_active"
 
 
 def _detect_dev():
     """Return 'ppu' if acu is available, otherwise 'gpu' if ncu is available."""
-    if subprocess.run("command -v acu", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
+    if subprocess.run("command -v acu", shell=True, capture_output=True).returncode == 0:
         return "ppu"
-    if subprocess.run("command -v ncu", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
+    if subprocess.run("command -v ncu", shell=True, capture_output=True).returncode == 0:
         return "gpu"
     return None
 
@@ -126,9 +120,7 @@ def _metrics_string(dev):
 
 def _run_cmd(cmd, timeout=None, stdout=subprocess.PIPE, stderr=subprocess.PIPE):
     print(f"Run command: {cmd}, timeout: {timeout}")
-    ret = subprocess.run(
-        args=cmd, timeout=timeout, shell=True, stdout=stdout, stderr=stderr, encoding="utf-8"
-    )
+    ret = subprocess.run(args=cmd, timeout=timeout, shell=True, stdout=stdout, stderr=stderr, encoding="utf-8")
     if stdout:
         for line in (ret.stdout or "").splitlines() + (ret.stderr or "").splitlines():
             print(line)
@@ -194,10 +186,7 @@ def _dominant_kernel(filename, target_substring=None):
             break
     else:
         kernel_names = [e[0][:80] for e in entries]
-        raise RuntimeError(
-            f"No known compute kernel found in {filename}. "
-            f"Found kernels: {kernel_names}"
-        )
+        raise RuntimeError(f"No known compute kernel found in {filename}. Found kernels: {kernel_names}")
 
     # Prefer higher TC; break ties by higher cycle count.
     entries.sort(key=lambda e: (e[2], e[1]), reverse=True)
@@ -219,17 +208,13 @@ def profile_python_script(script_code, dev=None, log_file="./gpu_cycles_single_c
         script_path = f.name
 
     _run_cmd(f"rm -f {log_file}")
-    cmd = (
-        f'{profiler} --clock-control none --metrics="{metrics}" '
-        f'--page=details python {script_path} 2>&1 | tee -a {log_file}'
-    )
+    cmd = f'{profiler} --clock-control none --metrics="{metrics}" --page=details python {script_path} 2>&1 | tee -a {log_file}'
     _run_cmd(cmd, timeout=timeout, stdout=None, stderr=None)
 
     return _dominant_kernel(log_file)
 
 
-def print_cycle_summary(name, config_str, tilelang_cycles, tilelang_tc,
-                        ref_cycles, ref_tc, ref_name="Reference"):
+def print_cycle_summary(name, config_str, tilelang_cycles, tilelang_tc, ref_cycles, ref_tc, ref_name="Reference"):
     """Print a tabulate grid summary of cycle/TC profiling results."""
     from tabulate import tabulate
 
@@ -237,9 +222,7 @@ def print_cycle_summary(name, config_str, tilelang_cycles, tilelang_tc,
     print("-" * 60)
     table_data = [
         ["Metric", "TileLang", ref_name, "Ratio (TL/Ref)"],
-        ["Cycles", str(tilelang_cycles), str(ref_cycles),
-         _format_ratio(tilelang_cycles, ref_cycles)],
-        ["Tensor Core Util (%)", f"{tilelang_tc:.2f}", f"{ref_tc:.2f}",
-         _format_ratio(tilelang_tc, ref_tc)],
+        ["Cycles", str(tilelang_cycles), str(ref_cycles), _format_ratio(tilelang_cycles, ref_cycles)],
+        ["Tensor Core Util (%)", f"{tilelang_tc:.2f}", f"{ref_tc:.2f}", _format_ratio(tilelang_tc, ref_tc)],
     ]
     print(tabulate(table_data, headers="firstrow", tablefmt="grid"))

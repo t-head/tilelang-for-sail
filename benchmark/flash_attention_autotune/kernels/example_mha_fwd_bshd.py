@@ -14,32 +14,26 @@ if root_dir not in sys.path:
 from fa_configs import get_configs
 from utils import inject_pass_configs_from_env
 
+
 @autotune(configs=get_configs(), warmup=3, rep=10, early_stop=True)
 @tilelang.jit(
-    out_idx=[3], pass_configs={
+    out_idx=[3],
+    pass_configs={
         tilelang.PassConfigKey.TL_ENABLE_FAST_MATH: True,
-    })
-def flashattn(batch,
-              heads,
-              seq_len,
-              dim,
-              is_causal,
-              block_M=64,
-              block_N=64,
-              num_stages=1,
-              threads=128):
-    scale = (1.0 / dim)**0.5 * 1.44269504  # log2(e)
+    },
+)
+def flashattn(batch, heads, seq_len, dim, is_causal, block_M=64, block_N=64, num_stages=1, threads=128):
+    scale = (1.0 / dim) ** 0.5 * 1.44269504  # log2(e)
     shape = [batch, seq_len, heads, dim]
     dtype = T.float16
     accum_dtype = T.float32
 
-
     @T.prim_func
     def main(
-            Q: T.Tensor(shape, dtype),
-            K: T.Tensor(shape, dtype),
-            V: T.Tensor(shape, dtype),
-            Output: T.Tensor(shape, dtype),
+        Q: T.Tensor(shape, dtype),
+        K: T.Tensor(shape, dtype),
+        V: T.Tensor(shape, dtype),
+        Output: T.Tensor(shape, dtype),
     ):
         with T.Kernel(T.ceildiv(seq_len, block_M), heads, batch, threads=threads) as (bx, by, bz):
             Q_shared = T.alloc_shared([block_M, dim], dtype)
@@ -55,14 +49,14 @@ def flashattn(batch,
             scores_sum = T.alloc_fragment([block_M], accum_dtype)
             logsum = T.alloc_fragment([block_M], accum_dtype)
 
-            T.copy(Q[bz, bx * block_M:(bx + 1) * block_M, by, :], Q_shared)
+            T.copy(Q[bz, bx * block_M : (bx + 1) * block_M, by, :], Q_shared)
             T.fill(acc_o, 0)
             T.fill(logsum, 0)
             T.fill(scores_max, -T.infinity(accum_dtype))
 
             loop_range = (
-                T.min(T.ceildiv(seq_len, block_N), T.ceildiv(
-                    (bx + 1) * block_M, block_N)) if is_causal else T.ceildiv(seq_len, block_N))
+                T.min(T.ceildiv(seq_len, block_N), T.ceildiv((bx + 1) * block_M, block_N)) if is_causal else T.ceildiv(seq_len, block_N)
+            )
 
             for k in T.Pipelined(loop_range, num_stages=num_stages):
                 T.copy(K[bz, k * block_N : (k + 1) * block_N, by, :], K_shared)
@@ -96,22 +90,22 @@ def flashattn(batch,
             for i, j in T.Parallel(block_M, dim):
                 acc_o[i, j] /= logsum[i]
             T.copy(acc_o, O_shared)
-            T.copy(O_shared, Output[bz, bx * block_M:(bx + 1) * block_M, by, :])
+            T.copy(O_shared, Output[bz, bx * block_M : (bx + 1) * block_M, by, :])
 
     return main
 
 
 def ref_program(Q, K, V, is_causal):
     dim = Q.size(-1)
-    scores = torch.einsum('bqhd,bkhd->bhqk', Q, K)
+    scores = torch.einsum("bqhd,bkhd->bhqk", Q, K)
     scores = scores / torch.sqrt(torch.tensor(dim, dtype=scores.dtype))
     if is_causal:
         seq_len = Q.size(1)
         mask = torch.tril(torch.ones(seq_len, seq_len, device=scores.device))
         mask = mask.unsqueeze(0).unsqueeze(0)
-        scores = scores.masked_fill(mask == 0, float('-inf'))
+        scores = scores.masked_fill(mask == 0, float("-inf"))
     attention_weights = F.softmax(scores, dim=-1)
-    output = torch.einsum('bhqk,bkhd->bqhd', attention_weights, V)
+    output = torch.einsum("bhqk,bkhd->bqhd", attention_weights, V)
     return output
 
 
@@ -122,35 +116,26 @@ def main(
     dim: int = 128,
     is_causal: bool = False,
     tune: bool = False,
-    Q = None, K = None, V = None,
+    Q=None,
+    K=None,
+    V=None,
     block_M=None,
     block_N=None,
     num_stages=None,
-    threads=None
+    threads=None,
 ):
     flops_per_matmul = 2.0 * batch * heads * seq_len * seq_len * dim
     total_flops = 2 * flops_per_matmul
     if is_causal:
         total_flops *= 0.5
 
-    if (not tune):
+    if not tune:
         inject_pass_configs_from_env(flashattn)
-        kernel = flashattn(
-            batch,
-            heads,
-            seq_len,
-            dim,
-            is_causal,
-            block_M=block_M,
-            block_N=block_N,
-            num_stages=num_stages,
-            threads=threads)
-        Q = (
-            torch.empty(batch, seq_len, heads, dim, dtype=torch.half,
-                        device="cuda").normal_().requires_grad_())
+        kernel = flashattn(batch, heads, seq_len, dim, is_causal, block_M=block_M, block_N=block_N, num_stages=num_stages, threads=threads)
+        Q = torch.empty(batch, seq_len, heads, dim, dtype=torch.half, device="cuda").normal_().requires_grad_()
         K = torch.empty_like(Q).normal_().requires_grad_()
         V = torch.empty_like(Q).normal_().requires_grad_()
-        latency = kernel(Q, K, V)
+        kernel(Q, K, V)
     else:
         best_result = flashattn(batch, heads, seq_len, dim, is_causal)
         best_latency = best_result.latency
@@ -166,40 +151,56 @@ def main(
         for line in output_lines:
             print(line)
 
-        best_kernel = flashattn(batch, heads, seq_len, dim, is_causal,
-            best_config["block_M"], best_config["block_N"], best_config["num_stages"], best_config["threads"])
+        best_kernel = flashattn(
+            batch,
+            heads,
+            seq_len,
+            dim,
+            is_causal,
+            best_config["block_M"],
+            best_config["block_N"],
+            best_config["num_stages"],
+            best_config["threads"],
+        )
         return best_kernel(Q, K, V), best_latency, total_flops / best_latency * 1e-9, best_config
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--batch', type=int, default=8, help='batch size')
-    parser.add_argument('--heads', type=int, default=32, help='heads')
-    parser.add_argument('--seq_len', type=int, default=4096, help='sequence length')
-    parser.add_argument('--dim', type=int, default=128, help='dim')
-    parser.add_argument('--causal', type=bool, default=False, help='Causal flag')
-    parser.add_argument('--tune', action='store_true', help='tune configs')
+    parser.add_argument("--batch", type=int, default=8, help="batch size")
+    parser.add_argument("--heads", type=int, default=32, help="heads")
+    parser.add_argument("--seq_len", type=int, default=4096, help="sequence length")
+    parser.add_argument("--dim", type=int, default=128, help="dim")
+    parser.add_argument("--causal", type=bool, default=False, help="Causal flag")
+    parser.add_argument("--tune", action="store_true", help="tune configs")
     # 1. block_M: 通常对应行的分块大小，常见值为 16, 32, 64, 128
-    parser.add_argument("--block_M", type=int, default=128,
-                        help="Block size for dimension M (rows). Common: 16, 32, 64, 128")
+    parser.add_argument("--block_M", type=int, default=128, help="Block size for dimension M (rows). Common: 16, 32, 64, 128")
 
     # 2. block_N: 通常对应列的分块大小，常见值为 16, 32, 64, 128
-    parser.add_argument("--block_N", type=int, default=64,
-                        help="Block size for dimension N (cols). Common: 16, 32, 64, 128")
+    parser.add_argument("--block_N", type=int, default=64, help="Block size for dimension N (cols). Common: 16, 32, 64, 128")
 
     # 3. num_stages: 流水线阶段数，用于隐藏内存延迟。常见值为 2, 3, 4
     # 注意：阶段数越多可能占用更多寄存器/共享内存，需权衡
-    parser.add_argument("--num_stages", type=int, default=1,
-                        help="Number of pipeline stages for latency hiding. Common: 2, 3, 4")
+    parser.add_argument("--num_stages", type=int, default=1, help="Number of pipeline stages for latency hiding. Common: 2, 3, 4")
 
     # 4. threads: 每个块的线程数 (num_warps * 32)。常见值为 128, 256, 512, 1024
-    parser.add_argument("--threads", type=int, default=128,
-                        help="Number of threads per block. Must be multiple of 32. Common: 128, 256, 512")
+    parser.add_argument(
+        "--threads", type=int, default=128, help="Number of threads per block. Must be multiple of 32. Common: 128, 256, 512"
+    )
     args = parser.parse_args()
 
-    main(args.batch, args.heads, args.seq_len, args.dim, args.causal, False, block_M=args.block_M,
+    main(
+        args.batch,
+        args.heads,
+        args.seq_len,
+        args.dim,
+        args.causal,
+        False,
+        block_M=args.block_M,
         block_N=args.block_N,
         num_stages=args.num_stages,
-        threads=args.threads)
+        threads=args.threads,
+    )
 
     # n_ctx_values = [1024]
     # batch_sizes = [4]
@@ -207,4 +208,3 @@ if __name__ == "__main__":
     # for batch_size in batch_sizes:
     #     for n_ctx in n_ctx_values:
     #         main(batch_size, args.heads, n_ctx, args.dim, args.causal, True)
-

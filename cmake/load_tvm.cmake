@@ -86,9 +86,9 @@ endif()
 
 
 # --- Patch 4: env_context.cc --- kDLCUDA to kDLPPU stream redirect ---
-# PPU-only build: redirect kDLCUDA stream ops to kDLPPU (same as MetaX kDLMACA approach)
+# PPU-only build: redirect kDLCUDA stream ops to kDLPPU
 set(tvm_ffi_env_context "${TVM_SOURCE}/3rdparty/tvm-ffi/src/ffi/extra/env_context.cc")
-if(EXISTS "${tvm_ffi_env_context}")
+if(USE_PPU AND NOT USE_CUDA AND EXISTS "${tvm_ffi_env_context}")
   file(READ "${tvm_ffi_env_context}" FILE_CONTENTS)
   if(NOT FILE_CONTENTS MATCHES ".*kDLPPU.*")
     string(REPLACE

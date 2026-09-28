@@ -63,8 +63,7 @@ def mla_decode_paged(
     kv_group_num = h_q // h_kv
     VALID_BLOCK_H = min(block_H, kv_group_num)
     assert h_kv == 1, "h_kv must be 1"
-    assert block_size >= block_N and block_size % block_N == 0, \
-        "block_size must be >= block_N and a multiple of block_N"
+    assert block_size >= block_N and block_size % block_N == 0, "block_size must be >= block_N and a multiple of block_N"
 
     @T.prim_func
     def main_split(
@@ -97,8 +96,8 @@ def mla_decode_paged(
             cur_kv_head = by // (kv_group_num // block_H)
             T.use_swizzle(10)
 
-            T.copy(Q[bx, by * VALID_BLOCK_H:(by + 1) * VALID_BLOCK_H, :], Q_shared)
-            T.copy(Q_pe[bx, by * VALID_BLOCK_H:(by + 1) * VALID_BLOCK_H, :], Q_pe_shared)
+            T.copy(Q[bx, by * VALID_BLOCK_H : (by + 1) * VALID_BLOCK_H, :], Q_shared)
+            T.copy(Q_pe[bx, by * VALID_BLOCK_H : (by + 1) * VALID_BLOCK_H, :], Q_pe_shared)
             T.fill(acc_o, 0)
             T.fill(logsum, 0)
             T.fill(scores_max, -T.infinity(accum_dtype))
@@ -111,16 +110,15 @@ def mla_decode_paged(
 
             for k in T.Pipelined(loop_range, num_stages=num_stages):
                 kv_start = block_table[bx, (start + k * block_N) // block_size] * block_size + (k * block_N) % block_size
-                T.copy(KV[kv_start:kv_start + block_N, cur_kv_head, :], KV_shared)
-                T.copy(K_pe[kv_start:kv_start + block_N, cur_kv_head, :], K_pe_shared)
+                T.copy(KV[kv_start : kv_start + block_N, cur_kv_head, :], KV_shared)
+                T.copy(K_pe[kv_start : kv_start + block_N, cur_kv_head, :], K_pe_shared)
                 T.clear(acc_s)
                 T.gemm(Q_shared, KV_shared, acc_s, transpose_B=True, policy=T.GemmWarpPolicy.FullCol)
                 T.gemm(Q_pe_shared, K_pe_shared, acc_s, transpose_B=True, policy=T.GemmWarpPolicy.FullCol)
                 T.copy(scores_max, scores_max_prev)
                 T.fill(scores_max, -T.infinity(accum_dtype))
                 for i, j in T.Parallel(block_H, block_N):
-                    acc_s[i, j] = T.if_then_else(
-                        start + k * block_N + j >= cache_seqlens[bx], -T.infinity(accum_dtype), acc_s[i, j])
+                    acc_s[i, j] = T.if_then_else(start + k * block_N + j >= cache_seqlens[bx], -T.infinity(accum_dtype), acc_s[i, j])
                 T.reduce_max(acc_s, scores_max, dim=1, clear=False)
                 for i in T.Parallel(block_H):
                     scores_max[i] = T.max(scores_max[i], scores_max_prev[i])
@@ -140,9 +138,9 @@ def mla_decode_paged(
                 acc_o[i, j] /= logsum[i]
             for i in T.Parallel(block_H):
                 logsum[i] = T.log2(logsum[i]) + scores_max[i] * scale
-            T.copy(logsum, glse[bx, by * VALID_BLOCK_H:(by + 1) * VALID_BLOCK_H, bz])
+            T.copy(logsum, glse[bx, by * VALID_BLOCK_H : (by + 1) * VALID_BLOCK_H, bz])
             T.copy(acc_o, O_shared)
-            T.copy(O_shared, Output_partial[bx, by * VALID_BLOCK_H:(by + 1) * VALID_BLOCK_H, bz, :])
+            T.copy(O_shared, Output_partial[bx, by * VALID_BLOCK_H : (by + 1) * VALID_BLOCK_H, bz, :])
 
         # combine
         with T.Kernel(h_q, batch, threads=128) as (by, bz):
@@ -202,8 +200,8 @@ def mla_decode_paged(
             cur_kv_head = by // (kv_group_num // block_H)
             T.use_swizzle(10)
 
-            T.copy(Q[bx, by * VALID_BLOCK_H:(by + 1) * VALID_BLOCK_H, :], Q_shared)
-            T.copy(Q_pe[bx, by * VALID_BLOCK_H:(by + 1) * VALID_BLOCK_H, :], Q_pe_shared)
+            T.copy(Q[bx, by * VALID_BLOCK_H : (by + 1) * VALID_BLOCK_H, :], Q_shared)
+            T.copy(Q_pe[bx, by * VALID_BLOCK_H : (by + 1) * VALID_BLOCK_H, :], Q_pe_shared)
             T.fill(acc_o, 0)
             T.fill(logsum, 0)
             T.fill(scores_max, -T.infinity(accum_dtype))
@@ -212,8 +210,8 @@ def mla_decode_paged(
             for kr in T.Pipelined(loop_range, num_stages=num_stages):
                 k = loop_range - 1 - kr
                 kv_start = block_table[bx, (k * block_N) // block_size] * block_size + (k * block_N) % block_size
-                T.copy(KV[kv_start:kv_start + block_N, cur_kv_head, :], KV_shared)
-                T.copy(K_pe[kv_start:kv_start + block_N, cur_kv_head, :], K_pe_shared)
+                T.copy(KV[kv_start : kv_start + block_N, cur_kv_head, :], KV_shared)
+                T.copy(K_pe[kv_start : kv_start + block_N, cur_kv_head, :], K_pe_shared)
                 T.clear(acc_s)
                 T.gemm(Q_shared, KV_shared, acc_s, transpose_B=True, policy=T.GemmWarpPolicy.FullCol)
                 T.gemm(Q_pe_shared, K_pe_shared, acc_s, transpose_B=True, policy=T.GemmWarpPolicy.FullCol)
@@ -221,8 +219,7 @@ def mla_decode_paged(
                 T.fill(scores_max, -T.infinity(accum_dtype))
                 if kr == 0:
                     for i, j in T.Parallel(block_H, block_N):
-                        acc_s[i, j] = T.if_then_else(
-                            k * block_N + j >= cache_seqlens[bx], -T.infinity(accum_dtype), acc_s[i, j])
+                        acc_s[i, j] = T.if_then_else(k * block_N + j >= cache_seqlens[bx], -T.infinity(accum_dtype), acc_s[i, j])
                 T.reduce_max(acc_s, scores_max, dim=1, clear=False)
                 for i in T.Parallel(block_H):
                     scores_max[i] = T.max(scores_max[i], scores_max_prev[i])
@@ -240,7 +237,7 @@ def mla_decode_paged(
             for i, j in T.Parallel(block_H, dv):
                 acc_o[i, j] /= logsum[i]
             T.copy(acc_o, O_shared)
-            T.copy(O_shared, Output[bx, by * VALID_BLOCK_H:(by + 1) * VALID_BLOCK_H, :])
+            T.copy(O_shared, Output[bx, by * VALID_BLOCK_H : (by + 1) * VALID_BLOCK_H, :])
 
     if num_split > 1:
         return main_split
@@ -269,8 +266,7 @@ def scaled_dot_product_attention(query, key, value, h_q, h_kv, is_causal=False):
     return attn_weight @ value, lse
 
 
-def run_profile(batch, h_q, h_kv, cache_seqlen, d, dv,
-                 block_N, block_H, num_stages, threads):
+def run_profile(batch, h_q, h_kv, cache_seqlen, d, dv, block_N, block_H, num_stages, threads):
     """Run the kernel once with an explicit config for ncu/acu profiling."""
     import math
     import torch
@@ -281,17 +277,16 @@ def run_profile(batch, h_q, h_kv, cache_seqlen, d, dv,
     s_q = 1
     block_size = 64
     num_split = 1
-    softmax_scale = d ** -0.5
+    softmax_scale = d**-0.5
 
-    cache_seqlens = torch.tensor([cache_seqlen + 2 * i for i in range(batch)],
-                                 dtype=torch.int32, device=device)
+    cache_seqlens = torch.tensor([cache_seqlen + 2 * i for i in range(batch)], dtype=torch.int32, device=device)
     max_seqlen = cache_seqlens.max().item()
     max_seqlen_pad = math.ceil(max_seqlen / 256) * 256
 
     q = torch.randn(batch, s_q, h_q, d, dtype=dtype, device=device)
-    block_table = torch.arange(
-        batch * max_seqlen_pad // block_size, dtype=torch.int32, device=device
-    ).view(batch, max_seqlen_pad // block_size)
+    block_table = torch.arange(batch * max_seqlen_pad // block_size, dtype=torch.int32, device=device).view(
+        batch, max_seqlen_pad // block_size
+    )
     blocked_k = torch.randn(block_table.numel(), block_size, h_kv, d, dtype=dtype, device=device)
 
     q_nope, q_pe = q[..., :dv].contiguous(), q[..., dv:].contiguous()
@@ -315,10 +310,19 @@ def run_profile(batch, h_q, h_kv, cache_seqlen, d, dv,
     inject_pass_configs_from_env(mla_decode_paged)
     with set_autotune_inputs(*kernel_inputs):
         kernel = mla_decode_paged(
-            batch, h_q, h_kv, max_seqlen_pad, dv, dpe, block_size,
-            softmax_scale, num_split,
-            block_N=block_N, block_H=block_H,
-            num_stages=num_stages, threads=threads,
+            batch,
+            h_q,
+            h_kv,
+            max_seqlen_pad,
+            dv,
+            dpe,
+            block_size,
+            softmax_scale,
+            num_split,
+            block_N=block_N,
+            block_H=block_H,
+            num_stages=num_stages,
+            threads=threads,
         )
     kernel(*kernel_inputs)
 
@@ -339,9 +343,9 @@ def run_profile_ref(batch, h_q, h_kv, cache_seqlen, d, dv):
     max_seqlen_pad = math.ceil(max_seqlen / 256) * 256
 
     q = torch.randn(batch, s_q, h_q, d, dtype=dtype, device=device)
-    block_table = torch.arange(
-        batch * max_seqlen_pad // block_size, dtype=torch.int32, device=device
-    ).view(batch, max_seqlen_pad // block_size)
+    block_table = torch.arange(batch * max_seqlen_pad // block_size, dtype=torch.int32, device=device).view(
+        batch, max_seqlen_pad // block_size
+    )
     blocked_k = torch.randn(block_table.numel(), block_size, h_kv, d, dtype=dtype, device=device)
     blocked_v = blocked_k[..., :dv]
 
@@ -352,13 +356,14 @@ def run_profile_ref(batch, h_q, h_kv, cache_seqlen, d, dv):
             q[i].transpose(0, 1),
             blocked_k.view(-1, h_kv, d)[begin:end].transpose(0, 1),
             blocked_v.view(-1, h_kv, dv)[begin:end].transpose(0, 1),
-            h_q, h_kv, is_causal=causal,
+            h_q,
+            h_kv,
+            is_causal=causal,
         )
 
 
 def main(batch=128, h_q=128, h_kv=1, cache_seqlen=8192, d=576, dv=512):
     """Run autotune for paged MLA decode and print results."""
-    from tilelang.profiler import do_bench
 
     dpe = d - dv
     dtype = torch.float16
@@ -367,7 +372,7 @@ def main(batch=128, h_q=128, h_kv=1, cache_seqlen=8192, d=576, dv=512):
     block_size = 64
     num_split = 1
     causal = True
-    softmax_scale = d ** -0.5
+    softmax_scale = d**-0.5
 
     # Per-batch variable sequence lengths
     cache_seqlens = torch.tensor([cache_seqlen + 2 * i for i in range(batch)], dtype=torch.int32, device=device)
@@ -379,9 +384,9 @@ def main(batch=128, h_q=128, h_kv=1, cache_seqlen=8192, d=576, dv=512):
 
     # Inputs
     q = torch.randn(batch, s_q, h_q, d, dtype=dtype, device=device)
-    block_table = torch.arange(
-        batch * max_seqlen_pad // block_size, dtype=torch.int32, device=device
-    ).view(batch, max_seqlen_pad // block_size)
+    block_table = torch.arange(batch * max_seqlen_pad // block_size, dtype=torch.int32, device=device).view(
+        batch, max_seqlen_pad // block_size
+    )
     blocked_k = torch.randn(block_table.numel(), block_size, h_kv, d, dtype=dtype, device=device)
     blocked_v = blocked_k[..., :dv]
 
@@ -405,9 +410,7 @@ def main(batch=128, h_q=128, h_kv=1, cache_seqlen=8192, d=576, dv=512):
     )
 
     with set_autotune_inputs(*kernel_inputs):
-        best_result = mla_decode_paged(
-            batch, h_q, h_kv, max_seqlen_pad, dv, dpe, block_size, softmax_scale, num_split
-        )
+        best_result = mla_decode_paged(batch, h_q, h_kv, max_seqlen_pad, dv, dpe, block_size, softmax_scale, num_split)
 
     best_latency = best_result.latency
     best_config = best_result.config
@@ -435,9 +438,12 @@ def main(batch=128, h_q=128, h_kv=1, cache_seqlen=8192, d=576, dv=512):
     print_benchmark_summary(
         "MLA Decode Paged",
         f"batch={batch}, h_q={h_q}, cache_seqlen={cache_seqlen}, d={d}, dv={dv}",
-        best_latency, total_flops / best_latency * 1e-9,
-        ref_latency, ref_tflops,
-        "Reference", best_config,
+        best_latency,
+        total_flops / best_latency * 1e-9,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
     )
 
     return best_latency, total_flops / best_latency * 1e-9, best_config, ref_latency
@@ -451,10 +457,8 @@ if __name__ == "__main__":
     parser.add_argument("--cache_seqlen", type=int, default=8192)
     parser.add_argument("--d", type=int, default=576)
     parser.add_argument("--dv", type=int, default=512)
-    parser.add_argument("--profile", action="store_true",
-                        help="Run kernel once with given config for ncu/acu profiling")
-    parser.add_argument("--profile-ref", action="store_true",
-                        help="Run reference once for ncu/acu profiling")
+    parser.add_argument("--profile", action="store_true", help="Run kernel once with given config for ncu/acu profiling")
+    parser.add_argument("--profile-ref", action="store_true", help="Run reference once for ncu/acu profiling")
     parser.add_argument("--block_N", type=int, default=None)
     parser.add_argument("--block_H", type=int, default=None)
     parser.add_argument("--num_stages", type=int, default=None)
@@ -462,11 +466,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.profile:
-        run_profile(args.batch, args.h_q, args.h_kv, args.cache_seqlen,
-                    args.d, args.dv,
-                    args.block_N, args.block_H, args.num_stages, args.threads)
+        run_profile(
+            args.batch, args.h_q, args.h_kv, args.cache_seqlen, args.d, args.dv, args.block_N, args.block_H, args.num_stages, args.threads
+        )
     elif args.profile_ref:
-        run_profile_ref(args.batch, args.h_q, args.h_kv, args.cache_seqlen,
-                        args.d, args.dv)
+        run_profile_ref(args.batch, args.h_q, args.h_kv, args.cache_seqlen, args.d, args.dv)
     else:
         main(args.batch, args.h_q, args.h_kv, args.cache_seqlen, args.d, args.dv)
