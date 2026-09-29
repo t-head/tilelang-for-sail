@@ -37,12 +37,12 @@ import xml.etree.ElementTree as ET
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
 
 def _strip_ansi(text):
     """Remove ANSI escape sequences from *text*."""
-    return _ANSI_RE.sub('', text)
+    return _ANSI_RE.sub("", text)
 
 
 def _parse_xml(xml_path):
@@ -121,6 +121,7 @@ def _status_icon(status):
 # ---------------------------------------------------------------------------
 # Mode A — single-board report  (--xml)
 # ---------------------------------------------------------------------------
+
 
 def _report_single_board(args):
     """Generate Markdown report from a single JUnit XML.  Returns 0/1."""
@@ -208,7 +209,7 @@ def _report_single_board(args):
         print("| Status | Test | Time |")
         print("|--------|------|------|")
         for tc in visible_cases:
-            print(f'| {_status_icon(tc["status"])} | {tc["name"]} | {tc["time"]}s |')
+            print(f"| {_status_icon(tc['status'])} | {tc['name']} | {tc['time']}s |")
         print()
         print("</details>")
 
@@ -218,6 +219,7 @@ def _report_single_board(args):
 # ---------------------------------------------------------------------------
 # Mode B — combined multi-board report  (--result-root)
 # ---------------------------------------------------------------------------
+
 
 def _parse_boards_arg(raw):
     """Parse --boards value: JSON array string or comma-separated list."""
@@ -254,11 +256,7 @@ def _report_combined(args):
     # Discover boards from filesystem
     discovered = []
     if os.path.isdir(root_dir):
-        discovered = sorted(
-            d
-            for d in os.listdir(root_dir)
-            if os.path.isdir(os.path.join(root_dir, d))
-        )
+        discovered = sorted(d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d)))
 
     # Build union: expected (order preserved) + any discovered-but-unexpected
     if expected_boards:
@@ -303,10 +301,7 @@ def _report_combined(args):
             print(f"| {board} | ⚠️ No results (setup failed?) | | | | |")
         else:
             _, stats = parsed
-            print(
-                f"| {board} | {stats['total']} | {stats['passed']} "
-                f"| {stats['failed']} | {stats['skipped']} | {stats['time']}s |"
-            )
+            print(f"| {board} | {stats['total']} | {stats['passed']} | {stats['failed']} | {stats['skipped']} | {stats['time']}s |")
     print()
 
     # Per-board detail sections
@@ -331,7 +326,9 @@ def _report_combined(args):
 
         parsed = board_data[board]
         if parsed is None:
-            print("> ⚠️ No test results were produced for this board. The job likely failed during environment setup (before tests ran). Check the pod logs in the per-board job output above.")
+            print(
+                "> ⚠️ No test results were produced for this board. The job likely failed during environment setup (before tests ran). Check the pod logs in the per-board job output above."
+            )
             print()
             continue
 
@@ -343,10 +340,7 @@ def _report_combined(args):
             print("| Test | Time | Error |")
             print("|------|------|-------|")
             for tc in failures:
-                print(
-                    f"| {tc['name']} | {tc['time']}s "
-                    f"| {_escape(tc['message'])} |"
-                )
+                print(f"| {tc['name']} | {tc['time']}s | {_escape(tc['message'])} |")
         else:
             print("🎉 All tests passed — no failures to display.")
         print()
@@ -360,10 +354,7 @@ def _report_combined(args):
             print("| Status | Test | Time |")
             print("|--------|------|------|")
             for tc in visible_cases:
-                print(
-                    f"| {_status_icon(tc['status'])} "
-                    f"| {tc['name']} | {tc['time']}s |"
-                )
+                print(f"| {_status_icon(tc['status'])} | {tc['name']} | {tc['time']}s |")
             print()
             print("</details>")
             print()
@@ -375,10 +366,9 @@ def _report_combined(args):
 # CLI entry point
 # ---------------------------------------------------------------------------
 
+
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Generate test result summary for GitHub Actions (single-board or combined)"
-    )
+    parser = argparse.ArgumentParser(description="Generate test result summary for GitHub Actions (single-board or combined)")
     # Mode A args
     parser.add_argument("--xml", default=None, help="[Mode A] Path to JUnit XML result file")
     parser.add_argument("--job-status", default="", help="[Mode A] Job status from ppu-scheduler-action")

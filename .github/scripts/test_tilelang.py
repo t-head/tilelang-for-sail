@@ -3,17 +3,16 @@
 import argparse
 import concurrent.futures
 import contextlib
+import json
 import os
+import re
 import signal
 import subprocess
 import sys
-import re
 import threading
 import time
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field, asdict
-from typing import List, Optional, Tuple
-import json
+from dataclasses import asdict, dataclass, field
 
 
 # ---------------------------------------------------------------------------
@@ -28,12 +27,14 @@ TEST_TIMEOUT_SECONDS = 1 * 60 * 10
 # 数据结构
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TestConfig:
     """单个测试的配置信息"""
-    file_path: str                       # 测试文件路径
-    test_filter: Optional[str] = None    # pytest -k 过滤或 ::node_id
-    extra_args: List[str] = field(default_factory=list)  # 额外 pytest 参数
+
+    file_path: str  # 测试文件路径
+    test_filter: str | None = None  # pytest -k 过滤或 ::node_id
+    extra_args: list[str] = field(default_factory=list)  # 额外 pytest 参数
 
     @property
     def display_name(self) -> str:
@@ -47,10 +48,11 @@ class TestConfig:
 @dataclass
 class TestResult:
     """单个测试运行的结果"""
+
     config: TestConfig
     returncode: int = -1
     duration: float = 0.0
-    xml_path: Optional[str] = None
+    xml_path: str | None = None
     stdout: str = ""
     stderr: str = ""
     # XML-parsed counts for accurate pass/fail/skip determination
@@ -74,18 +76,16 @@ class TestResult:
         if self.returncode == 5:
             return True
         # If XML was parsed and shows all tests are skipped with no real failures
-        if (self.xml_tests > 0
-                and self.xml_failures == 0
-                and self.xml_errors == 0
-                and self.xml_skipped > 0
-                and self.xml_skipped == self.xml_tests):
+        if (
+            self.xml_tests > 0
+            and self.xml_failures == 0
+            and self.xml_errors == 0
+            and self.xml_skipped > 0
+            and self.xml_skipped == self.xml_tests
+        ):
             return True
         # Non-zero return code but XML shows no failures/errors, only skips
-        return (self.returncode != 0
-                and self.xml_tests > 0
-                and self.xml_failures == 0
-                and self.xml_errors == 0
-                and self.xml_skipped > 0)
+        return self.returncode != 0 and self.xml_tests > 0 and self.xml_failures == 0 and self.xml_errors == 0 and self.xml_skipped > 0
 
     @property
     def failed(self) -> bool:
@@ -138,6 +138,7 @@ class CollectionError:
     _strip_ansi) so JUnit XML, fail_list JSON, and log output are clean.
     XML escaping happens at write time via ElementTree.
     """
+
     file_path: str
     traceback: str
 
@@ -164,9 +165,7 @@ def _strip_ansi(text: str) -> str:
 # Regex matching the pytest `_____ ERROR collecting <path> _____` block header.
 # pytest uses at least one leading underscore on each side; be tolerant of
 # trailing whitespace and any amount of underscore padding.
-_COLLECT_ERROR_HEADER_RE = re.compile(
-    r"^_+\s*ERROR collecting\s+(.+?)\s*_+\s*$"
-)
+_COLLECT_ERROR_HEADER_RE = re.compile(r"^_+\s*ERROR collecting\s+(.+?)\s*_+\s*$")
 # Boundaries that terminate a captured traceback block.
 _COLLECT_ERROR_TERMINATOR_RE = re.compile(
     r"^(=+\s*(short test summary info|ERRORS|FAILURES|warnings summary|passed|failed)\b.*=+\s*$"
@@ -174,9 +173,7 @@ _COLLECT_ERROR_TERMINATOR_RE = re.compile(
     r"|=+\s*\d+ .* in [\d.]+s\s*=+\s*$)"
 )
 # Short-summary `ERROR <path>[::...]` lines emitted in the trailing summary.
-_COLLECT_ERROR_SUMMARY_RE = re.compile(
-    r"^ERROR\s+(\S+\.py)(?:\s*-.*|\s*::.*|\s*)$"
-)
+_COLLECT_ERROR_SUMMARY_RE = re.compile(r"^ERROR\s+(\S+\.py)(?:\s*-.*|\s*::.*|\s*)$")
 
 
 def _parse_collection_output(output: str):
@@ -191,7 +188,7 @@ def _parse_collection_output(output: str):
     block header and the short-summary `ERROR X` line resolves to a single entry
     with the traceback text preferred over the summary marker.
     """
-    test_lines: List[str] = []
+    test_lines: list[str] = []
     error_files: dict = {}
 
     # Strip ANSI from the entire output once so every subsequent regex match
@@ -208,7 +205,7 @@ def _parse_collection_output(output: str):
         m = _COLLECT_ERROR_HEADER_RE.match(stripped)
         if m:
             err_path = m.group(1).strip()
-            tb_lines: List[str] = []
+            tb_lines: list[str] = []
             i += 1
             while i < n:
                 nxt = lines[i]
@@ -254,16 +251,11 @@ def collect_tests(target_dir):
     cmd = ["pytest", target_dir[0], "--collect-only", "-q"]
     for ignore_path in COLLECT_IGNORE_PATHS:
         cmd.extend(["--ignore", ignore_path])
-    result = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True
-    )
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
     test_lines, error_files = _parse_collection_output(result.stdout or "")
 
-    tests: List[TestConfig] = []
+    tests: list[TestConfig] = []
     for line in test_lines:
         if "::" not in line:
             continue
@@ -275,12 +267,10 @@ def collect_tests(target_dir):
             )
         )
 
-    collection_errors: List[CollectionError] = []
+    collection_errors: list[CollectionError] = []
     for err_path, tb in error_files.items():
         norm_path = os.path.normpath(os.path.join(target_dir[1], err_path))
-        collection_errors.append(
-            CollectionError(file_path=norm_path, traceback=tb)
-        )
+        collection_errors.append(CollectionError(file_path=norm_path, traceback=tb))
 
     # ---- Handle non-zero return codes ------------------------------------
     # Strip ANSI once for all diagnostic / log output below.
@@ -360,7 +350,7 @@ def collect_tests(target_dir):
 
 def load_skip():
     platform = os.environ.get("CI_TEST_PLATFORM")
-    skip_list_file = "{}_skip.json".format(platform)
+    skip_list_file = f"{platform}_skip.json"
     if not os.path.exists(skip_list_file):
         print(f"skip list file not exists: {skip_list_file}")
         return set()
@@ -370,26 +360,26 @@ def load_skip():
 
     return {(x["file_path"], x["test_filter"]) for x in data}
 
-def scan_cases(test_dir: Tuple[str, str]) -> Tuple[List[TestConfig], List[CollectionError]]:
+
+def scan_cases(test_dir: tuple[str, str]) -> tuple[list[TestConfig], list[CollectionError]]:
     collected, errors = collect_tests(test_dir)
     print(f"Collected test: {len(collected)}, collection errors: {len(errors)}")
 
     skip_set = load_skip()
     print(f"skipped test: {len(skip_set)}")
 
-    filtered = [
-        t for t in collected
-        if (t.file_path, t.test_filter) not in skip_set
-    ]
+    filtered = [t for t in collected if (t.file_path, t.test_filter) not in skip_set]
     print(f"filtered test: {len(filtered)}")
 
     return filtered, errors
+
 
 # ---------------------------------------------------------------------------
 # XML 结果解析
 # ---------------------------------------------------------------------------
 
-def parse_junit_xml_counts(xml_path: str) -> Tuple[int, int, int, int]:
+
+def parse_junit_xml_counts(xml_path: str) -> tuple[int, int, int, int]:
     """
     解析 JUnit XML 文件，提取测试统计数据。
 
@@ -415,7 +405,7 @@ def parse_junit_xml_counts(xml_path: str) -> Tuple[int, int, int, int]:
         return (0, 0, 0, 0)
 
     # Collect all <testsuite> elements
-    testsuites: List[ET.Element] = []
+    testsuites: list[ET.Element] = []
     if root.tag == "testsuites":
         testsuites = root.findall("testsuite")
     elif root.tag == "testsuite":
@@ -446,6 +436,7 @@ def parse_junit_xml_counts(xml_path: str) -> Tuple[int, int, int, int]:
 # ---------------------------------------------------------------------------
 # 测试执行
 # ---------------------------------------------------------------------------
+
 
 def run_single_test(
     config: TestConfig,
@@ -491,9 +482,12 @@ def _run_python_test(
     if config.test_filter:
         target = f"{target}::{config.test_filter}"
 
-    cmd: List[str] = [
-        "pytest", "-v",
-        "--color=yes", "--durations=0", "--showlocals",
+    cmd: list[str] = [
+        "pytest",
+        "-v",
+        "--color=yes",
+        "--durations=0",
+        "--showlocals",
         target,
         f"--junitxml={temp_xml}",
     ]
@@ -502,12 +496,12 @@ def _run_python_test(
         cmd.extend(config.extra_args)
 
     # 打印运行信息
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"[{index + 1}] 正在运行 [Python]: {config.display_name}")
     print(f"    命令: {' '.join(cmd)}")
     if verbose:
         print(f"    文件路径: {config.file_path} | 存在: {os.path.exists(config.file_path)}")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     start_time = time.time()
     proc = None
@@ -537,7 +531,7 @@ def _run_python_test(
             print(f"  ❌ 测试失败 (返回码={proc.returncode}): {config.display_name}")
             # 失败时打印 stderr 帮助调试
             if result.stderr:
-                print(f"  --- stderr 输出 (最后 20 行) ---")
+                print("  --- stderr 输出 (最后 20 行) ---")
                 for line in result.stderr.strip().splitlines()[-20:]:
                     print(f"    {line}")
 
@@ -555,11 +549,11 @@ def _run_python_test(
         print(f"  ❌ 测试超时 (超过 {timeout} 秒)，已强制终止并判定为 FAIL: {config.display_name}")
         # 打印超时前捕获的部分输出
         if result.stdout:
-            print(f"  --- stdout 输出 (最后 20 行) ---")
+            print("  --- stdout 输出 (最后 20 行) ---")
             for line in result.stdout.strip().splitlines()[-20:]:
                 print(f"    {line}")
     except FileNotFoundError:
-        print(f"  ❌ 找不到 pytest 命令，请确认已安装 pytest")
+        print("  ❌ 找不到 pytest 命令，请确认已安装 pytest")
         result.returncode = -1
     except Exception as e:
         print(f"  ❌ 执行异常: {e}")
@@ -574,8 +568,7 @@ def _run_python_test(
             result.xml_tests, result.xml_failures, result.xml_errors, result.xml_skipped = counts
             if verbose:
                 print(f"  📄 已生成临时 XML: {temp_xml}")
-                print(f"     XML 统计: tests={counts[0]}, failures={counts[1]}, "
-                      f"errors={counts[2]}, skipped={counts[3]}")
+                print(f"     XML 统计: tests={counts[0]}, failures={counts[1]}, errors={counts[2]}, skipped={counts[3]}")
         else:
             if verbose:
                 print(f"  ⚠️ 未生成 XML 文件: {temp_xml}")
@@ -591,8 +584,9 @@ def _run_python_test(
 # JUnit XML 合并
 # ---------------------------------------------------------------------------
 
+
 def merge_junit_xml(
-    xml_files: List[str],
+    xml_files: list[str],
     output_path: str,
     verbose: bool = False,
 ) -> bool:
@@ -617,7 +611,7 @@ def merge_junit_xml(
     total_errors = 0
     total_skipped = 0
     total_time = 0.0
-    all_testcases: List[ET.Element] = []
+    all_testcases: list[ET.Element] = []
 
     if not xml_files:
         print("⚠️ 没有 XML 文件需要合并，将生成空的结果文件")
@@ -642,7 +636,7 @@ def merge_junit_xml(
                 continue
 
             # 收集所有 <testsuite> 元素
-            testsuites: List[ET.Element] = []
+            testsuites: list[ET.Element] = []
             if root.tag == "testsuites":
                 # 结构: <testsuites><testsuite>...</testsuite></testsuites>
                 testsuites = root.findall("testsuite")
@@ -667,7 +661,7 @@ def merge_junit_xml(
                 for tc in ts.findall("testcase"):
                     if tc.find("skipped") is not None:
                         continue
-                    normalized_name = re.sub(r'[^0-9a-zA-Z]+', '_', tc.get("classname")) + "_" + tc.get("name")
+                    normalized_name = re.sub(r"[^0-9a-zA-Z]+", "_", tc.get("classname")) + "_" + tc.get("name")
                     tc.set("name", normalized_name)
                     all_testcases.append(tc)
                     file_test_count += 1
@@ -702,9 +696,7 @@ def merge_junit_xml(
 
     final_tree.write(output_path, encoding="utf-8", xml_declaration=True)
     print(f"\n✅ 测试结果已合并到: {output_path}")
-    print(f"   测试总数={total_tests}, 失败={total_failures}, "
-          f"错误={total_errors}, 跳过={total_skipped}, "
-          f"耗时={total_time:.3f}s")
+    print(f"   测试总数={total_tests}, 失败={total_failures}, 错误={total_errors}, 跳过={total_skipped}, 耗时={total_time:.3f}s")
     return True
 
 
@@ -712,7 +704,8 @@ def merge_junit_xml(
 # 清理临时文件
 # ---------------------------------------------------------------------------
 
-def cleanup_temp_files(xml_files: List[str], verbose: bool = False) -> None:
+
+def cleanup_temp_files(xml_files: list[str], verbose: bool = False) -> None:
     """
     清理临时生成的 XML 文件。
 
@@ -741,7 +734,8 @@ def cleanup_temp_files(xml_files: List[str], verbose: bool = False) -> None:
 # 摘要报告
 # ---------------------------------------------------------------------------
 
-def print_summary(results: List[TestResult], output_xml: str) -> None:
+
+def print_summary(results: list[TestResult], output_xml: str) -> None:
     """
     打印测试执行的摘要表格。
 
@@ -749,16 +743,16 @@ def print_summary(results: List[TestResult], output_xml: str) -> None:
         results:    所有测试运行结果
         output_xml: 合并后的 XML 文件路径
     """
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("                          测试执行摘要")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     if not results:
         print("  (无测试运行)")
     else:
         # 表头
         print(f"  {'序号':<6}{'状态':<8}{'耗时':>10}  {'测试用例'}")
-        print(f"  {'-'*6}{'-'*8}{'-'*10}  {'-'*40}")
+        print(f"  {'-' * 6}{'-' * 8}{'-' * 10}  {'-' * 40}")
 
         passed_count = 0
         failed_count = 0
@@ -792,20 +786,23 @@ def print_summary(results: List[TestResult], output_xml: str) -> None:
                 failed_count += 1
             total_duration += r.duration
 
-        print(f"  {'-'*6}{'-'*8}{'-'*10}  {'-'*40}")
-        print(f"  {'合计':<6}{'':8}{total_duration:>9.2f}s  "
-              f"通过={passed_count}, 失败={failed_count}, "
-              f"跳过={skipped_count}, 总计={len(results)}")
+        print(f"  {'-' * 6}{'-' * 8}{'-' * 10}  {'-' * 40}")
+        print(
+            f"  {'合计':<6}{'':8}{total_duration:>9.2f}s  "
+            f"通过={passed_count}, 失败={failed_count}, "
+            f"跳过={skipped_count}, 总计={len(results)}"
+        )
 
     print(f"\n  📄 合并结果文件: {os.path.abspath(output_xml)}")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
 
 # ---------------------------------------------------------------------------
 # 失败用例输出
 # ---------------------------------------------------------------------------
 
-def dump_fail_list(results: List[TestResult], output_path: str = "fail_list.json") -> None:
+
+def dump_fail_list(results: list[TestResult], output_path: str = "fail_list.json") -> None:
     """
     将失败的测试用例输出为 JSON 文件，格式与 <BOARD_TYPE>_skip.json 一致。
 
@@ -816,24 +813,26 @@ def dump_fail_list(results: List[TestResult], output_path: str = "fail_list.json
     fail_entries = []
     for r in results:
         if r.failed:
-            fail_entries.append({
-                "file_path": r.config.file_path,
-                "test_filter": r.config.test_filter or "",
-                "extra_args": list(r.config.extra_args),
-                "reason": "TIMEOUT" if r.timed_out else "N/A",
-            })
+            fail_entries.append(
+                {
+                    "file_path": r.config.file_path,
+                    "test_filter": r.config.test_filter or "",
+                    "extra_args": list(r.config.extra_args),
+                    "reason": "TIMEOUT" if r.timed_out else "N/A",
+                }
+            )
 
     with open(output_path, "w", encoding="utf-8") as f:
         print(f"Fail cases list:\n{fail_entries}")
         json.dump(fail_entries, f, indent=2, ensure_ascii=False)
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"📝 失败用例列表已保存到: {output_path}")
     print(f"   共 {len(fail_entries)} 个失败用例")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
 
-def dump_skip_list(results: List[TestResult], output_path: str = "skip_list.json") -> None:
+def dump_skip_list(results: list[TestResult], output_path: str = "skip_list.json") -> None:
     """
     运行期 skip 不需要持久化——写空列表保持文件契约即可。
 
@@ -844,9 +843,9 @@ def dump_skip_list(results: List[TestResult], output_path: str = "skip_list.json
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump([], f, indent=2, ensure_ascii=False)
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"📝 跳过用例列表已保存到: {output_path}（运行期 skip 不写入）")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -866,27 +865,32 @@ def _write_collection_error_xml(err: CollectionError, index: int) -> str:
     xml_path = f"collection_error_{index}.xml"
     root = ET.Element("testsuites")
     ts = ET.SubElement(
-        root, "testsuite",
+        root,
+        "testsuite",
         name="pytest-collection-error",
-        tests="1", failures="0", errors="1", skipped="0", time="0.000",
+        tests="1",
+        failures="0",
+        errors="1",
+        skipped="0",
+        time="0.000",
     )
     tc = ET.SubElement(
-        ts, "testcase",
+        ts,
+        "testcase",
         classname=err.file_path,
         name="collection_error",
         time="0.000",
     )
     error_el = ET.SubElement(
-        tc, "error",
+        tc,
+        "error",
         type="CollectionError",
         message=f"pytest collection error for {err.file_path}",
     )
     error_el.text = err.traceback or ""
     tree = ET.ElementTree(root)
-    try:
+    with contextlib.suppress(AttributeError):
         ET.indent(tree, space="  ")
-    except AttributeError:
-        pass
     tree.write(xml_path, encoding="utf-8", xml_declaration=True)
     return xml_path
 
@@ -917,7 +921,7 @@ def _make_collection_error_result(err: CollectionError, xml_path: str) -> TestRe
     )
 
 
-def _dedupe_collection_errors(errors: List[CollectionError]) -> List[CollectionError]:
+def _dedupe_collection_errors(errors: list[CollectionError]) -> list[CollectionError]:
     """Dedupe by normalized file_path; first occurrence wins.
 
     Called across per-directory scan results, so the same broken file surfaced
@@ -925,7 +929,7 @@ def _dedupe_collection_errors(errors: List[CollectionError]) -> List[CollectionE
     produces a single synthetic failure.
     """
     seen: set = set()
-    out: List[CollectionError] = []
+    out: list[CollectionError] = []
     for e in errors:
         key = os.path.normpath(e.file_path)
         if key in seen:
@@ -939,7 +943,8 @@ def _dedupe_collection_errors(errors: List[CollectionError]) -> List[CollectionE
 # 主流程
 # ---------------------------------------------------------------------------
 
-def main(argv: Optional[List[str]] = None) -> int:
+
+def main(argv: list[str] | None = None) -> int:
     """
     主入口：解析命令行参数，运行测试，合并结果，输出摘要。
 
@@ -960,7 +965,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default="test-results.xml",
         help="合并后的 XML 输出文件路径 (默认: test-results.xml)",
     )
@@ -970,7 +976,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="保留临时 XML 文件，不在合并后删除",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="输出详细信息",
     )
@@ -1029,29 +1036,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     ]
     EXAMPLE_PREFIX = "examples"
 
-    test_dirs: List[Tuple[str, str]] = [
-        (f"{EXAMPLE_PREFIX}/{d}", EXAMPLE_PREFIX) for d in EXAMPLE_SUBDIRS
-    ]
+    test_dirs: list[tuple[str, str]] = [(f"{EXAMPLE_PREFIX}/{d}", EXAMPLE_PREFIX) for d in EXAMPLE_SUBDIRS]
 
     # testing/ sub-directories to scan (skip non-PPU targets: cpu, metal, webgpu)
     TESTING_SKIP_DIRS = {"cpu", "metal", "webgpu"}
     testing_subdirs = sorted(
-        d for d in os.listdir("testing/python")
-        if os.path.isdir(os.path.join("testing/python", d)) and d not in TESTING_SKIP_DIRS
+        d for d in os.listdir("testing/python") if os.path.isdir(os.path.join("testing/python", d)) and d not in TESTING_SKIP_DIRS
     )
-    test_dirs += [
-        (f"testing/python/{d}", ".") for d in testing_subdirs
-    ]
-    test_configs: List[TestConfig] = []
-    all_collection_errors: List[CollectionError] = []
+    test_dirs += [(f"testing/python/{d}", ".") for d in testing_subdirs]
+    test_configs: list[TestConfig] = []
+    all_collection_errors: list[CollectionError] = []
     for dir_tuple in test_dirs:
         # scan_cases 已完成 skip 过滤；--limit 在过滤之后、调度之前对每个
         # 目录组做截断（take first N per group），既能覆盖多个目录又快速跑通。
         group, group_errors = scan_cases(dir_tuple)
         if args.limit > 0 and len(group) > args.limit:
-            print(f"✂️ 目录组 {dir_tuple[0]}: 应用 --limit={args.limit}，"
-                  f"保留前 {args.limit} 个用例（收集 {len(group)} 个）")
-            group = group[:args.limit]
+            print(f"✂️ 目录组 {dir_tuple[0]}: 应用 --limit={args.limit}，保留前 {args.limit} 个用例（收集 {len(group)} 个）")
+            group = group[: args.limit]
         test_configs.extend(group)
         all_collection_errors.extend(group_errors)
 
@@ -1060,10 +1061,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # ERROR-block parser and the short-summary parser.
     all_collection_errors = _dedupe_collection_errors(all_collection_errors)
     if all_collection_errors:
-        print(
-            f"⚠️ 检测到 {len(all_collection_errors)} 个 pytest collection 错误，"
-            f"将作为失败写入 JUnit 与 fail_list"
-        )
+        print(f"⚠️ 检测到 {len(all_collection_errors)} 个 pytest collection 错误，将作为失败写入 JUnit 与 fail_list")
         for e in all_collection_errors:
             print(f"   ✗ {e.file_path}")
 
@@ -1078,14 +1076,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"📋 共 {len(test_configs)} 个测试用例待运行")
     print(f"📄 输出文件: {args.output}")
     workers = max(1, args.workers)
-    print(f"🧵 并行 worker 数: {workers}"
-          + (f" | --maxfail={args.maxfail}" if args.maxfail > 0 else "")
-          + (f" | --limit={args.limit}/目录组" if args.limit > 0 else ""))
+    print(
+        f"🧵 并行 worker 数: {workers}"
+        + (f" | --maxfail={args.maxfail}" if args.maxfail > 0 else "")
+        + (f" | --limit={args.limit}/目录组" if args.limit > 0 else "")
+    )
 
     # 每个用例复用 run_single_test，其内部已用 Popen + os.setsid 进程组 +
     # timeout + SIGKILL + 独立 results_{idx}.xml 保证隔离；这里仅在其外层
     # 用线程池并发调度。线程只是阻塞等待 communicate，无需跨进程 pickle。
-    results: List[TestResult] = []
+    results: list[TestResult] = []
     results_lock = threading.Lock()
     # 线程安全的“真实失败”计数，用于 --maxfail 早停
     fail_lock = threading.Lock()
@@ -1094,7 +1094,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # 将 collection 错误先写入结果集，以保证即使后续调度或进程异常中断也
     # 不会丢失“无法收集”的失败信号。保存 xml_path 以便后续合并。
-    collection_error_xml_paths: List[str] = []
+    collection_error_xml_paths: list[str] = []
     for c_idx, c_err in enumerate(all_collection_errors):
         xml_path = _write_collection_error_xml(c_err, c_idx)
         collection_error_xml_paths.append(xml_path)
@@ -1122,10 +1122,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         # idx 唯一：以 enumerate 序号绑定每个用例，保证 results_{idx}.xml 不冲突
-        future_map = {
-            executor.submit(_worker, idx, cfg): idx
-            for idx, cfg in enumerate(test_configs)
-        }
+        future_map = {executor.submit(_worker, idx, cfg): idx for idx, cfg in enumerate(test_configs)}
         for future in concurrent.futures.as_completed(future_map):
             # 触发早停后，取消尚未开始的任务；已提交/在跑的照常完成
             if stop_event.is_set():
@@ -1141,11 +1138,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.maxfail > 0 and stop_event.is_set():
         print(f"\n🛑 已达到 --maxfail={args.maxfail} 真实失败阈值，提前停止调度新用例")
 
-    xml_files: List[str] = [
-        r.xml_path for r in results if r.xml_path is not None
-    ]
+    xml_files: list[str] = [r.xml_path for r in results if r.xml_path is not None]
 
-    print(f"\n{'─'*70}")
+    print(f"\n{'─' * 70}")
     print("正在合并 JUnit XML 结果...")
     merge_junit_xml(xml_files, args.output, verbose=args.verbose)
 
