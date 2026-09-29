@@ -1726,5 +1726,23 @@
     "test_filter": "test_example_per_token_cast_to_fp8",
     "extra_args": [],
     "reason": "rc=1 failure on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_diagnostics.py",
+    "test_filter": "test_jit_compile_reports_timeout_for_hanging_nvcc",
+    "extra_args": [],
+    "reason": "ProducerConsumerWarpSpecialized is unavailable on PPU backend"
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_diagnostics.py",
+    "test_filter": "test_explicit_cuda_arch_source_generation_probe",
+    "extra_args": [],
+    "reason": "ProducerConsumerWarpSpecialized is unavailable on PPU backend"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_tma_1d.py",
+    "test_filter": "test_tilelang_language_tma_1d",
+    "extra_args": [],
+    "reason": "T.copy prefer_instruction=\"tma\" is not supported on PPU"
   }
 ]
