@@ -83,6 +83,8 @@ jobs:
           fi
 
   tests:
+    # Disabled: Metal (macos-latest) and CUDA-auto (self-hosted-nvidia) tests temporarily turned off.
+    if: false
     name: Test for Python ${{ matrix.python-version }} with ${{ matrix.runner.toolkit }} (on ${{ matrix.runner.name }})
     needs: [lint]
     runs-on: ${{ matrix.runner.tags }}
@@ -434,6 +436,7 @@ jobs:
 
   cutedsl:
     name: CuTeDSL Examples for Python 3.12 with CUDA-auto (on self-hosted-nvidia)
+    if: false  # Upstream backend disabled — PPU-only fork
     needs: [tests]
     runs-on: [self-hosted, nvidia]
     timeout-minutes: 120
