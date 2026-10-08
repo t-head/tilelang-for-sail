@@ -84,12 +84,10 @@ def test_128b_swizzle():
     assert "tl::aiu_load" in source, "Expected tl::aiu_load in generated CUDA source"
 
     # 128B swizzle → swzl_mode=0: all aiu_load should contain ", 0," or end with ", 0)"
-    aiu_load_calls = re.findall(r'tl::aiu_load\([^)]+\)', source)
+    aiu_load_calls = re.findall(r"tl::aiu_load\([^)]+\)", source)
     assert len(aiu_load_calls) > 0
     for call in aiu_load_calls:
-        assert ", 0," in call or call.endswith(", 0)"), (
-            f"Expected swzl_mode=0 for 128B swizzle, got: {call}"
-        )
+        assert ", 0," in call or call.endswith(", 0)"), f"Expected swzl_mode=0 for 128B swizzle, got: {call}"
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
@@ -106,12 +104,10 @@ def test_64b_swizzle():
     assert "tl::aiu_load" in source, "Expected tl::aiu_load in generated CUDA source"
 
     # Should have at least one aiu_load with swzl_mode=1 (for A's 64B swizzle)
-    aiu_load_calls = re.findall(r'tl::aiu_load\([^)]+\)', source)
+    aiu_load_calls = re.findall(r"tl::aiu_load\([^)]+\)", source)
     assert len(aiu_load_calls) > 0
     has_mode_1 = any(", 1," in call or call.endswith(", 1)") for call in aiu_load_calls)
-    assert has_mode_1, (
-        "Expected at least one aiu_load with swzl_mode=1 for 64B swizzle on A_shared"
-    )
+    assert has_mode_1, "Expected at least one aiu_load with swzl_mode=1 for 64B swizzle on A_shared"
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
@@ -128,12 +124,10 @@ def test_64b_swizzle_constraint_trigger():
     assert "tl::aiu_load" in source, "Expected tl::aiu_load in generated CUDA source"
 
     # Should contain aiu_load with swzl_mode=1 (64B for A)
-    aiu_load_calls = re.findall(r'tl::aiu_load\([^)]+\)', source)
+    aiu_load_calls = re.findall(r"tl::aiu_load\([^)]+\)", source)
     assert len(aiu_load_calls) > 0
     has_mode_1 = any(", 1," in call or call.endswith(", 1)") for call in aiu_load_calls)
-    assert has_mode_1, (
-        "Expected aiu_load with swzl_mode=1 for 64B swizzle on A_shared"
-    )
+    assert has_mode_1, "Expected aiu_load with swzl_mode=1 for 64B swizzle on A_shared"
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
@@ -150,12 +144,10 @@ def test_128b_swizzle_constraint_trigger():
     assert "tl::aiu_load" in source, "Expected tl::aiu_load in generated CUDA source"
 
     # 128B swizzle → swzl_mode=0
-    aiu_load_calls = re.findall(r'tl::aiu_load\([^)]+\)', source)
+    aiu_load_calls = re.findall(r"tl::aiu_load\([^)]+\)", source)
     assert len(aiu_load_calls) > 0
     for call in aiu_load_calls:
-        assert ", 0," in call or call.endswith(", 0)"), (
-            f"Expected swzl_mode=0 for 128B swizzle, got: {call}"
-        )
+        assert ", 0," in call or call.endswith(", 0)"), f"Expected swzl_mode=0 for 128B swizzle, got: {call}"
 
 
 def fp8_aiu_gemm_kernel(block_k, dtype):
@@ -181,9 +173,7 @@ def fp8_aiu_gemm_kernel(block_k, dtype):
     return main
 
 
-def compile_and_verify_fp8_aiu(
-    block_k, expected_swizzle_mode, tilelang_dtype, torch_dtype
-):
+def compile_and_verify_fp8_aiu(block_k, expected_swizzle_mode, tilelang_dtype, torch_dtype):
     kernel = tilelang.compile(
         fp8_aiu_gemm_kernel(block_k, tilelang_dtype),
         out_idx=[-1],
@@ -193,9 +183,7 @@ def compile_and_verify_fp8_aiu(
         },
     )
     source = kernel.get_kernel_source()
-    aiu_load_calls = [
-        line for line in source.splitlines() if "tl::aiu_load_b8(" in line
-    ]
+    aiu_load_calls = [line for line in source.splitlines() if "tl::aiu_load_b8(" in line]
     assert aiu_load_calls, "Expected native b8 AIU loads in generated source"
     for call in aiu_load_calls:
         args = call.split("tl::aiu_load_b8(", 1)[1].split(");", 1)[0].split(",")

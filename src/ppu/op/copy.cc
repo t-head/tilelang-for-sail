@@ -10,10 +10,10 @@
 #include <tvm/runtime/logging.h>
 
 #include "backend/common/target_utils.h"
-#include "ppu/op/copy.h"
 #include "layout/layout.h"
 #include "op/builtin.h"
 #include "op/utils.h"
+#include "ppu/op/copy.h"
 #include "transform/common/loop_fusion_utils.h"
 #include "transform/loop_partition.h"
 #include "transform/loop_vectorize.h"
@@ -180,7 +180,8 @@ Stmt Copy::Lower(const CopyNode &op, const LowerArgs &T,
       SelectInst(op, T.target, T.layout_map, analyzer, /*buffer_oob=*/false);
   if (op.dst_block.defined()) {
     LOG(FATAL) << "T.copy with dst_block requires ppu0015+ cluster-copy/TMA, "
-               << "but PPU only supports ppu0010/ppu0015. Got target=" << T.target;
+               << "but PPU only supports ppu0010/ppu0015. Got target="
+               << T.target;
   }
   if (copy_inst == CopyInst::kLDSM) {
     auto ldsm_copy = LowerLDSM(op, T, analyzer, copy_inst);
@@ -397,10 +398,10 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &T,
     shared_coords = inv->Forward({local_index, thread_index});
   }
   shared_coords.pop_back();
-  PrimExpr shared_addr = Call(
-      DataType::Handle(), tl::access_ptr(),
-      {BufferLoad(shared_tensor, shared_coords), PrimExpr(2 * num),
-       make_const(DataType::Int(32), 1)});
+  PrimExpr shared_addr =
+      Call(DataType::Handle(), tl::access_ptr(),
+           {BufferLoad(shared_tensor, shared_coords), PrimExpr(2 * num),
+            make_const(DataType::Int(32), 1)});
   args.push_back(shared_addr);
 
   if (local_tensor->dtype != shared_tensor->dtype) {
@@ -408,8 +409,8 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &T,
   }
   PrimExpr local_addr =
       Call(DataType::Handle(), tl::access_ptr(),
-           {BufferLoad(local_tensor, {local_iter * 2 * num}),
-            PrimExpr(2 * num), make_const(DataType::Int(32), 2)});
+           {BufferLoad(local_tensor, {local_iter * 2 * num}), PrimExpr(2 * num),
+            make_const(DataType::Int(32), 2)});
   args.push_back(local_addr);
 
   auto body = Evaluate(Call(DataType::Handle(), copy_op, args));
@@ -451,7 +452,7 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &T,
     return LowerNormal(op, T, analyzer);
   };
 
-    if (!TargetIsPPU(T.target) || !TargetHasAiuCopy(T.target)) {
+  if (!TargetIsPPU(T.target) || !TargetHasAiuCopy(T.target)) {
     return fallback_to_normal("target has no PPU AIU copy support");
   }
   if (T.layout_map.count(global_tensor)) {
@@ -533,13 +534,14 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &T,
       shared_range_idx++;
     }
     if (shared_range_idx >= shared_range.size()) {
-      return fallback_to_normal("global and shared ranges have incompatible ranks");
+      return fallback_to_normal(
+          "global and shared ranges have incompatible ranks");
     }
     auto s_range = shared_range[shared_range_idx++];
     ICHECK(StructuralEqual()(g_range->extent, s_range->extent))
         << global_tensor->name << "[" << i << "] is illegal, "
-        << global_tensor->name << "[" << i << "] = " << g_range->extent
-        << ", " << shared_tensor->name << "[" << shared_range_idx
+        << global_tensor->name << "[" << i << "] = " << g_range->extent << ", "
+        << shared_tensor->name << "[" << shared_range_idx
         << "] = " << s_range->extent;
   }
 
@@ -594,23 +596,25 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &T,
   int outer_box_dim_value = static_cast<int>(*outer_box_dim);
   int thread_extent_value = static_cast<int>(*thread_extent);
 
-  // FP4 sub-byte: AIU .b8 requires row width >= 64B (minimum swizzle granularity).
-  // FP4 with block_K < 128 -> row_bytes < 64 -> fallback to SIMT copy.
+  // FP4 sub-byte: AIU .b8 requires row width >= 64B (minimum swizzle
+  // granularity). FP4 with block_K < 128 -> row_bytes < 64 -> fallback to SIMT
+  // copy.
   int dtype_bits = global_tensor->dtype.bits();
   bool is_sub_byte = (dtype_bits < 8);
   if (is_sub_byte) {
-    int64_t row_bytes = static_cast<int64_t>(inner_box_dim_value) * dtype_bits / 8;
+    int64_t row_bytes =
+        static_cast<int64_t>(inner_box_dim_value) * dtype_bits / 8;
     if (row_bytes < 64) {
-      return fallback_to_normal(
-          "AIU sub-byte dtype row width " + std::to_string(row_bytes) +
-          "B < 64B minimum swizzle granularity");
+      return fallback_to_normal("AIU sub-byte dtype row width " +
+                                std::to_string(row_bytes) +
+                                "B < 64B minimum swizzle granularity");
     }
   }
   // Sub-byte: shape_0 and coord_0 are FloorDiv'd by packing_factor; reject
   // values that are not exactly divisible to avoid silent truncation.
   if (is_sub_byte) {
     int pf = 8 / dtype_bits;
-    if (auto* shape_imm = global_shape[0].as<IntImmNode>()) {
+    if (auto *shape_imm = global_shape[0].as<IntImmNode>()) {
       if (shape_imm->value % pf != 0) {
         return fallback_to_normal(
             "sub-byte inner extent not divisible by packing factor");
@@ -619,7 +623,7 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &T,
       return fallback_to_normal(
           "sub-byte inner extent not divisible by packing factor");
     }
-    if (auto* coord_imm = global_coords[0].as<IntImmNode>()) {
+    if (auto *coord_imm = global_coords[0].as<IntImmNode>()) {
       if (coord_imm->value % pf != 0) {
         return fallback_to_normal(
             "sub-byte inner offset not divisible by packing factor");
@@ -630,8 +634,9 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &T,
     }
   }
 
-  // instruction_dim_elems: always in elements (for IR-level addressing and splits).
-  // For sub-byte types, hardware .b8 args are in bytes; convert when pushing args.
+  // instruction_dim_elems: always in elements (for IR-level addressing and
+  // splits). For sub-byte types, hardware .b8 args are in bytes; convert when
+  // pushing args.
   int instruction_dim_elems = inner_box_dim_value;
   if (swizzle_mode == SwizzleMode::kHalf) {
     instruction_dim_elems = AiuElementsForBytes(64, shared_tensor->dtype);
@@ -668,14 +673,16 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &T,
   int outer_per_warp = outer_box_dim_value / outer_splits;
   int participating_warps = inner_splits * outer_splits;
 
-  // Ensure outer_per_warp >= swizzle row period (8 for both 128B and 64B layouts).
-  // If the warp split is too fine, reduce outer_splits to meet the constraint.
+  // Ensure outer_per_warp >= swizzle row period (8 for both 128B and 64B
+  // layouts). If the warp split is too fine, reduce outer_splits to meet the
+  // constraint.
   constexpr int kSwizzleRowPeriod = 8;
   if (outer_per_warp < kSwizzleRowPeriod) {
     if (outer_box_dim_value < kSwizzleRowPeriod) {
       return LowerNormal(op, T, analyzer);
     }
-    // Find the largest factor of outer_box_dim_value that yields outer_per_warp >= kSwizzleRowPeriod
+    // Find the largest factor of outer_box_dim_value that yields outer_per_warp
+    // >= kSwizzleRowPeriod
     int max_outer_splits = outer_box_dim_value / kSwizzleRowPeriod;
     for (int s = max_outer_splits; s >= 1; s--) {
       if (outer_box_dim_value % s == 0) {
@@ -691,7 +698,8 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &T,
   smem_box.Set(cube_layout_pos[1], PrimExpr(outer_per_warp));
 
   // For sub-byte types (e.g. FP4), hardware .b8 args are in bytes.
-  // packing_factor converts element count to byte count: bytes = elems / packing_factor.
+  // packing_factor converts element count to byte count: bytes = elems /
+  // packing_factor.
   int packing_factor = is_sub_byte ? (8 / dtype_bits) : 1;
 
   Array<PrimExpr> args;
@@ -701,7 +709,8 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &T,
   for (size_t i = 0; i < rank; ++i) {
     global_shape_temp = global_shape_temp * global_shape[i];
     if (i == cube_layout_pos[1] - 1) {
-      // shape_0: for sub-byte types, convert elements to bytes for .b8 instruction
+      // shape_0: for sub-byte types, convert elements to bytes for .b8
+      // instruction
       if (is_sub_byte) {
         args.push_back(FloorDiv(global_shape_temp,
                                 IntImm(DataType::Int(32), packing_factor)));
@@ -732,16 +741,16 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &T,
       FloorDiv(warp_id, IntImm(DataType::Int(32), inner_splits));
   PrimExpr shared_addr = shared_tensor.access_ptr(
       2, DataType::Handle(), 1,
-      shared_offset + warp_inner_idx * (instruction_dim_elems * outer_box_dim_value) +
+      shared_offset +
+          warp_inner_idx * (instruction_dim_elems * outer_box_dim_value) +
           warp_outer_idx * (instruction_dim_elems * outer_per_warp),
       total_elements);
   args.push_back(shared_addr);
 
   global_coords.Set(0,
                     global_coords[0] + instruction_dim_elems * warp_inner_idx);
-  global_coords.Set(cube_layout_pos[1],
-                    global_coords[cube_layout_pos[1]] +
-                        outer_per_warp * warp_outer_idx);
+  global_coords.Set(cube_layout_pos[1], global_coords[cube_layout_pos[1]] +
+                                            outer_per_warp * warp_outer_idx);
   auto compute_coord = [&](size_t begin, size_t end) {
     PrimExpr result = 0;
     PrimExpr stride = 1;

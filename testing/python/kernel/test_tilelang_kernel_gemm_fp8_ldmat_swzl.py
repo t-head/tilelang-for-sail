@@ -90,15 +90,11 @@ def test_fp8_swzl_128b():
 
     calls = _swzl_calls(source)
     assert len(calls) > 0, "Expected tl::tix_ldmatrix_swzl_x4 in generated CUDA source"
-    assert "tix_ldmatrix_swzl_x4_trans" not in source, (
-        "FP8 swizzle should only use the non-trans swizzled ldmatrix"
-    )
+    assert "tix_ldmatrix_swzl_x4_trans" not in source, "FP8 swizzle should only use the non-trans swizzled ldmatrix"
     for call in calls:
         # mode 0: the mode argument is 0 (before the trans_block flag)
         m = re.search(_TAIL_RE, call)
-        assert m is not None and m.group(1) == "0", (
-            f"Expected swzl_mode=0 for 128B swizzle, got: {call}"
-        )
+        assert m is not None and m.group(1) == "0", f"Expected swzl_mode=0 for 128B swizzle, got: {call}"
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
@@ -110,15 +106,11 @@ def test_fp8_swzl_64b():
 
     calls = _swzl_calls(source)
     assert len(calls) > 0, "Expected tl::tix_ldmatrix_swzl_x4 in generated CUDA source"
-    assert "tix_ldmatrix_swzl_x4_trans" not in source, (
-        "FP8 swizzle should only use the non-trans swizzled ldmatrix"
-    )
+    assert "tix_ldmatrix_swzl_x4_trans" not in source, "FP8 swizzle should only use the non-trans swizzled ldmatrix"
     for call in calls:
         # mode 1: the mode argument is 1 (before the trans_block flag)
         m = re.search(_TAIL_RE, call)
-        assert m is not None and m.group(1) == "1", (
-            f"Expected swzl_mode=1 for 64B swizzle, got: {call}"
-        )
+        assert m is not None and m.group(1) == "1", f"Expected swzl_mode=1 for 64B swizzle, got: {call}"
 
 
 if __name__ == "__main__":

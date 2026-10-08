@@ -98,7 +98,7 @@ def nsa_fwd(
             i_b, i_h = i_bh // head_kv, i_bh % head_kv
 
             NS = S
-            T.copy(Q[i_b, i_t, i_h * G:(i_h + 1) * G, :], Q_shared)
+            T.copy(Q[i_b, i_t, i_h * G : (i_h + 1) * G, :], Q_shared)
 
             T.fill(acc_o, 0)
             T.fill(logsum, 0)
@@ -107,7 +107,7 @@ def nsa_fwd(
             for i in T.Pipelined(NS, num_stages=num_stages):
                 i_s = BlockIndices[i_b, i_t, i_h, i] * BS
                 if i_s <= i_t and i_s >= 0:
-                    T.copy(K[i_b, i_s:i_s + BS, i_h, :], K_shared)
+                    T.copy(K[i_b, i_s : i_s + BS, i_h, :], K_shared)
 
                     if is_causal:
                         for i, j in T.Parallel(G, BS):
@@ -132,19 +132,18 @@ def nsa_fwd(
                     for i, j in T.Parallel(G, BV):
                         acc_o[i, j] *= scores_scale[i]
 
-                    T.copy(V[i_b, i_s:i_s + BS, i_h, i_v * BV:(i_v + 1) * BV], V_shared)
+                    T.copy(V[i_b, i_s : i_s + BS, i_h, i_v * BV : (i_v + 1) * BV], V_shared)
                     T.gemm(acc_s_cast, V_shared, acc_o, policy=T.GemmWarpPolicy.FullRow)
 
             for i, j in T.Parallel(G, BV):
                 acc_o[i, j] /= logsum[i]
             T.copy(acc_o, O_shared)
-            T.copy(O_shared, Output[i_b, i_t, i_h * G:(i_h + 1) * G, i_v * BV:(i_v + 1) * BV])
+            T.copy(O_shared, Output[i_b, i_t, i_h * G : (i_h + 1) * G, i_v * BV : (i_v + 1) * BV])
 
     return main
 
 
-def run_profile(batch, heads, seq_len, dim, selected_blocks, block_size, is_causal,
-                 num_stages, threads):
+def run_profile(batch, heads, seq_len, dim, selected_blocks, block_size, is_causal, num_stages, threads):
     """Run the kernel once with an explicit config for ncu/acu profiling."""
     import torch
 
@@ -156,16 +155,23 @@ def run_profile(batch, heads, seq_len, dim, selected_blocks, block_size, is_caus
     Q = torch.randn(batch, seq_len, heads, dim, dtype=dtype, device="cuda")
     K = torch.randn(batch, seq_len, head_kv, dim, dtype=dtype, device="cuda")
     V = torch.randn(batch, seq_len, head_kv, dim, dtype=dtype, device="cuda")
-    BlockIndices = torch.randint(0, max(1, seq_len // block_size),
-                                 (batch, seq_len, head_kv, selected_blocks),
-                                 dtype=torch.int32, device="cuda")
+    BlockIndices = torch.randint(
+        0, max(1, seq_len // block_size), (batch, seq_len, head_kv, selected_blocks), dtype=torch.int32, device="cuda"
+    )
 
     inject_pass_configs_from_env(nsa_fwd)
     kernel = nsa_fwd(
-        batch, heads, seq_len, dim, is_causal,
-        scale=scale, block_size=block_size,
-        groups=groups, selected_blocks=selected_blocks,
-        num_stages=num_stages, threads=threads,
+        batch,
+        heads,
+        seq_len,
+        dim,
+        is_causal,
+        scale=scale,
+        block_size=block_size,
+        groups=groups,
+        selected_blocks=selected_blocks,
+        num_stages=num_stages,
+        threads=threads,
     )
     kernel(Q, K, V, BlockIndices)
 
@@ -188,15 +194,21 @@ def run_profile_ref(batch, heads, seq_len, dim, selected_blocks, block_size, is_
 def main(batch=2, heads=16, seq_len=64, dim=32, selected_blocks=1, block_size=32, is_causal=True):
     """Run autotune and print results."""
     import torch
-    from tilelang.profiler import do_bench
 
     groups = heads  # 1 kv head -> groups = heads
     scale = 0.1
     total_flops = nsa_flops(batch, heads, seq_len, dim, selected_blocks, block_size)
 
     best_result = nsa_fwd(
-        batch, heads, seq_len, dim, is_causal,
-        scale=scale, block_size=block_size, groups=groups, selected_blocks=selected_blocks,
+        batch,
+        heads,
+        seq_len,
+        dim,
+        is_causal,
+        scale=scale,
+        block_size=block_size,
+        groups=groups,
+        selected_blocks=selected_blocks,
     )
     best_latency = best_result.latency
     best_config = best_result.config
@@ -218,9 +230,12 @@ def main(batch=2, heads=16, seq_len=64, dim=32, selected_blocks=1, block_size=32
     print_benchmark_summary(
         "NSA Fwd",
         f"batch={batch}, heads={heads}, seq_len={seq_len}, dim={dim}",
-        best_latency, total_flops / best_latency * 1e-9,
-        ref_latency, ref_tflops,
-        "Reference", best_config,
+        best_latency,
+        total_flops / best_latency * 1e-9,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
     )
 
     return best_latency, total_flops / best_latency * 1e-9, best_config, ref_latency
@@ -235,20 +250,25 @@ if __name__ == "__main__":
     parser.add_argument("--selected_blocks", type=int, default=1)
     parser.add_argument("--block_size", type=int, default=32)
     parser.add_argument("--causal", action="store_true", default=True)
-    parser.add_argument("--profile", action="store_true",
-                        help="Run kernel once with given config for ncu/acu profiling")
-    parser.add_argument("--profile-ref", action="store_true",
-                        help="Run reference once for ncu/acu profiling")
+    parser.add_argument("--profile", action="store_true", help="Run kernel once with given config for ncu/acu profiling")
+    parser.add_argument("--profile-ref", action="store_true", help="Run reference once for ncu/acu profiling")
     parser.add_argument("--num_stages", type=int, default=None)
     parser.add_argument("--threads", type=int, default=None)
     args = parser.parse_args()
 
     if args.profile:
-        run_profile(args.batch, args.heads, args.seq_len, args.dim,
-                    args.selected_blocks, args.block_size, args.causal,
-                    args.num_stages, args.threads)
+        run_profile(
+            args.batch,
+            args.heads,
+            args.seq_len,
+            args.dim,
+            args.selected_blocks,
+            args.block_size,
+            args.causal,
+            args.num_stages,
+            args.threads,
+        )
     elif args.profile_ref:
-        run_profile_ref(args.batch, args.heads, args.seq_len, args.dim,
-                        args.selected_blocks, args.block_size, args.causal)
+        run_profile_ref(args.batch, args.heads, args.seq_len, args.dim, args.selected_blocks, args.block_size, args.causal)
     else:
         main(args.batch, args.heads, args.seq_len, args.dim, args.selected_blocks, args.block_size, args.causal)

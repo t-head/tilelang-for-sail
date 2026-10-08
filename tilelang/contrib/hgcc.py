@@ -17,8 +17,7 @@ def _find_ppu_sdk() -> str:
     ppu_sdk = os.environ.get("PPU_SDK")
     if not ppu_sdk:
         raise RuntimeError(
-            "PPU_SDK environment variable is not set. "
-            "Please source the PPU SDK envsetup.sh (e.g. source $PPU_SDK/envsetup.sh ppu)"
+            "PPU_SDK environment variable is not set. Please source the PPU SDK envsetup.sh (e.g. source $PPU_SDK/envsetup.sh ppu)"
         )
     return ppu_sdk
 
@@ -60,7 +59,7 @@ def get_target_compute_version(target=None):
             raise ValueError(f"Unsupported arch: {arch}")
 
     # 3. PPU device compute version
-    ppu_dev_type = getattr(tvm.ffi.DLDeviceType, 'kDLPPU', 19)
+    ppu_dev_type = getattr(tvm.ffi.DLDeviceType, "kDLPPU", 19)
     if tvm.device(ppu_dev_type, 0).exist:
         raw_version = tvm.device(ppu_dev_type, 0).compute_version
         ppu_version_map = {
@@ -70,8 +69,7 @@ def get_target_compute_version(target=None):
         return ppu_version_map.get(raw_version, raw_version)
 
     raise ValueError(
-        "No PPU architecture was specified or GPU detected. "
-        "Specify it with a target config such as {'kind': 'ppu', 'arch': 'ppu0015'}."
+        "No PPU architecture was specified or GPU detected. Specify it with a target config such as {'kind': 'ppu', 'arch': 'ppu0015'}."
     )
 
 
@@ -158,7 +156,7 @@ def compile_ppu(
     """
     compute_version = get_target_compute_version(target)
     ppu_arch = get_target_arch(compute_version)
-    target_arch_int = get_target_arch_int(compute_version)
+    _ = get_target_arch_int(compute_version)  # validate arch int
 
     ppu_sdk = _find_ppu_sdk()
     hgcc = get_hgcc_compiler()
@@ -166,6 +164,7 @@ def compile_ppu(
     # Base options
     # Template path: use env var if set, otherwise fall back to repo src/
     import os.path as osp
+
     tl_path = TILELANG_TEMPLATE_PATH
     if tl_path is None:
         tl_path = osp.abspath(osp.join(osp.dirname(__file__), "..", "..", "src"))
@@ -197,18 +196,14 @@ def compile_ppu(
         tmp_src.close()
         hgbin_path = tmp_src.name.replace(".hg", ".hgbin")
 
-        cmd = [hgcc, "-x", "hg", "-hgbin", "-O3", "-lineinfo",
-               "-arch=" + ppu_arch] + cmd_options + ["-o", hgbin_path, tmp_src.name]
+        cmd = [hgcc, "-x", "hg", "-hgbin", "-O3", "-lineinfo", "-arch=" + ppu_arch] + cmd_options + ["-o", hgbin_path, tmp_src.name]
 
         if verbose:
             print("PPU compile command:", " ".join(cmd))
 
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if proc.returncode != 0:
-            raise RuntimeError(
-                f"hgcc compilation failed:\n{proc.stderr}\n{proc.stdout}\n"
-                f"Command: {' '.join(cmd)}\n{code}"
-            )
+            raise RuntimeError(f"hgcc compilation failed:\n{proc.stderr}\n{proc.stdout}\nCommand: {' '.join(cmd)}\n{code}")
 
         with open(hgbin_path, "rb") as f:
             return f.read()
@@ -222,6 +217,7 @@ def compile_ppu(
 # ---------------------------------------------------------------------------
 # Feature detection (all PPU variants support these)
 # ---------------------------------------------------------------------------
+
 
 def have_fp16(compute_version=None):
     return True

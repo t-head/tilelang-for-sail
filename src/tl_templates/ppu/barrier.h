@@ -23,8 +23,8 @@ TL_DEVICE void mbarrier_test_wait(uint64_t &smem_barrier, int phase_bit) {
       "LAB_WAIT:\n"
       "ppu.awbar.test_wait.parity.shared::blk.b64 P1, [%0], %1;\n"
       "@P1                       ppu.bra DONE;\n"
-      "ppu.nanosleep.u32 5;\n" // wait a few nanoseconds on current PPU architectures
-                           // to save instruction issue slots
+      "ppu.nanosleep.u32 5;\n" // wait a few nanoseconds on current PPU
+                               // architectures to save instruction issue slots
       "ppu.bra                   LAB_WAIT;\n"
       "DONE:\n"
       "}\n" ::"r"(smem_int_ptr),
@@ -36,19 +36,18 @@ TL_DEVICE void mbarrier_wait(uint64_t &smem_barrier, int phase_bit) {
     uint32_t smem_int_ptr = smem_ptr_to_uint(&smem_barrier);
     // Arbitrarily large timer value after which try-wait expires and re-tries.
     uint32_t ticks = 0x989680;
-    asm volatile(
-        "{\n"
-        ".reg .pred                P1;\n"
-        "LAB_WAIT:\n"
-        "ppu.awbar.test_wait.parity.shared::blk.b64 P1, [%0], %1;\n"
-        "@P1                       ppu.bra DONE;\n"
-        "ppu.nanosleep.u32 %2;\n" // wait a few nanoseconds on current PPU architectures
-                            // to save instruction issue slots
-        "ppu.bra                   LAB_WAIT;\n"
-        "DONE:\n"
-        "}\n" ::"r"(smem_int_ptr),
-        "r"(phase_bit),
-        "r"(ticks));
+    asm volatile("{\n"
+                 ".reg .pred                P1;\n"
+                 "LAB_WAIT:\n"
+                 "ppu.awbar.test_wait.parity.shared::blk.b64 P1, [%0], %1;\n"
+                 "@P1                       ppu.bra DONE;\n"
+                 "ppu.nanosleep.u32 %2;\n" // wait a few nanoseconds on current
+                                           // PPU architectures to save
+                                           // instruction issue slots
+                 "ppu.bra                   LAB_WAIT;\n"
+                 "DONE:\n"
+                 "}\n" ::"r"(smem_int_ptr),
+                 "r"(phase_bit), "r"(ticks));
   }
 }
 

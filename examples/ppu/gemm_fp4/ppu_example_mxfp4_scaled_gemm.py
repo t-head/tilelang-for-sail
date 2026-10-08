@@ -28,10 +28,12 @@ def _dequant_mxfp4(values: torch.Tensor, scales: torch.Tensor) -> torch.Tensor:
     return _dequant_fp4(values) * multipliers
 
 
-@tilelang.jit(pass_configs={
-    PassConfigKey.TL_DISABLE_AIU_LOWER: False,
-    PassConfigKey.TL_DISABLE_LDMAT_SWZL: False,
-})
+@tilelang.jit(
+    pass_configs={
+        PassConfigKey.TL_DISABLE_AIU_LOWER: False,
+        PassConfigKey.TL_DISABLE_LDMAT_SWZL: False,
+    }
+)
 def matmul_scaled(A, B, A_scale, B_scale, block_M, block_N, block_K, num_stages):
     M, N, K = T.const("M, N, K")
 
@@ -111,8 +113,12 @@ def check_kernel_source(num_stages, block_K=64):
     M = N = 128
     K = block_K
     kernel = matmul_scaled.compile(
-        M=M, N=N, K=K,
-        block_M=128, block_N=128, block_K=block_K,
+        M=M,
+        N=N,
+        K=K,
+        block_M=128,
+        block_N=128,
+        block_K=block_K,
         num_stages=num_stages,
     )
     source = kernel.get_kernel_source()
@@ -129,8 +135,12 @@ def run_scaled_case(num_stages, scale_name, a_scale, b_scale, a_packed, b_packed
     """Run a single (num_stages, scale) MXFP4 scaled-GEMM case."""
     device = torch.device("cuda")
     kernel = matmul_scaled.compile(
-        M=M, N=N, K=K,
-        block_M=block_M, block_N=block_N, block_K=block_K,
+        M=M,
+        N=N,
+        K=K,
+        block_M=block_M,
+        block_N=block_N,
+        block_K=block_K,
         num_stages=num_stages,
     )
     result = kernel(a_packed, b_packed, a_scale.to(device), b_scale.to(device))
@@ -170,7 +180,7 @@ def main():
     for m, n, bm, bn in [
         (256, 64, 256, 64),  # warp tile 128x32: 8x2 atoms, split along M
         (64, 256, 64, 256),  # warp tile 32x128: 2x8 atoms, split along N
-        (64, 64, 64, 64),    # warp tile 32x32: 2x2 atoms, redirect only
+        (64, 64, 64, 64),  # warp tile 32x32: 2x2 atoms, redirect only
     ]:
         for num_stages in (0, 2):
             run_warp_tile_case(m, n, bm, bn, num_stages=num_stages)

@@ -11,7 +11,6 @@
 #include "op/builtin.h"
 #include "op/utils.h"
 
-
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -36,8 +35,7 @@ void FatalUnsupportedPpuArchGemm(const GemmNode &op, Target target,
              << ", A(scope=" << op.a_.scope() << ", dtype=" << op.a_->dtype
              << "), B(scope=" << op.b_.scope() << ", dtype=" << op.b_->dtype
              << "), C(scope=" << op.c_.scope() << ", dtype=" << op.c_->dtype
-             << "), M=" << op.m_ << ", N=" << op.n_ << ", K=" << op.k_
-             << ".";
+             << "), M=" << op.m_ << ", N=" << op.n_ << ", K=" << op.k_ << ".";
 }
 
 std::pair<int, int>
@@ -162,7 +160,6 @@ struct Gemm {
     }
     return "unknown";
   }
-
 };
 
 } // namespace ppu

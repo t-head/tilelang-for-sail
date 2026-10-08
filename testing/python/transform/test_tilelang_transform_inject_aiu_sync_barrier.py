@@ -176,8 +176,7 @@ def _no_prefetch_kernel(block_M=128, block_N=128, block_K=64):
     return main
 
 
-def _dynamic_extent_kv_kernel(block_M=128, block_N=128, block_K=64,
-                              num_stages=2):
+def _dynamic_extent_kv_kernel(block_M=128, block_N=128, block_K=64, num_stages=2):
     """Minimal GQA-decode-style kernel with a dynamic (runtime) loop extent.
 
     Q is loaded before the loop; K/V tiles are loaded and consumed
@@ -303,7 +302,7 @@ def _extract_braced_block(source, open_idx):
         elif ch == "}":
             depth -= 1
             if depth == 0:
-                return source[open_idx + 1:i], i
+                return source[open_idx + 1 : i], i
     return None, open_idx
 
 
@@ -368,15 +367,9 @@ def test_stage0_gemm_has_commit_and_wait():
     """stage=0 GEMM should generate aiu_load + cp_async_commit + cp_async_wait."""
     source = _compile_with_aiu(_stage0_gemm_kernel())
 
-    assert "tl::aiu_load" in source, (
-        "Expected tl::aiu_load in generated CUDA source"
-    )
-    assert "tl::cp_async_commit()" in source, (
-        "Expected tl::cp_async_commit() in generated CUDA source"
-    )
-    assert "tl::cp_async_wait" in source, (
-        "Expected tl::cp_async_wait in generated CUDA source"
-    )
+    assert "tl::aiu_load" in source, "Expected tl::aiu_load in generated CUDA source"
+    assert "tl::cp_async_commit()" in source, "Expected tl::cp_async_commit() in generated CUDA source"
+    assert "tl::cp_async_wait" in source, "Expected tl::cp_async_wait in generated CUDA source"
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
@@ -385,23 +378,14 @@ def test_prefetch_pattern_wait_gt_zero():
     wait should have N > 0 (allowing newer groups to remain in-flight)."""
     source = _compile_with_aiu(_prefetch_kernel())
 
-    assert "tl::aiu_load" in source, (
-        "Expected tl::aiu_load in generated CUDA source"
-    )
-    assert "tl::cp_async_commit()" in source, (
-        "Expected tl::cp_async_commit() in generated CUDA source"
-    )
+    assert "tl::aiu_load" in source, "Expected tl::aiu_load in generated CUDA source"
+    assert "tl::cp_async_commit()" in source, "Expected tl::cp_async_commit() in generated CUDA source"
 
     # Find all cp_async_wait<N> occurrences and check that at least one has N > 0
-    wait_pattern = re.findall(r'tl::cp_async_wait<(\d+)>', source)
-    assert len(wait_pattern) > 0, (
-        "Expected at least one tl::cp_async_wait<N> in generated CUDA source"
-    )
+    wait_pattern = re.findall(r"tl::cp_async_wait<(\d+)>", source)
+    assert len(wait_pattern) > 0, "Expected at least one tl::cp_async_wait<N> in generated CUDA source"
     has_nonzero_wait = any(int(n) > 0 for n in wait_pattern)
-    assert has_nonzero_wait, (
-        f"Expected at least one cp_async_wait<N> with N > 0 for prefetch pattern, "
-        f"but found only: {wait_pattern}"
-    )
+    assert has_nonzero_wait, f"Expected at least one cp_async_wait<N> with N > 0 for prefetch pattern, but found only: {wait_pattern}"
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
@@ -415,9 +399,7 @@ def test_stage_gt0_no_aiu_sync_barrier():
     source = _compile_with_aiu(_pipelined_gemm_kernel(num_stages=3))
 
     # AIU lower should still be active (aiu_load present)
-    assert "tl::aiu_load" in source, (
-        "Expected tl::aiu_load in generated CUDA source for pipelined GEMM"
-    )
+    assert "tl::aiu_load" in source, "Expected tl::aiu_load in generated CUDA source for pipelined GEMM"
     # Pipelined mode should still produce valid code with async operations
     assert "tl::cp_async_commit()" in source and "tl::cp_async_wait" in source, (
         "Expected both cp_async_commit and cp_async_wait in pipelined GEMM source"
@@ -444,9 +426,7 @@ def test_fp8_pipeline_has_b8_aiu_sync_operations():
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
 def test_fp8_e5m2_stage0_has_b8_aiu_sync_barrier():
-    source = _compile_with_aiu(
-        _fp8_aiu_gemm_kernel(num_stages=0, dtype=T.float8_e5m2)
-    )
+    source = _compile_with_aiu(_fp8_aiu_gemm_kernel(num_stages=0, dtype=T.float8_e5m2))
 
     assert "tl::aiu_load_b8" in source
     assert "tl::cp_async_commit()" in source
@@ -455,9 +435,7 @@ def test_fp8_e5m2_stage0_has_b8_aiu_sync_barrier():
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
 def test_fp8_e5m2_pipeline_has_b8_aiu_sync_operations():
-    source = _compile_with_aiu(
-        _fp8_aiu_gemm_kernel(num_stages=3, dtype=T.float8_e5m2)
-    )
+    source = _compile_with_aiu(_fp8_aiu_gemm_kernel(num_stages=3, dtype=T.float8_e5m2))
 
     assert "tl::aiu_load_b8" in source
     assert "tl::cp_async_commit()" in source
@@ -470,14 +448,10 @@ def test_all_buffers_consumed_together_wait_zero():
     wait<0> is correct (must wait for all)."""
     source = _compile_with_aiu(_stage0_gemm_kernel())
 
-    assert "tl::aiu_load" in source, (
-        "Expected tl::aiu_load in generated CUDA source"
-    )
+    assert "tl::aiu_load" in source, "Expected tl::aiu_load in generated CUDA source"
     # In a standard stage=0 GEMM where A and B are loaded and immediately
     # consumed by gemm, all groups must be waited for → wait<0>
-    assert "tl::cp_async_wait<0>" in source, (
-        "Expected tl::cp_async_wait<0> when all buffers are consumed together"
-    )
+    assert "tl::cp_async_wait<0>" in source, "Expected tl::cp_async_wait<0> when all buffers are consumed together"
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
@@ -486,17 +460,11 @@ def test_no_prefetch_wait_at_loop():
     wait should appear before the loop (no wrap-around possible)."""
     source = _compile_with_aiu(_no_prefetch_kernel())
 
-    assert "tl::aiu_load" in source, (
-        "Expected tl::aiu_load in generated CUDA source"
-    )
-    assert "tl::cp_async_commit()" in source, (
-        "Expected tl::cp_async_commit() in generated CUDA source"
-    )
+    assert "tl::aiu_load" in source, "Expected tl::aiu_load in generated CUDA source"
+    assert "tl::cp_async_commit()" in source, "Expected tl::cp_async_commit() in generated CUDA source"
     # Without prefetch reload inside the loop, wait<0> should be used
     # to ensure the pre-loop load is complete before entering the loop
-    assert "tl::cp_async_wait<0>" in source, (
-        "Expected tl::cp_async_wait<0> before loop when no internal prefetch"
-    )
+    assert "tl::cp_async_wait<0>" in source, "Expected tl::cp_async_wait<0> before loop when no internal prefetch"
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
@@ -515,9 +483,7 @@ def test_dynamic_extent_pipeline_no_duplicate_commit():
     """
     source = _compile_with_aiu(_dynamic_extent_kv_kernel())
 
-    assert "tl::aiu_load" in source, (
-        "Expected tl::aiu_load in generated CUDA source"
-    )
+    assert "tl::aiu_load" in source, "Expected tl::aiu_load in generated CUDA source"
     num_loads = source.count("tl::aiu_load")
     num_commits = source.count("tl::cp_async_commit()")
     assert num_commits == num_loads, (
@@ -528,13 +494,9 @@ def test_dynamic_extent_pipeline_no_duplicate_commit():
     # The dynamic extent must actually materialize the predicated prologue
     # commits (call form inside IfThenElse); otherwise the count check above
     # would pass vacuously.
-    has_guarded_commit = any(
-        "tl::aiu_load" in block and "tl::cp_async_commit()" in block
-        for block in _conditional_blocks(source)
-    )
+    has_guarded_commit = any("tl::aiu_load" in block and "tl::cp_async_commit()" in block for block in _conditional_blocks(source))
     assert has_guarded_commit, (
-        "Expected a predicated block containing both tl::aiu_load and "
-        "tl::cp_async_commit() (call-form commit inside IfThenElse)"
+        "Expected a predicated block containing both tl::aiu_load and tl::cp_async_commit() (call-form commit inside IfThenElse)"
     )
 
 
@@ -545,28 +507,20 @@ def test_if_branch_aiu_load_commit_shares_branch_scope():
     path and no duplicates."""
     source = _compile_with_aiu(_if_else_aiu_load_kernel())
 
-    assert "tl::aiu_load" in source, (
-        "Expected tl::aiu_load in generated CUDA source"
-    )
+    assert "tl::aiu_load" in source, "Expected tl::aiu_load in generated CUDA source"
     # No duplicates and no phantom commits: one commit site per aiu_load site.
     num_loads = source.count("tl::aiu_load")
     num_commits = source.count("tl::cp_async_commit()")
     assert num_commits == num_loads, (
-        f"Expected exactly one tl::cp_async_commit() per tl::aiu_load, but "
-        f"found {num_commits} commits for {num_loads} aiu_load calls"
+        f"Expected exactly one tl::cp_async_commit() per tl::aiu_load, but found {num_commits} commits for {num_loads} aiu_load calls"
     )
     # The commit must live inside the same conditional branch as the
     # branch-local aiu_load, never on the unconditional path around the if.
-    branch_blocks = [
-        block for block in _conditional_blocks(source) if "tl::aiu_load" in block
-    ]
-    assert branch_blocks, (
-        "Expected an if/else branch containing tl::aiu_load in generated CUDA source"
-    )
+    branch_blocks = [block for block in _conditional_blocks(source) if "tl::aiu_load" in block]
+    assert branch_blocks, "Expected an if/else branch containing tl::aiu_load in generated CUDA source"
     for block in branch_blocks:
         assert "tl::cp_async_commit()" in block, (
-            "Expected tl::cp_async_commit() inside the same conditional "
-            "branch as the branch-local aiu_load"
+            "Expected tl::cp_async_commit() inside the same conditional branch as the branch-local aiu_load"
         )
 
 

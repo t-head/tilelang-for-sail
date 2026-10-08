@@ -108,10 +108,12 @@ def _cuda_target_from_arch(arch: str | None) -> Target | str:
         return "cuda"
     return Target({"kind": "cuda", "arch": arch})
 
+
 def _detect_torch_ppu_arch() -> str | None:
     """Return the PPU architecture detected from PyTorch, if available."""
     compute_version = hgcc.get_target_compute_version()
     return f"{hgcc.get_target_arch(compute_version)}"
+
 
 def _ppu_target_from_arch(arch: str | None) -> Target | str:
     """Build a PPU target while preserving the legacy bare string fallback."""
@@ -151,6 +153,7 @@ def check_hip_availability() -> bool:
         return True
     except Exception:
         return False
+
 
 def check_ppu_availability() -> bool:
     """Check if PPU is available by locating the PPU SDK."""

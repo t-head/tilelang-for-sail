@@ -163,32 +163,41 @@ TVM_REGISTER_OP("tirx.tvm_warp_shuffle_down")
                                DispatchPPUShuffle<PPUWarpIntrinsic>);
 
 TVM_REGISTER_OP("tirx.tvm_warp_activemask")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPPUWarpActiveMask);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPPUWarpActiveMask);
 
 TVM_REGISTER_OP("tirx.clz")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
-                               DispatchPureExtern<PPUMath, /*dtype_from_arg=*/true>);
+    .set_attr<FLowerIntrinsic>(
+        "ppu.FLowerIntrinsic",
+        DispatchPureExtern<PPUMath, /*dtype_from_arg=*/true>);
 
 TVM_REGISTER_OP("tirx.floor")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.ceil")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.trunc")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.fabs")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.round")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.nearbyint")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.exp")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.rsqrt")
     .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
@@ -199,52 +208,68 @@ TVM_REGISTER_OP("tirx.exp2")
                                DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.exp10")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.erf")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.log")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.log2")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.log10")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.tan")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.cos")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.cosh")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.sin")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.sinh")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.atan")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.tanh")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.sqrt")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.pow")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.popcount")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUPopcount>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUPopcount>);
 
 TVM_REGISTER_OP("tirx.fmod")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPureExtern<PPUMath>);
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
+                               DispatchPureExtern<PPUMath>);
 
 TVM_REGISTER_OP("tirx.isfinite")
     .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", DispatchPPUIsFinite);
@@ -255,7 +280,8 @@ TVM_REGISTER_OP("tirx.ppu.__shfl_sync")
     .add_argument("mask", "Expr", "The thread mask.")
     .add_argument("var", "Expr", "The variable to sync.")
     .add_argument("lane", "Expr", "The source thread id.")
-    .add_argument("width", "Expr", "The warp thread width, must be a power of 2.")
+    .add_argument("width", "Expr",
+                  "The warp thread width, must be a power of 2.")
     .set_attr<TGlobalSymbol>("TGlobalSymbol", "__shfl_sync")
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque))
@@ -266,7 +292,8 @@ TVM_REGISTER_OP("tirx.ppu.__shfl_up_sync")
     .add_argument("mask", "Expr", "The thread mask.")
     .add_argument("var", "Expr", "The variable to sync.")
     .add_argument("delta", "Expr", "The source lane id offset to be added.")
-    .add_argument("width", "Expr", "The warp thread width, must be a power of 2.")
+    .add_argument("width", "Expr",
+                  "The warp thread width, must be a power of 2.")
     .set_attr<TGlobalSymbol>("TGlobalSymbol", "__shfl_up_sync")
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque))
@@ -276,8 +303,10 @@ TVM_REGISTER_OP("tirx.ppu.__shfl_down_sync")
     .set_num_inputs(4)
     .add_argument("mask", "Expr", "The thread mask.")
     .add_argument("var", "Expr", "The variable to sync.")
-    .add_argument("delta", "Expr", "The source lane id offset to be subtracted.")
-    .add_argument("width", "Expr", "The warp thread width, must be a power of 2.")
+    .add_argument("delta", "Expr",
+                  "The source lane id offset to be subtracted.")
+    .add_argument("width", "Expr",
+                  "The warp thread width, must be a power of 2.")
     .set_attr<TGlobalSymbol>("TGlobalSymbol", "__shfl_down_sync")
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque))

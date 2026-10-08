@@ -79,10 +79,7 @@ def test_elect_one_sync_codegen(thread_extent):
     kernel = tilelang.compile(program, out_idx=[0])
     source = kernel.get_kernel_source()
     expected = f"tl_shuffle_elect<{thread_extent}>()"
-    assert expected in source, (
-        f"Expected '{expected}' in generated PPU source.\n"
-        f"Source:\n{source}"
-    )
+    assert expected in source, f"Expected '{expected}' in generated PPU source.\nSource:\n{source}"
 
 
 # ---------------------------------------------------------------------------
@@ -92,9 +89,9 @@ def test_elect_one_sync_codegen(thread_extent):
 @pytest.mark.parametrize(
     "thread_extent, expected_elected",
     [
-        (0, 1),        # whole block → only warp0-lane0
+        (0, 1),  # whole block → only warp0-lane0
         (32, NUM_THREADS // 32),  # per-warp → 4 elected
-        (128, 1),      # whole block group → 1 elected
+        (128, 1),  # whole block group → 1 elected
     ],
     ids=["extent_0_block", "extent_32_per_warp", "extent_128_full_block"],
 )
@@ -106,17 +103,20 @@ def test_elect_one_sync_runtime(thread_extent, expected_elected):
     # --- elected count ---
     actual_elected = int(torch.sum(result).item())
     assert actual_elected == expected_elected, (
-        f"thread_extent={thread_extent}: expected {expected_elected} elected threads, "
-        f"got {actual_elected}.\nResult tensor: {result}"
+        f"thread_extent={thread_extent}: expected {expected_elected} elected threads, got {actual_elected}.\nResult tensor: {result}"
     )
 
     # --- elected positions ---
     ref = _expected_mask(NUM_THREADS, thread_extent).to(device=result.device)
-    torch.testing.assert_close(result.cpu(), ref.cpu(), msg=lambda m: (
-        f"thread_extent={thread_extent}: elected positions mismatch.\n"
-        f"Got:      {result.cpu().tolist()}\n"
-        f"Expected: {ref.cpu().tolist()}\n{m}"
-    ))
+    torch.testing.assert_close(
+        result.cpu(),
+        ref.cpu(),
+        msg=lambda m: (
+            f"thread_extent={thread_extent}: elected positions mismatch.\n"
+            f"Got:      {result.cpu().tolist()}\n"
+            f"Expected: {ref.cpu().tolist()}\n{m}"
+        ),
+    )
 
 
 if __name__ == "__main__":
