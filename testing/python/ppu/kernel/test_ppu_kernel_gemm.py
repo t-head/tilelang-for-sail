@@ -32,6 +32,7 @@ def _gen_fp8_inputs(A_shape, B_shape, in_dtype, b_in_dtype):
 # SS variant: A and B both in shared memory
 # ---------------------------------------------------------------------------
 
+
 def matmul(
     M,
     N,
@@ -932,6 +933,7 @@ def test_ppu_gemm_e5m2e4m3f32_tt():
 # SR variant: A in shared, B in registers (fragment)
 # ---------------------------------------------------------------------------
 
+
 def matmul_sr(
     M,
     N,
@@ -1801,6 +1803,7 @@ def test_ppu_gemm_e5m2e4m3f32_sr_tt():
 # ---------------------------------------------------------------------------
 # RS variant: A in registers (fragment), B in shared
 # ---------------------------------------------------------------------------
+
 
 def matmul_rs(
     M,

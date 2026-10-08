@@ -93,8 +93,7 @@ static tvm::transform::Pass InjectPpuUniform() {
 
 TVM_FFI_STATIC_INIT_BLOCK() {
   namespace refl = tvm::ffi::reflection;
-  refl::GlobalDef().def("tl.ppu.transform.InjectPpuUniform",
-                        InjectPpuUniform);
+  refl::GlobalDef().def("tl.ppu.transform.InjectPpuUniform", InjectPpuUniform);
 }
 
 } // namespace tl

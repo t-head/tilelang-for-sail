@@ -34,8 +34,7 @@ void FatalUnsupportedPpuArchGemmSP(const GemmSPNode &op, Target target,
              << ", A(scope=" << op.A.scope() << ", dtype=" << op.A->dtype
              << "), B(scope=" << op.B.scope() << ", dtype=" << op.B->dtype
              << "), C(scope=" << op.C.scope() << ", dtype=" << op.C->dtype
-             << "), M=" << op.M << ", N=" << op.N << ", K=" << op.K
-             << ".";
+             << "), M=" << op.M << ", N=" << op.N << ", K=" << op.K << ".";
 }
 
 std::pair<int, int>
@@ -126,7 +125,8 @@ struct GemmSP {
   ComputeWarpPartition(const GemmSPWarpPolicyNode &policy, int M, int N,
                        int block_size, Target target, String gemm_inst) {
     int num_warps = block_size / TargetGetWarpSize(target);
-    // PPU only targets ppu0010/ppu0015, so the warp partition uses the ppu0010+ rule.
+    // PPU only targets ppu0010/ppu0015, so the warp partition uses the ppu0010+
+    // rule.
     constexpr int kNPerWarp = 8;
     return ComputeDefaultWarpPartition(policy, M, N, num_warps, kNPerWarp);
   }

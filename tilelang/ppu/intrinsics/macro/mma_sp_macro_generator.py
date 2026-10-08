@@ -818,5 +818,6 @@ class SparseTensorCoreIntrinEmitter:
             forward_index_fn=forward_index,
         )
 
+
 class PPUSparseTensorCoreIntrinEmitter(SparseTensorCoreIntrinEmitter):
     pass

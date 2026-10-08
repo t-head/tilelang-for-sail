@@ -1,6 +1,7 @@
 /*!
  * \file tl/ppu/op/atomic_reduce.cc
- * \brief PPU implementation registration for tl.atomicmax/tl.atomicmin lowering.
+ * \brief PPU implementation registration for tl.atomicmax/tl.atomicmin
+ * lowering.
  */
 
 #include "backend/common/op/atomic_reduce.h"

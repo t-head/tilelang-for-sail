@@ -15,6 +15,7 @@ from .mma_layout import (
 from .mma_layout import get_swizzle_layout  # noqa: F401
 from .mma_layout import make_mma_swizzle_layout  # noqa: F401
 
+
 def get_ldmatrix_offset(
     matrix: Literal["A", "B"],
     row_idx,
