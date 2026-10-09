@@ -43,6 +43,17 @@ def _shared_sync_stores(func: tvm.tirx.PrimFunc):
     return stores
 
 
+def _copy_calls(func: tvm.tirx.PrimFunc):
+    calls = []
+
+    def _visit(node):
+        if isinstance(node, tvm.tirx.Call) and isinstance(node.op, tvm.ir.Op) and str(node.op.name) == "tl.tileop.copy":
+            calls.append(node)
+
+    post_order_visit(func.body, _visit)
+    return calls
+
+
 def _lower_pipeline_managed_subword_copy(
     extent: int,
     *,
@@ -420,6 +431,46 @@ def test_ppu_pipeline_managed_subword_copy_rejects_unqualified_cases():
     lowered = _lower_pipeline_managed_padded_1d_layout_copy(512)
     assert _count_calls(lowered).get("tl.ptx_cp_async", 0) == 0
     assert _shared_sync_stores(lowered)
+
+
+def test_ppu_pipeline_managed_symbolic_copy_preserves_async_lowering_path():
+    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+
+    def make_copy(src_elem_offset=0):
+        @T.prim_func
+        def before(A_handle: T.handle, B_handle: T.handle, extent: T.int32):
+            T.func_attr({"global_symbol": "main", "target": target})
+            A = T.match_buffer(
+                A_handle,
+                (128,),
+                dtype="uint8",
+                elem_offset=src_elem_offset,
+                align=128,
+                offset_factor=1,
+            )
+            B = T.match_buffer(B_handle, (128,), dtype="uint8", align=128)
+            T.launch_thread("blockIdx.x", 1)
+            tx = T.launch_thread("threadIdx.x", 128)
+            S = T.sblock_alloc_buffer((128,), dtype="uint8", scope="shared", align=128)
+            T.copy(
+                A[0:extent],
+                S[0:extent],
+                annotations={"no_implicit_async_commit_wait": T.int32(1)},
+            )
+            if tx < extent:
+                B[tx] = S[tx]
+
+        return before
+
+    requires_sync = tvm.ffi.get_global_func("tl.ppu.testing.RequiresSynchronousSubwordCopy")
+    # Safe symbolic sizes stay on the established async lowering path.  A
+    # nonzero buffer-level offset remains conservatively synchronous because
+    # LowerAccessPtr does not currently fold it into the final pointer.
+    cases = ((0, False), (1, True))
+    for src_elem_offset, expected in cases:
+        copy_calls = _copy_calls(make_copy(src_elem_offset))
+        assert len(copy_calls) == 1
+        assert requires_sync(copy_calls[0], 128) == expected
 
 
 def test_ppu_pipeline_managed_subword_copy_rejects_unsafe_offset_when_naturally_wide():

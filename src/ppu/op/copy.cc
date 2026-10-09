@@ -6,6 +6,7 @@
 #include "op/copy.h"
 #include "support/check.h"
 #include <tvm/ffi/extra/structural_equal.h>
+#include <tvm/ffi/reflection/registry.h>
 #include <tvm/ir/cast.h>
 #include <tvm/runtime/logging.h>
 
@@ -155,6 +156,19 @@ PPUAsyncCopyWidthPlan PlanPPUAsyncCopyWidth(
   }
   int min_elements = kPPUAsyncCopyMinTransferBits / scalar_bits;
 
+  // Automatic width planning is intentionally limited to statically sized,
+  // non-empty copies.  A known-empty copy needs no alignment validation;
+  // symbolic copies are declined after the base-safety gate below.
+  PrimExpr total_elements = IntImm(DataType::Int(64), 1);
+  for (const IterVar &iv : op.MakeIterVars()) {
+    total_elements = total_elements * cast(DataType::Int(64), iv->dom->extent);
+  }
+  PrimExpr simplified_total = analyzer->Simplify(total_elements);
+  const int64_t *total = as_const_int(simplified_total);
+  if (total != nullptr && *total <= 0) {
+    return {PPUAsyncCopyWidthAction::kNotApplicable, min_elements};
+  }
+
   Buffer actual_src =
       buffer_remap.count(op.src) ? buffer_remap[op.src] : op.src;
   Buffer actual_dst =
@@ -167,23 +181,20 @@ PPUAsyncCopyWidthPlan PlanPPUAsyncCopyWidth(
     return {PPUAsyncCopyWidthAction::kForceSynchronous, min_elements};
   }
 
+  if (total == nullptr) {
+    // Preserve the established lowering instead of turning an inability to
+    // prove the new static-width policy into a synchronous-copy requirement.
+    return {PPUAsyncCopyWidthAction::kNotApplicable, min_elements};
+  }
+
   // Keep v1 within the measured one-wave scale-slab case.  Larger copies can
   // make the padding heuristic choose widths above the requested floor and
   // need separate performance qualification.
-  PrimExpr total_elements = IntImm(DataType::Int(64), 1);
-  for (const IterVar &iv : op.MakeIterVars()) {
-    total_elements = total_elements * cast(DataType::Int(64), iv->dom->extent);
-  }
-  PrimExpr simplified_total = analyzer->Simplify(total_elements);
-  PrimExpr simplified_threads = analyzer->Simplify(thread_bounds->extent);
-  const int64_t *total = as_const_int(simplified_total);
-  const int64_t *threads = as_const_int(simplified_threads);
-  if (total == nullptr || *total <= 0) {
-    return {PPUAsyncCopyWidthAction::kValidateNaturalWidth, min_elements};
-  }
   if (*total % min_elements != 0) {
     return {PPUAsyncCopyWidthAction::kForceSynchronous, min_elements};
   }
+  PrimExpr simplified_threads = analyzer->Simplify(thread_bounds->extent);
+  const int64_t *threads = as_const_int(simplified_threads);
   if (threads == nullptr || *threads <= 0 || *total > *threads) {
     // Do not add a minimum-width hint outside the measured one-wave case, but
     // still validate it: the common vectorizer may independently select a
@@ -1100,6 +1111,24 @@ bool RegisterPpuCopy() {
 }
 
 const bool ppu_copy_registered = RegisterPpuCopy();
+
+// Dynamic copies currently converge to scalar IR after common loop lowering,
+// so an output-only assertion cannot distinguish kNotApplicable from an early
+// synchronous fallback.  Keep the planner decision directly testable.
+TVM_FFI_STATIC_INIT_BLOCK() {
+  namespace refl = tvm::ffi::reflection;
+  refl::GlobalDef().def("tl.ppu.testing.RequiresSynchronousSubwordCopy",
+                        [](Call call, int thread_extent) {
+                          TileOperator tile_op = ParseOperator(call);
+                          const auto *copy = tile_op.as<CopyNode>();
+                          ICHECK(copy != nullptr) << "Expected a tl.copy call";
+                          arith::Analyzer analyzer;
+                          return RequiresSynchronousPPUSubwordCopy(
+                              *copy, ppu::CopyInst::kCPAsync,
+                              Range::FromMinExtent(0, thread_extent),
+                              Map<Buffer, Buffer>(), LayoutMap(), &analyzer);
+                        });
+}
 
 } // namespace
 
