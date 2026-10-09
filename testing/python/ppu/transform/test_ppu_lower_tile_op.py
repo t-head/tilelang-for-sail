@@ -422,6 +422,53 @@ def test_ppu_pipeline_managed_subword_copy_rejects_unqualified_cases():
     assert _shared_sync_stores(lowered)
 
 
+def test_ppu_pipeline_managed_symbolic_copy_preserves_async_lowering_path():
+    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+
+    def lower_copy(src_elem_offset=0):
+        @T.prim_func
+        def before(A_handle: T.handle, B_handle: T.handle, rows: T.int32):
+            T.func_attr({"global_symbol": "main", "target": target})
+            A = T.match_buffer(
+                A_handle,
+                (128, 4),
+                dtype="uint8",
+                elem_offset=src_elem_offset,
+                align=128,
+                offset_factor=1,
+            )
+            B = T.match_buffer(B_handle, (128, 4), dtype="uint8", align=128)
+            T.launch_thread("blockIdx.x", 1)
+            tx = T.launch_thread("threadIdx.x", 128)
+            S = T.sblock_alloc_buffer((128, 4), dtype="uint8", scope="shared", align=128)
+            T.copy(
+                A[0:rows, 0:4],
+                S[0:rows, 0:4],
+                annotations={"no_implicit_async_commit_wait": T.int32(1)},
+            )
+            if tx < rows * 4:
+                B[tx // 4, tx % 4] = S[tx // 4, tx % 4]
+
+        mod = tvm.IRModule.from_expr(before)
+        with target:
+            mod = tilelang.ppu.transform.LayoutInference()(mod)
+            return tilelang.ppu.transform.LowerTileOp()(mod)["main"]
+
+    # The outer extent is symbolic, while the fixed inner dimension exposes a
+    # naturally legal four-byte transaction to the common vectorizer.  The
+    # width planner must decline this case without forcing synchronous stores.
+    lowered = lower_copy()
+    assert _count_calls(lowered).get("tl.ptx_cp_async", 0) > 0
+    assert _vectorized_cp_async_element_counts(lowered) == [4]
+    assert not _shared_sync_stores(lowered)
+
+    # A base whose four-byte alignment cannot be proved remains a real safety
+    # failure and must still use synchronous shared-memory stores.
+    lowered = lower_copy(src_elem_offset=1)
+    assert _count_calls(lowered).get("tl.ptx_cp_async", 0) == 0
+    assert _shared_sync_stores(lowered)
+
+
 def test_ppu_pipeline_managed_subword_copy_rejects_unsafe_offset_when_naturally_wide():
     # Without an explicit safety-failure result from the width planner, the
     # common vectorizer can still select a naturally wide cp.async even though
