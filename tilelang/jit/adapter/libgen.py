@@ -115,6 +115,7 @@ class LibraryGenerator:
 
         elif is_ppu_target(target):
             from tilelang.env import ACTLIZE_INCLUDE_DIR
+
             # PPU: compile device source and host wrapper into one shared
             # library with hgcc (same model as the HIP hipcc path).
             src = tempfile.NamedTemporaryFile(mode="w", suffix=".hg", delete=False)  # noqa: SIM115
@@ -126,8 +127,7 @@ class LibraryGenerator:
             ppu_sdk = os.environ.get("PPU_SDK")
             if not ppu_sdk:
                 raise RuntimeError(
-                    "PPU_SDK environment variable is not set. "
-                    "Please source the PPU SDK envsetup.sh (e.g. source $PPU_SDK/envsetup.sh ppu)"
+                    "PPU_SDK environment variable is not set. Please source the PPU SDK envsetup.sh (e.g. source $PPU_SDK/envsetup.sh ppu)"
                 )
             hgcc = os.path.join(ppu_sdk, "bin", "hgcc")
 

@@ -3,8 +3,8 @@
 #include "common.h"
 
 // Fp4 Support
-#include <hggc_fp16.h>
 #include <hggc_bf16.h>
+#include <hggc_fp16.h>
 #include <hggc_fp8.h> // brings in enum hggcRoundMode (hgrt/hggc_device_types.h)
 
 // ============================================================================
@@ -26,10 +26,9 @@ typedef enum __hg_fp4_interpretation_t {
 #if defined(__HGGC_ARCH__) && (__HGGC_ARCH__ >= 100)
 
 // double -> fp4_e2m1, round-to-nearest-even (or towards-zero), satfinite
-TL_DEVICE __hg_fp4_storage_t
-__hg_cvt_double_to_fp4(const double x,
-                       const __hg_fp4_interpretation_t fp4_interpretation,
-                       const enum hggcRoundMode rounding) {
+TL_DEVICE __hg_fp4_storage_t __hg_cvt_double_to_fp4(
+    const double x, const __hg_fp4_interpretation_t fp4_interpretation,
+    const enum hggcRoundMode rounding) {
   (void)fp4_interpretation; // only __HG_E2M1 is defined
   unsigned char res;
   unsigned long long int xbits;
@@ -111,57 +110,50 @@ __hg_cvt_double_to_fp4(const double x,
 }
 
 // double2 -> fp4_e2m1x2
-TL_DEVICE __hg_fp4x2_storage_t
-__hg_cvt_double2_to_fp4x2(const double2 x,
-                          const __hg_fp4_interpretation_t fp4_interpretation,
-                          const enum hggcRoundMode rounding) {
+TL_DEVICE __hg_fp4x2_storage_t __hg_cvt_double2_to_fp4x2(
+    const double2 x, const __hg_fp4_interpretation_t fp4_interpretation,
+    const enum hggcRoundMode rounding) {
   __hg_fp4x2_storage_t storage = (__hg_fp4x2_storage_t)__hg_cvt_double_to_fp4(
       x.y, fp4_interpretation, rounding);
   storage = (__hg_fp4x2_storage_t)(storage << 4U);
-  storage = (__hg_fp4x2_storage_t)(storage |
-                                   __hg_cvt_double_to_fp4(x.x,
-                                                          fp4_interpretation,
-                                                          rounding));
+  storage =
+      (__hg_fp4x2_storage_t)(storage | __hg_cvt_double_to_fp4(
+                                           x.x, fp4_interpretation, rounding));
   return storage;
 }
 
 // float -> fp4_e2m1 (via double, exact widening)
-TL_DEVICE __hg_fp4_storage_t
-__hg_cvt_float_to_fp4(const float x,
-                      const __hg_fp4_interpretation_t fp4_interpretation,
-                      const enum hggcRoundMode rounding) {
+TL_DEVICE __hg_fp4_storage_t __hg_cvt_float_to_fp4(
+    const float x, const __hg_fp4_interpretation_t fp4_interpretation,
+    const enum hggcRoundMode rounding) {
   return __hg_cvt_double_to_fp4((double)x, fp4_interpretation, rounding);
 }
 
 // float2 -> fp4_e2m1x2
-TL_DEVICE __hg_fp4x2_storage_t
-__hg_cvt_float2_to_fp4x2(const float2 x,
-                         const __hg_fp4_interpretation_t fp4_interpretation,
-                         const enum hggcRoundMode rounding) {
+TL_DEVICE __hg_fp4x2_storage_t __hg_cvt_float2_to_fp4x2(
+    const float2 x, const __hg_fp4_interpretation_t fp4_interpretation,
+    const enum hggcRoundMode rounding) {
   __hg_fp4x2_storage_t storage = (__hg_fp4x2_storage_t)__hg_cvt_float_to_fp4(
       x.y, fp4_interpretation, rounding);
   storage = (__hg_fp4x2_storage_t)(storage << 4U);
-  storage = (__hg_fp4x2_storage_t)(storage |
-                                   __hg_cvt_float_to_fp4(x.x,
-                                                         fp4_interpretation,
-                                                         rounding));
+  storage =
+      (__hg_fp4x2_storage_t)(storage | __hg_cvt_float_to_fp4(
+                                           x.x, fp4_interpretation, rounding));
   return storage;
 }
 
 // half -> fp4_e2m1 (via float)
-TL_DEVICE __hg_fp4_storage_t
-__hg_cvt_halfraw_to_fp4(const __half_raw x,
-                        const __hg_fp4_interpretation_t fp4_interpretation,
-                        const enum hggcRoundMode rounding) {
+TL_DEVICE __hg_fp4_storage_t __hg_cvt_halfraw_to_fp4(
+    const __half_raw x, const __hg_fp4_interpretation_t fp4_interpretation,
+    const enum hggcRoundMode rounding) {
   const float fx = __half2float(*reinterpret_cast<const __half *>(&x));
   return __hg_cvt_float_to_fp4(fx, fp4_interpretation, rounding);
 }
 
 // half2 -> fp4_e2m1x2
-TL_DEVICE __hg_fp4x2_storage_t
-__hg_cvt_halfraw2_to_fp4x2(const __half2_raw x,
-                           const __hg_fp4_interpretation_t fp4_interpretation,
-                           const enum hggcRoundMode rounding) {
+TL_DEVICE __hg_fp4x2_storage_t __hg_cvt_halfraw2_to_fp4x2(
+    const __half2_raw x, const __hg_fp4_interpretation_t fp4_interpretation,
+    const enum hggcRoundMode rounding) {
   __half_raw raw;
   raw.x = x.x;
   const __hg_fp4_storage_t lo =
@@ -190,15 +182,13 @@ TL_DEVICE __hg_fp4x2_storage_t __hg_cvt_bfloat16raw2_to_fp4x2(
   __ppu_bfloat16_raw raw;
   raw.x = x.y;
   __hg_fp4x2_storage_t storage =
-      (__hg_fp4x2_storage_t)__hg_cvt_bfloat16raw_to_fp4(raw,
-                                                        fp4_interpretation,
+      (__hg_fp4x2_storage_t)__hg_cvt_bfloat16raw_to_fp4(raw, fp4_interpretation,
                                                         rounding);
   storage = (__hg_fp4x2_storage_t)(storage << 4U);
   raw.x = x.x;
-  storage = (__hg_fp4x2_storage_t)(storage |
-                                   __hg_cvt_bfloat16raw_to_fp4(raw,
-                                                               fp4_interpretation,
-                                                               rounding));
+  storage =
+      (__hg_fp4x2_storage_t)(storage | __hg_cvt_bfloat16raw_to_fp4(
+                                           raw, fp4_interpretation, rounding));
   return storage;
 }
 
@@ -228,11 +218,10 @@ TL_DEVICE __half2_raw
 __hg_cvt_fp4x2_to_halfraw2(const __hg_fp4x2_storage_t x,
                            const __hg_fp4_interpretation_t fp4_interpretation) {
   __half2_raw res;
-  res.x =
-      __hg_cvt_fp4_to_halfraw((__hg_fp4_storage_t)x, fp4_interpretation).x;
-  res.y = __hg_cvt_fp4_to_halfraw((__hg_fp4_storage_t)(x >> 4U),
-                                  fp4_interpretation)
-              .x;
+  res.x = __hg_cvt_fp4_to_halfraw((__hg_fp4_storage_t)x, fp4_interpretation).x;
+  res.y =
+      __hg_cvt_fp4_to_halfraw((__hg_fp4_storage_t)(x >> 4U), fp4_interpretation)
+          .x;
   return res;
 }
 
@@ -535,7 +524,8 @@ TL_DEVICE __hg_fp4x2_storage_t __tl_cvt_double2_to_fp4x2(const double2 src) {
 // ============================================================================
 
 // fp4_e2m1 -> bfloat16
-TL_DEVICE __ppu_bfloat16 __tl_cvt_fp4_to_bfloat16(const __hg_fp4_storage_t src) {
+TL_DEVICE __ppu_bfloat16
+__tl_cvt_fp4_to_bfloat16(const __hg_fp4_storage_t src) {
   return __float2bfloat16(__tl_cvt_fp4_to_float(src));
 }
 
@@ -547,7 +537,8 @@ __tl_cvt_fp4x2_to_bfloat162(const __hg_fp4x2_storage_t src) {
 }
 
 // bfloat16 -> fp4_e2m1
-TL_DEVICE __hg_fp4_storage_t __tl_cvt_bfloat16_to_fp4(const __ppu_bfloat16 src) {
+TL_DEVICE __hg_fp4_storage_t
+__tl_cvt_bfloat16_to_fp4(const __ppu_bfloat16 src) {
   __ppu_bfloat16_raw raw = *reinterpret_cast<const __ppu_bfloat16_raw *>(&src);
   return __hg_cvt_bfloat16raw_to_fp4(raw, __HG_E2M1, hggcRoundNearest);
 }
@@ -555,7 +546,8 @@ TL_DEVICE __hg_fp4_storage_t __tl_cvt_bfloat16_to_fp4(const __ppu_bfloat16 src) 
 // bfloat162 -> fp4_e2m1x2
 TL_DEVICE __hg_fp4x2_storage_t
 __tl_cvt_bfloat162_to_fp4x2(const __ppu_bfloat162 src) {
-  __ppu_bfloat162_raw raw = *reinterpret_cast<const __ppu_bfloat162_raw *>(&src);
+  __ppu_bfloat162_raw raw =
+      *reinterpret_cast<const __ppu_bfloat162_raw *>(&src);
   return __hg_cvt_bfloat16raw2_to_fp4x2(raw, __HG_E2M1, hggcRoundNearest);
 }
 

@@ -5,11 +5,11 @@ import os
 import textwrap
 
 import tilelang.language as T
+
 # Ensure benchmark/matmul is in the path so we can import the benchmark scripts
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pytest
-from tabulate import tabulate
 
 import benchmark_matmul
 import benchmark_matmul_sp
@@ -20,6 +20,7 @@ from utils import print_benchmark_summary, profile_python_script
 
 # Detect compute capability for platform-specific skip logic
 from tilelang.contrib import hgcc
+
 _arch = hgcc.get_target_compute_version()
 _compute_version = hgcc.parse_compute_version(_arch)
 
@@ -47,11 +48,9 @@ DEFAULT_CASES = [
     (4096, 8192, 8192),
     (2048, 2048, 512),
     (4096, 14336, 4096),
-
     # (1, 4096, 4096),
     # (1, 11008, 4096),
     # (1, 4096, 11008),
-
     # (1, 8192, 8192),
     # (8192, 1, 8192),
     # (8192, 8192, 1),
@@ -70,15 +69,19 @@ def _record_result(results, name, m, n, k, latency, ref_latency, config):
     flops = _gemm_flops(m, n, k)
     tflops = flops / latency * 1e-9 if latency > 0 else 0.0
     ref_tflops = flops / ref_latency * 1e-9 if ref_latency is not None and ref_latency > 0 else 0.0
-    results.append({
-        "name": name,
-        "m": m, "n": n, "k": k,
-        "latency": latency,
-        "ref_latency": ref_latency,
-        "tflops": tflops,
-        "ref_tflops": ref_tflops,
-        "config": config,
-    })
+    results.append(
+        {
+            "name": name,
+            "m": m,
+            "n": n,
+            "k": k,
+            "latency": latency,
+            "ref_latency": ref_latency,
+            "tflops": tflops,
+            "ref_tflops": ref_tflops,
+            "config": config,
+        }
+    )
 
 
 def _safe_config_repr(config):
@@ -96,10 +99,7 @@ def _safe_config_repr(config):
         if isinstance(v, int) and not isinstance(v, bool) and hasattr(v, "name"):
             safe[k] = int(v)
         elif isinstance(v, dict):
-            safe[k] = {
-                kk.value if isinstance(kk, Enum) else kk: vv
-                for kk, vv in v.items()
-            }
+            safe[k] = {kk.value if isinstance(kk, Enum) else kk: vv for kk, vv in v.items()}
         else:
             safe[k] = v
     return repr(safe)
@@ -137,18 +137,15 @@ def _maybe_profile(kernel_script, ref_script):
     """
     if not PROFILE_CYCLES:
         return None, None, None, None
-    tilelang_cycles, tilelang_tc = profile_python_script(
-        kernel_script, dev=PROFILE_DEV, timeout=300
-    )
-    ref_cycles, ref_tc = profile_python_script(
-        ref_script, dev=PROFILE_DEV, timeout=300
-    )
+    tilelang_cycles, tilelang_tc = profile_python_script(kernel_script, dev=PROFILE_DEV, timeout=300)
+    ref_cycles, ref_tc = profile_python_script(ref_script, dev=PROFILE_DEV, timeout=300)
     return tilelang_cycles, tilelang_tc, ref_cycles, ref_tc
 
 
 # ---------------------------------------------------------------------------
 # benchmark_matmul
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "m,n,k",
@@ -196,17 +193,23 @@ def test_matmul(m, n, k, with_roller=False):
     print_benchmark_summary(
         "MatMul",
         f"M={m}, N={n}, K={k}",
-        result.latency, tilelang_tflops,
-        result.ref_latency if result.ref_latency is not None else 0.0, ref_tflops,
-        "Reference", result.config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        result.latency,
+        tilelang_tflops,
+        result.ref_latency if result.ref_latency is not None else 0.0,
+        ref_tflops,
+        "Reference",
+        result.config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
 # ---------------------------------------------------------------------------
 # benchmark_matmul_intrinsic
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "m,n,k",
@@ -257,17 +260,23 @@ def test_matmul_intrinsic(m, n, k, with_roller=False):
     print_benchmark_summary(
         "MatMul Intrinsic",
         f"M={m}, N={n}, K={k}",
-        result.latency, tilelang_tflops,
-        result.ref_latency if result.ref_latency is not None else 0.0, ref_tflops,
-        "Reference", result.config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        result.latency,
+        tilelang_tflops,
+        result.ref_latency if result.ref_latency is not None else 0.0,
+        ref_tflops,
+        "Reference",
+        result.config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
 # ---------------------------------------------------------------------------
 # benchmark_matmul_sp (sparsity-aware gemm_sp_v2)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "m,n,k",
@@ -325,17 +334,23 @@ def test_matmul_sp(m, n, k, accum_dtype="float"):
     print_benchmark_summary(
         "MatMul SP",
         f"M={m}, N={n}, K={k}",
-        result.latency, tilelang_tflops,
-        result.ref_latency if result.ref_latency is not None else 0.0, ref_tflops,
-        "Reference", result.config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        result.latency,
+        tilelang_tflops,
+        result.ref_latency if result.ref_latency is not None else 0.0,
+        ref_tflops,
+        "Reference",
+        result.config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
 # ---------------------------------------------------------------------------
 # benchmark_matmul_rs (Register Source: A shared→register, B shared)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "m,n,k",
@@ -386,17 +401,23 @@ def test_matmul_rs(m, n, k, with_roller=False):
     print_benchmark_summary(
         "MatMul RS",
         f"M={m}, N={n}, K={k}",
-        result.latency, tilelang_tflops,
-        result.ref_latency if result.ref_latency is not None else 0.0, ref_tflops,
-        "Reference", result.config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        result.latency,
+        tilelang_tflops,
+        result.ref_latency if result.ref_latency is not None else 0.0,
+        ref_tflops,
+        "Reference",
+        result.config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
 # ---------------------------------------------------------------------------
 # benchmark_matmul_sr (Shared-Register: A shared, B shared→register)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "m,n,k",
@@ -447,11 +468,16 @@ def test_matmul_sr(m, n, k, with_roller=False):
     print_benchmark_summary(
         "MatMul SR",
         f"M={m}, N={n}, K={k}",
-        result.latency, tilelang_tflops,
-        result.ref_latency if result.ref_latency is not None else 0.0, ref_tflops,
-        "Reference", result.config,
-        tilelang_cycles=tl_cycles, tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles, ref_tc=ref_tc,
+        result.latency,
+        tilelang_tflops,
+        result.ref_latency if result.ref_latency is not None else 0.0,
+        ref_tflops,
+        "Reference",
+        result.config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
     )
 
 
@@ -461,4 +487,5 @@ def test_matmul_sr(m, n, k, with_roller=False):
 
 if __name__ == "__main__":
     import tilelang.testing
+
     tilelang.testing.main()

@@ -361,7 +361,8 @@ TVM_DLL const Op &tma_load_gather4();
 TVM_DLL const Op &tma_store_scatter4();
 
 /*!
- * \brief PPU AIU intrinsic for loading global tensor tiles into swizzled shared memory.
+ * \brief PPU AIU intrinsic for loading global tensor tiles into swizzled shared
+ * memory.
  *
  * aiu_load(global_data, shape_0, shape_1, stride_0, stride_1, block_0,
  *          block_1, swizzle_mode, shared_addr, coord_0, coord_1,

@@ -19,19 +19,19 @@
 #include "../../layout/layout.h"
 #include "../../layout/utils.h"
 #include "../../op/builtin.h"
-#include "../layout/ppu_gemm_layouts.h"
 #include "../../op/gemm.h"
 #include "../../op/gemm_sp.h"
 #include "../../op/operator.h"
 #include "../../op/utils.h"
-#include "backend/common/target_utils.h"
 #include "../../transform/ptx_async_copy_injector.h"
+#include "../layout/ppu_gemm_layouts.h"
+#include "backend/common/target_utils.h"
 
-#include "arith/ir_mutator_with_analyzer.h"
 #include "../../transform/common/mbarrier.h"
 #include "../../transform/common/pipeline_utils.h"
 #include "../../transform/layout_reducer.h"
 #include "../../transform/loop_partition.h"
+#include "arith/ir_mutator_with_analyzer.h"
 
 namespace tvm {
 namespace tl {
@@ -1515,7 +1515,7 @@ private:
       barrier_arrive_updates_;
 };
 
-}  // namespace
+} // namespace
 
 namespace transform {
 

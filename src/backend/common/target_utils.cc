@@ -337,8 +337,7 @@ TVM_FFI_STATIC_INIT_BLOCK() {
   refl::GlobalDef()
       .def("tl.TargetIsCuda",
            [](Target target) { return TargetIsCuda(target); })
-      .def("tl.TargetIsPPU",
-           [](Target target) { return TargetIsPPU(target); })
+      .def("tl.TargetIsPPU", [](Target target) { return TargetIsPPU(target); })
       .def("tl.TargetIsRocm",
            [](Target target) { return TargetIsRocm(target); })
       .def("tl.TargetIsMetal",

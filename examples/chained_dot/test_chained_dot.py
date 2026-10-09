@@ -6,7 +6,7 @@ Tests 4 variants by importing kernels directly from example scripts:
   3. chained_dot3_transB: a@b, (a@b)@b, ((a@b)@b)@b.T
   4. modify_chained_dot: a@b, (a@b)@b, ((a@b)@b)@b, v@b (independent branch)
 """
-import pytest
+
 import torch
 
 from chained_dot import matmul as matmul_chain3

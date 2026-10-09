@@ -61,7 +61,8 @@ TL_DEVICE void call_fma_sp(typename MmaSpImplTraits<Impl>::DReg *d,
 
 template <DataType AType, DataType BType, DataType CType, int M, int N, int K,
           bool TransA, bool TransB,
-          PPU0010_ARCH::MMA::SparseSel spsel = PPU0010_ARCH::MMA::SparseSel::Zero>
+          PPU0010_ARCH::MMA::SparseSel spsel =
+              PPU0010_ARCH::MMA::SparseSel::Zero>
 struct MmaSpDispatcher {
   using CRegType = void;
   using ARegType = void;
@@ -77,7 +78,7 @@ struct MmaSpDispatcher {
 #define TL_DEFINE_MMA_SP_DISPATCHER(ATypeEnum, BTypeEnum, CTypeEnum, MValue,   \
                                     NValue, KValue, TransAValue, TransBValue,  \
                                     ImplTemplate)                              \
-  template <PPU0010_ARCH::MMA::SparseSel spsel>                                        \
+  template <PPU0010_ARCH::MMA::SparseSel spsel>                                \
   struct MmaSpDispatcher<DataType::ATypeEnum, DataType::BTypeEnum,             \
                          DataType::CTypeEnum, MValue, NValue, KValue,          \
                          TransAValue, TransBValue, spsel> {                    \
@@ -98,60 +99,65 @@ struct MmaSpDispatcher {
   };
 
 // FP16 — logical K=16 (A holds K/2=8 actual elements, 2 regs)
-TL_DEFINE_MMA_SP_DISPATCHER(kFloat16, kFloat16, kFloat16, 16, 8, 16, false,
-                            true,
-                            PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x16_F16F16F16F16_TN)
-TL_DEFINE_MMA_SP_DISPATCHER(kFloat16, kFloat16, kFloat32, 16, 8, 16, false,
-                            true,
-                            PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x16_F32F16F16F32_TN)
+TL_DEFINE_MMA_SP_DISPATCHER(
+    kFloat16, kFloat16, kFloat16, 16, 8, 16, false, true,
+    PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x16_F16F16F16F16_TN)
+TL_DEFINE_MMA_SP_DISPATCHER(
+    kFloat16, kFloat16, kFloat32, 16, 8, 16, false, true,
+    PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x16_F32F16F16F32_TN)
 
 // FP16 — logical K=32 (A holds K/2=16 actual elements, 4 regs)
-TL_DEFINE_MMA_SP_DISPATCHER(kFloat16, kFloat16, kFloat16, 16, 8, 32, false,
-                            true,
-                            PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x32_F16F16F16F16_TN)
-TL_DEFINE_MMA_SP_DISPATCHER(kFloat16, kFloat16, kFloat32, 16, 8, 32, false,
-                            true,
-                            PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x32_F32F16F16F32_TN)
+TL_DEFINE_MMA_SP_DISPATCHER(
+    kFloat16, kFloat16, kFloat16, 16, 8, 32, false, true,
+    PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x32_F16F16F16F16_TN)
+TL_DEFINE_MMA_SP_DISPATCHER(
+    kFloat16, kFloat16, kFloat32, 16, 8, 32, false, true,
+    PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x32_F32F16F16F32_TN)
 
 // BF16 — logical K=16
-TL_DEFINE_MMA_SP_DISPATCHER(kBFloat16, kBFloat16, kFloat32, 16, 8, 16, false,
-                            true,
-                            PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x16_F32BF16BF16F32_TN)
+TL_DEFINE_MMA_SP_DISPATCHER(
+    kBFloat16, kBFloat16, kFloat32, 16, 8, 16, false, true,
+    PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x16_F32BF16BF16F32_TN)
 
 // BF16 — logical K=32
-TL_DEFINE_MMA_SP_DISPATCHER(kBFloat16, kBFloat16, kFloat32, 16, 8, 32, false,
-                            true,
-                            PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x32_F32BF16BF16F32_TN)
+TL_DEFINE_MMA_SP_DISPATCHER(
+    kBFloat16, kBFloat16, kFloat32, 16, 8, 32, false, true,
+    PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x32_F32BF16BF16F32_TN)
 
 // TF32 — logical K=8 (A holds K/2=4 actual elements, 2 regs)
-TL_DEFINE_MMA_SP_DISPATCHER(kTensorFloat32, kTensorFloat32, kFloat32, 16, 8, 8,
-                            false, true,
-                            PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x8_F32TF32TF32F32_TN)
+TL_DEFINE_MMA_SP_DISPATCHER(
+    kTensorFloat32, kTensorFloat32, kFloat32, 16, 8, 8, false, true,
+    PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x8_F32TF32TF32F32_TN)
 
 // TF32 — logical K=16 (A holds K/2=8 actual elements, 4 regs)
-TL_DEFINE_MMA_SP_DISPATCHER(kTensorFloat32, kTensorFloat32, kFloat32, 16, 8, 16,
-                            false, true,
-                            PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x16_F32TF32TF32F32_TN)
+TL_DEFINE_MMA_SP_DISPATCHER(
+    kTensorFloat32, kTensorFloat32, kFloat32, 16, 8, 16, false, true,
+    PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x16_F32TF32TF32F32_TN)
 
 // INT8 — logical K=32 (A holds K/2=16, 2 regs); SparseSel::One is invalid
-TL_DEFINE_MMA_SP_DISPATCHER(kInt8, kInt8, kInt32, 16, 8, 32, false, true,
-  PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x32_S32S8S8S32_TN)
-TL_DEFINE_MMA_SP_DISPATCHER(kUInt8, kUInt8, kInt32, 16, 8, 32, false, true,
-  PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x32_S32U8U8S32_TN)
+TL_DEFINE_MMA_SP_DISPATCHER(
+    kInt8, kInt8, kInt32, 16, 8, 32, false, true,
+    PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x32_S32S8S8S32_TN)
+TL_DEFINE_MMA_SP_DISPATCHER(
+    kUInt8, kUInt8, kInt32, 16, 8, 32, false, true,
+    PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x32_S32U8U8S32_TN)
 
 // INT8 — logical K=64 (A holds K/2=32, 4 regs); SparseSel::One is invalid
-TL_DEFINE_MMA_SP_DISPATCHER(kInt8, kInt8, kInt32, 16, 8, 64, false, true,
-  PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x64_S32S8S8S32_TN)
-TL_DEFINE_MMA_SP_DISPATCHER(kUInt8, kUInt8, kInt32, 16, 8, 64, false, true,
-  PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x64_S32U8U8S32_TN)
+TL_DEFINE_MMA_SP_DISPATCHER(
+    kInt8, kInt8, kInt32, 16, 8, 64, false, true,
+    PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x64_S32S8S8S32_TN)
+TL_DEFINE_MMA_SP_DISPATCHER(
+    kUInt8, kUInt8, kInt32, 16, 8, 64, false, true,
+    PPU0010_ARCH::MMA::SPARSE::PPU0010_16x8x64_S32U8U8S32_TN)
 
 #undef TL_DEFINE_MMA_SP_DISPATCHER
 
 } // namespace detail
 
-template <DataType AType, DataType BType, DataType CType, int M, int N, int K,
-          bool TransA, bool TransB,
-          PPU0010_ARCH::MMA::SparseSel spsel = PPU0010_ARCH::MMA::SparseSel::Zero>
+template <
+    DataType AType, DataType BType, DataType CType, int M, int N, int K,
+    bool TransA, bool TransB,
+    PPU0010_ARCH::MMA::SparseSel spsel = PPU0010_ARCH::MMA::SparseSel::Zero>
 TL_DEVICE void mma_sp_sync(
     typename detail::MmaSpDispatcher<AType, BType, CType, M, N, K, TransA,
                                      TransB, spsel>::CRegType *c,

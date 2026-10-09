@@ -1,6 +1,5 @@
 """PPU tests for `LowerTileOp` copy annotations affecting cp.async sync (path 2)."""
 
-import tilelang as tl
 import tilelang.language as T
 import tilelang.ppu.transform
 import tilelang.testing

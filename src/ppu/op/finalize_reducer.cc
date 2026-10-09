@@ -1,6 +1,7 @@
 /*!
  * \file tl/ppu/op/finalize_reducer.cc
- * \brief PPU implementation registration for tl.finalize_reducer AllReduce lowering.
+ * \brief PPU implementation registration for tl.finalize_reducer AllReduce
+ * lowering.
  */
 
 #include "backend/common/op/finalize_reducer.h"
@@ -48,7 +49,9 @@ struct FinalizeReducer : backend::FinalizeReducerLowerer<FinalizeReducer> {
 
 namespace {
 
-bool MatchPpuFinalizeReducerTarget(Target target) { return TargetIsPPU(target); }
+bool MatchPpuFinalizeReducerTarget(Target target) {
+  return TargetIsPPU(target);
+}
 
 bool RegisterPpuFinalizeReducer() {
   RegisterFinalizeReducerImpl(FinalizeReducerImpl{

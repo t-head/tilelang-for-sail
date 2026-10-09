@@ -1,8 +1,8 @@
 #pragma once
 
 #include "common.h"
-#include <hggc_fp8.h>
 #include <cute/numeric/numeric_types.hpp>
+#include <hggc_fp8.h>
 
 using fp8_e4_t = tl::float_e4m3_t;
 using fp8_e5_t = tl::float_e5m2_t;
@@ -332,7 +332,8 @@ __hg_fp8_storage_t __tl_cvt_bfloat16_to_e8m0(const __ppu_bfloat16 src) {
 // bfloat162 -> fp8_e8m0x2
 TL_DEVICE __hg_fp8x2_storage_t
 __tl_cvt_bfloat162_to_e8m0x2(const __ppu_bfloat162 src) {
-  __ppu_bfloat162_raw raw = *reinterpret_cast<const __ppu_bfloat162_raw *>(&src);
+  __ppu_bfloat162_raw raw =
+      *reinterpret_cast<const __ppu_bfloat162_raw *>(&src);
   return __hg_cvt_bfloat162raw_to_e8m0x2(raw, __HG_SATFINITE, hggcRoundPosInf);
 }
 
