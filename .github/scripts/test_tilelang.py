@@ -986,7 +986,7 @@ def main(argv: list[str] | None = None) -> int:
         "--timeout",
         type=int,
         default=TEST_TIMEOUT_SECONDS,
-        help="单个用例最长运行时间（秒），超时强制终止并判定为 FAIL (默认: 7200，即 2 小时)",
+        help="单个用例最长运行时间（秒），超时强制终止并判定为 FAIL (默认: 600，即 10 分钟)",
     )
     parser.add_argument(
         "--maxfail",
