@@ -75,7 +75,6 @@ jobs:
           "${{ steps.setup-pylowest.outputs.python-path }}" maint/scripts/audit_cpp_api_style.py --github-warnings --limit 20
 
       - name: Pre-commit Lint
-        if: false
         run: |
           if ! pipx run pre-commit run --all-files --color=always --show-diff-on-failure; then
             echo "::error::Pre-commit checks failed. Please run 'pre-commit install' and 'pre-commit run --all-files' locally to see the issues."
