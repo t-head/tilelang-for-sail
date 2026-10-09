@@ -622,7 +622,7 @@ jobs:
         id: ppu-test
         uses: t-head/ppu-scheduler-action@main
         with:
-          image: reg.docker.alibaba-inc.com/ai-tmp/pytorch:2.10.0-ubuntu24.04-hggcrt3-py312-ppu202609181903
+          image: download.t-head.cn/docker_release/pytorch:sdk2.2.0-2.13.0-ubuntu24.04-hggcrt3-py312-20261005
           nnodes: 0
           nproc_per_node: 1
           node_selector: "board-type=${{ matrix.board }}"
@@ -695,7 +695,7 @@ jobs:
           python3 .github/scripts/report_test_results.py \
             --xml "$NAS_RESULT_DIR/test_result.xml" \
             --title "TileLang PPU Test Results (${{ matrix.board }})" \
-            --docker-image "reg.docker.alibaba-inc.com/ai-tmp/pytorch:2.10.0-ubuntu24.04-hggcrt3-py312-ppu202609181903" \
+            --docker-image "download.t-head.cn/docker_release/pytorch:sdk2.2.0-2.13.0-ubuntu24.04-hggcrt3-py312-20261005" \
             --run-number "${{ github.run_number }}" \
             --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
             --job-status "${{ steps.ppu-test.outputs.job_status }}" \
