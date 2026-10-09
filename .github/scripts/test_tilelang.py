@@ -433,6 +433,60 @@ def parse_junit_xml_counts(xml_path: str) -> tuple[int, int, int, int]:
     return (total_tests, total_failures, total_errors, total_skipped)
 
 
+def _write_timeout_xml(
+    config: TestConfig,
+    timeout: int | float,
+    duration: float,
+    xml_path: str,
+) -> str:
+    """Write a canonical single-testcase JUnit failure for a timed-out run.
+
+    A pytest process normally writes JUnit XML only during session shutdown, so
+    SIGKILL often leaves no file or a truncated one. Each process here executes
+    exactly one TestConfig; replacing any residual XML avoids duplicating that
+    case while also guaranteeing malformed partial XML cannot break the merge.
+    """
+    timeout_label = f"{timeout:g}"
+    elapsed = max(duration, 0.0)
+    message = f"Test timed out after {timeout_label} seconds"
+
+    root = ET.Element("testsuites")
+    suite = ET.SubElement(
+        root,
+        "testsuite",
+        name="pytest-timeout",
+        tests="1",
+        failures="1",
+        errors="0",
+        skipped="0",
+        time=f"{elapsed:.3f}",
+    )
+    testcase = ET.SubElement(
+        suite,
+        "testcase",
+        classname=config.file_path,
+        file=config.file_path,
+        name=config.test_filter or "timeout",
+        time=f"{elapsed:.3f}",
+    )
+    failure = ET.SubElement(
+        testcase,
+        "failure",
+        type="TimeoutError",
+        message=message,
+    )
+    failure.text = (
+        f"TimeoutError: The pytest process for {config.display_name} exceeded "
+        f"{timeout_label} seconds and was forcibly terminated with SIGKILL."
+    )
+
+    tree = ET.ElementTree(root)
+    with contextlib.suppress(AttributeError):
+        ET.indent(tree, space="  ")
+    tree.write(xml_path, encoding="utf-8", xml_declaration=True)
+    return xml_path
+
+
 # ---------------------------------------------------------------------------
 # 测试执行
 # ---------------------------------------------------------------------------
@@ -561,6 +615,8 @@ def _run_python_test(
     finally:
         # 无论成功或失败，都记录生成的 XML 文件
         result.duration = time.time() - start_time
+        if result.timed_out:
+            _write_timeout_xml(config, timeout, result.duration, temp_xml)
         if os.path.exists(temp_xml):
             result.xml_path = temp_xml
             # Parse XML to get accurate test counts (pass/fail/skip)
