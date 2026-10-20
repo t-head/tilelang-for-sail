@@ -35,7 +35,6 @@ struct CopyAnalysisContext {
   Target target;
   const LayoutMap *layout_map = nullptr;
   arith::Analyzer *analyzer = nullptr;
-  bool buffer_oob = false;
   bool emit_diagnostics = false;
 };
 
