@@ -1,0 +1,552 @@
+name: PPU 890P Performance Regression Bot
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: "ppu-perf-890p-pr-${{ github.event.issue.number }}"
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PPU_IMAGE: "download.t-head.cn/docker_release/pytorch:sdk2.2.0-2.13.0-ubuntu24.04-hggcrt3-py312-20261005"
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Job 1: Validate permissions, resolve PR refs via GitHub API
+  # -----------------------------------------------------------------------
+  resolve-pr:
+    name: Validate & Resolve PR
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      github.event.comment.body == '@ppu-regression'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      base_ref: ${{ steps.resolve.outputs.base_ref }}
+      base_sha: ${{ steps.resolve.outputs.base_sha }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      head_repo: ${{ steps.resolve.outputs.head_repo }}
+      merge_ref: ${{ steps.resolve.outputs.merge_ref }}
+      is_fork: ${{ steps.resolve.outputs.is_fork }}
+    steps:
+      - name: Check permissions
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const username = context.payload.comment?.user?.login;
+            if (!username) {
+              core.setFailed('Unable to identify comment author');
+              return;
+            }
+            const { owner, repo } = context.repo;
+            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner, repo, username,
+            });
+            const perm = data.permission;
+            core.info(`User ${username} has permission: ${perm}`);
+            const allowed = ['admin', 'maintain', 'write'];
+            if (!allowed.includes(perm)) {
+              core.setFailed(`User ${username} has insufficient permission: ${perm}`);
+            }
+
+      - name: Resolve PR details
+        id: resolve
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+
+            // Parse only the issue payload; never interpolate user input into JavaScript.
+            const rawPrNumber = context.payload.issue?.number;
+            const normalizedPrNumber = String(rawPrNumber ?? '');
+            if (!/^[1-9][0-9]*$/.test(normalizedPrNumber)) {
+              core.setFailed(`Invalid PR number: ${normalizedPrNumber}`);
+              return;
+            }
+            const prNumber = Number(normalizedPrNumber);
+
+            // Fetch PR details via API
+            const { data: pr } = await github.rest.pulls.get({
+              owner, repo, pull_number: prNumber,
+            });
+
+            // Validate repository owner and reject fork heads.
+            const isFork = pr.head.repo ? (pr.head.repo.full_name !== `${owner}/${repo}`) : true;
+
+            if (owner !== 't-head') {
+              core.setFailed(`Repository owner is '${owner}', expected 't-head'`);
+              return;
+            }
+
+            // Phase 1: reject forks
+            if (isFork) {
+              core.setFailed(`Fork PRs are not supported in Phase 0. PR head repo: ${pr.head.repo ? pr.head.repo.full_name : 'unknown'}`);
+              return;
+            }
+
+            const mergeRef = `refs/pull/${prNumber}/merge`;
+
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('base_sha', pr.base.sha);
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('head_repo', pr.head.repo ? pr.head.repo.full_name : '');
+            core.setOutput('merge_ref', mergeRef);
+            core.setOutput('is_fork', String(isFork));
+
+            core.info(`PR #${prNumber}: base=${pr.base.ref}@${pr.base.sha.substring(0, 8)}, head=${pr.head.sha.substring(0, 8)}, fork=${isFork}`);
+
+      - name: Post start comment
+        uses: actions/github-script@v9
+        env:
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+          BASE_REF: ${{ steps.resolve.outputs.base_ref }}
+          BASE_SHA: ${{ steps.resolve.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PR_NUMBER);
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const baseSha = process.env.BASE_SHA.substring(0, 8);
+            const headSha = process.env.HEAD_SHA.substring(0, 8);
+
+            const marker = '<!-- ppu-perf-regression-890p -->';
+            const body = [
+              marker,
+              '## PPU 890P Performance Regression',
+              '',
+              `**Status:** Running... [View workflow](${runUrl})`,
+              `**Base:** \`${process.env.BASE_REF}\` @ \`${baseSha}\``,
+              `**Head:** \`${headSha}\``,
+              `**Image:** \`${process.env.PPU_IMAGE}\``,
+              '',
+              '_Results will be updated here when complete._',
+            ].join('\n');
+
+            // Find existing comment with marker
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body,
+              });
+            }
+
+  # -----------------------------------------------------------------------
+  # Job 2: Run the repository pre-commit gate on the resolved PR merge ref
+  # -----------------------------------------------------------------------
+  pre-commit-lint:
+    name: Quick Lint
+    needs: resolve-pr
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout PR merge ref
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve-pr.outputs.merge_ref }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Check AST with Python 3.10
+        run: python -m compileall -q -f tilelang
+
+      - name: Pre-commit Lint
+        run: pipx run pre-commit run --all-files --color=always --show-diff-on-failure
+
+  # -----------------------------------------------------------------------
+  # Job 3: Run benchmarks on PPU 890P pod
+  # -----------------------------------------------------------------------
+  ppu-perf:
+    name: 890P Perf Regression
+    needs: [resolve-pr, pre-commit-lint]
+    runs-on: k8s-runner-group-cpu-thead
+    container:
+      image: ghcr.io/actions/actions-runner:latest
+    timeout-minutes: 360
+    env:
+      PR_NUMBER: ${{ needs.resolve-pr.outputs.pr_number }}
+      BASE_REF: ${{ needs.resolve-pr.outputs.base_ref }}
+      BASE_SHA: ${{ needs.resolve-pr.outputs.base_sha }}
+      HEAD_SHA: ${{ needs.resolve-pr.outputs.head_sha }}
+      MERGE_REF: ${{ needs.resolve-pr.outputs.merge_ref }}
+    steps:
+      - name: Checkout PR merge ref
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve-pr.outputs.merge_ref }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Run perf benchmarks on PPU pod
+        id: ppu-bench
+        uses: t-head/ppu-scheduler-action@main
+        with:
+          image: ${{ env.PPU_IMAGE }}
+          nnodes: 0
+          nproc_per_node: 1
+          node_selector: "board-type=ZW-M890P"
+          namespace: ppu-sched
+          host_volumes: /nas_aisw:/nas_aisw,/wl_nas:/mnt/wl_nas
+          # Scheduler contract: comma-separated KEY=VALUE entries without spaces.
+          extra_env: BASE_SHA=${{ env.BASE_SHA }},HEAD_SHA=${{ env.HEAD_SHA }},BASE_REF=${{ env.BASE_REF }},PR_NUMBER=${{ env.PR_NUMBER }},MERGE_REF=${{ env.MERGE_REF }},GITHUB_RUN_ID=${{ github.run_id }}
+          timeout_minutes: 300
+          command: |
+            set -euo pipefail
+            git config --global --add safe.directory '*'
+
+            # ---- Environment ----
+            source /usr/local/PPU_SDK/envsetup.sh
+            unset PIP_INDEX_URL
+            git config --global --unset-all url.https://ai-gerrit.eng.t-head.cn/Public/Github/.insteadOf 2>/dev/null || true
+
+            WORKSPACE="/workspace"
+            NEW_SRC="$WORKSPACE/source"
+            OLD_SRC="$WORKSPACE/old_source"
+            NAS_OUT="/mnt/wl_nas/devops/tilelang-ci/perf-regression/${GITHUB_RUN_ID}/ZW-M890P"
+            MANIFEST="$NEW_SRC/maint/scripts/ppu_perf_890p_allowlist.txt"
+            FILE_TIMEOUT=600
+            GATE_RC=0
+
+            mkdir -p "$NAS_OUT"
+
+            # Common pip deps (installed once in base env, venvs inherit)
+            pip install wheel build setuptools cython packaging 'setuptools==68.1.2' \
+              pytest==9.0.0 pyyaml==6.0.3 junit-xml einops==0.8.1 ninja==1.13.0 \
+              mkl==2021.4.0 cuda-bindings==13.0 'z3-solver>=4.13.0,<4.15.5' tabulate matplotlib
+            yes | pip uninstall nvidia-cuda-nvrtc 2>/dev/null || true
+            pip install flash-attn 2>/dev/null || echo "[WARN] flash-attn not available"
+            apt-get update && apt-get install -y libopenmpi-dev 2>/dev/null || true
+
+            cd "$NEW_SRC"
+
+            # ---- BUILD NEW ----
+            echo "::group::Build NEW wheel"
+            python -m venv --system-site-packages "$WORKSPACE/venv_new"
+            NEW_BUILD_DIR="$WORKSPACE/build_new"
+            mkdir -p "$NEW_BUILD_DIR"
+            NO_VERSION_LABEL=OFF NO_GIT_VERSION=1 \
+              TILELANG_BUILD_DIR="$NEW_BUILD_DIR" \
+              python -m build --wheel || { echo "[FATAL] NEW wheel build failed"; exit 1; }
+            source "$WORKSPACE/venv_new/bin/activate"
+            pip install "$NEW_SRC"/dist/*.whl
+            # Install remaining deps into venv
+            pip install pytest tabulate matplotlib einops
+            deactivate
+            echo "::endgroup::"
+
+            # ---- BUILD OLD ----
+            echo "::group::Build OLD wheel (base SHA: $BASE_SHA)"
+            git clone "$NEW_SRC" "$OLD_SRC"
+            cd "$OLD_SRC"
+            git checkout "$BASE_SHA"
+            git submodule update --init --recursive
+
+            python -m venv --system-site-packages "$WORKSPACE/venv_old"
+            OLD_BUILD_DIR="$WORKSPACE/build_old"
+            mkdir -p "$OLD_BUILD_DIR"
+            NO_VERSION_LABEL=OFF NO_GIT_VERSION=1 \
+              TILELANG_BUILD_DIR="$OLD_BUILD_DIR" \
+              python -m build --wheel || { echo "[FATAL] OLD wheel build failed"; exit 1; }
+            source "$WORKSPACE/venv_old/bin/activate"
+            pip install "$OLD_SRC"/dist/*.whl
+            pip install pytest tabulate matplotlib einops
+            deactivate
+            echo "::endgroup::"
+
+            # ---- Cache isolation ----
+            export TILELANG_DISABLE_CACHE=1
+            export TRITON_CACHE_DIR_OLD="$WORKSPACE/triton_cache_old"
+            export TRITON_CACHE_DIR_NEW="$WORKSPACE/triton_cache_new"
+            export TORCH_EXTENSIONS_DIR_OLD="$WORKSPACE/torch_ext_old"
+            export TORCH_EXTENSIONS_DIR_NEW="$WORKSPACE/torch_ext_new"
+            mkdir -p "$TRITON_CACHE_DIR_OLD" "$TRITON_CACHE_DIR_NEW" \
+                     "$TORCH_EXTENSIONS_DIR_OLD" "$TORCH_EXTENSIONS_DIR_NEW"
+
+            # ---- RUN OLD ----
+            echo "::group::Run OLD benchmarks"
+            cd "$NEW_SRC"
+            source "$WORKSPACE/venv_old/bin/activate"
+            export TRITON_CACHE_DIR="$TRITON_CACHE_DIR_OLD"
+            export TORCH_EXTENSIONS_DIR="$TORCH_EXTENSIONS_DIR_OLD"
+            OLD_RC=0
+            python maint/scripts/ppu_run_regression.py \
+              --manifest "$MANIFEST" \
+              --timeout "$FILE_TIMEOUT" \
+              --repo-root "$OLD_SRC" \
+              --output "$NAS_OUT/old_payload.json" || OLD_RC=$?
+            echo "OLD runner exit code: $OLD_RC"
+            deactivate
+            echo "::endgroup::"
+
+            # ---- RUN NEW ----
+            echo "::group::Run NEW benchmarks"
+            source "$WORKSPACE/venv_new/bin/activate"
+            export TRITON_CACHE_DIR="$TRITON_CACHE_DIR_NEW"
+            export TORCH_EXTENSIONS_DIR="$TORCH_EXTENSIONS_DIR_NEW"
+            NEW_RC=0
+            python maint/scripts/ppu_run_regression.py \
+              --manifest "$MANIFEST" \
+              --timeout "$FILE_TIMEOUT" \
+              --repo-root "$NEW_SRC" \
+              --output "$NAS_OUT/new_payload.json" || NEW_RC=$?
+            echo "NEW runner exit code: $NEW_RC"
+            deactivate
+            echo "::endgroup::"
+
+            # ---- COMPARE ----
+            echo "::group::Compare results"
+            source "$WORKSPACE/venv_new/bin/activate"
+            python maint/scripts/ppu_compare_regression.py \
+              --old "$NAS_OUT/old_payload.json" \
+              --new "$NAS_OUT/new_payload.json" \
+              --output-md "$NAS_OUT/regression_result.md" \
+              --output-json "$NAS_OUT/regression_compare.json" \
+              --output-png "$NAS_OUT/regression_result.png" \
+              || GATE_RC=$?
+            deactivate
+            echo "::endgroup::"
+
+            # ---- Write step summary to NAS ----
+            if [[ -f "$NAS_OUT/regression_result.md" ]]; then
+              cp "$NAS_OUT/regression_result.md" "$NAS_OUT/step_summary.md"
+            fi
+
+            # Write gate exit code for runner to read
+            echo "$GATE_RC" > "$NAS_OUT/gate_rc.txt"
+
+            echo "Gate exit code: $GATE_RC"
+            # Do NOT exit with GATE_RC here; let NAS upload complete.
+            # The runner job reads gate_rc.txt for final verdict.
+          cleanup_policy: always
+
+      - name: Fetch results from NAS
+        if: always()
+        id: fetch-results
+        shell: bash
+        run: |
+          NAS_DIR="/wl_nas/devops/tilelang-ci/perf-regression/${{ github.run_id }}/ZW-M890P"
+          LOCAL_DIR="${GITHUB_WORKSPACE}/perf-results"
+          mkdir -p "$LOCAL_DIR"
+
+          for f in regression_result.md regression_result.png regression_compare.json \
+                   old_payload.json new_payload.json step_summary.md gate_rc.txt; do
+            cp "$NAS_DIR/$f" "$LOCAL_DIR/" 2>/dev/null || echo "WARN: $f not found on NAS"
+          done
+
+          echo "result_dir=$LOCAL_DIR" >> "$GITHUB_OUTPUT"
+
+          # Read gate RC
+          if [[ -f "$LOCAL_DIR/gate_rc.txt" ]]; then
+            GATE_RC=$(cat "$LOCAL_DIR/gate_rc.txt" | tr -d '[:space:]')
+            echo "gate_rc=$GATE_RC" >> "$GITHUB_OUTPUT"
+          else
+            echo "gate_rc=2" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write step summary
+        if: always()
+        shell: bash
+        run: |
+          RESULT_DIR="${{ steps.fetch-results.outputs.result_dir }}"
+          COMPARE_JSON="$RESULT_DIR/regression_compare.json"
+          if [[ ! -f "$COMPARE_JSON" ]] || ! python3 - "$COMPARE_JSON" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1]) as f:
+              gate = json.load(f).get("gate")
+          if not isinstance(gate, dict) or not isinstance(gate.get("correctness_ok"), bool):
+              raise SystemExit(1)
+          PY
+          then
+            echo "## Infrastructure failure" >> "$GITHUB_STEP_SUMMARY"
+            echo "Performance gate JSON is missing or invalid; this run is fail-closed." >> "$GITHUB_STEP_SUMMARY"
+          elif [[ -f "$RESULT_DIR/step_summary.md" ]]; then
+            cat "$RESULT_DIR/step_summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Infrastructure failure" >> "$GITHUB_STEP_SUMMARY"
+            echo "Performance report is missing; this run is fail-closed." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ppu-perf-regression-890p-${{ github.run_id }}
+          path: |
+            ${{ steps.fetch-results.outputs.result_dir }}/regression_result.md
+            ${{ steps.fetch-results.outputs.result_dir }}/regression_result.png
+            ${{ steps.fetch-results.outputs.result_dir }}/regression_compare.json
+            ${{ steps.fetch-results.outputs.result_dir }}/old_payload.json
+            ${{ steps.fetch-results.outputs.result_dir }}/new_payload.json
+          if-no-files-found: warn
+
+      - name: Post results to PR
+        if: always()
+        uses: actions/github-script@v9
+        env:
+          RESULT_DIR: ${{ steps.fetch-results.outputs.result_dir }}
+          GATE_RC: ${{ steps.fetch-results.outputs.gate_rc }}
+        with:
+          script: |
+            const fs = require('fs');
+            const prNumber = Number(process.env.PR_NUMBER);
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.warning('No valid PR number, skipping comment');
+              return;
+            }
+
+            const resultDir = process.env.RESULT_DIR;
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const baseSha = process.env.BASE_SHA.substring(0, 8);
+            const headSha = process.env.HEAD_SHA.substring(0, 8);
+            const gateRc = process.env.GATE_RC;
+
+            let mdContent = '';
+            try {
+              mdContent = fs.readFileSync(`${resultDir}/regression_result.md`, 'utf8');
+            } catch (e) {
+              mdContent = '_No regression report available._';
+            }
+
+            let gateJson = null;
+            let gateError = '';
+            try {
+              const compareRaw = fs.readFileSync(`${resultDir}/regression_compare.json`, 'utf8');
+              const parsed = JSON.parse(compareRaw);
+              if (!parsed.gate || typeof parsed.gate.correctness_ok !== 'boolean') {
+                throw new Error('missing boolean gate.correctness_ok');
+              }
+              gateJson = parsed.gate;
+            } catch (e) {
+              gateError = String(e);
+            }
+
+            const gateAvailable = gateJson !== null;
+            const infrastructureFailure = !gateAvailable || !['0', '1'].includes(gateRc);
+            const correctnessOk = gateAvailable && gateJson.correctness_ok === true && gateRc === '0';
+            const hasRegression = gateAvailable && gateJson.has_performance_regression === true;
+            let statusEmoji = correctnessOk ? (hasRegression ? '⚠️' : '✅') : '❌';
+            let statusText;
+            if (infrastructureFailure) {
+              statusText = `Infrastructure failure (gate unavailable or invalid: ${gateError || `exit ${gateRc}`})`;
+            } else if (!correctnessOk) {
+              statusText = 'Correctness failure';
+            } else {
+              statusText = hasRegression
+                ? 'Performance regression detected (Phase 0: report-only)'
+                : 'No regression detected';
+            }
+
+            const marker = '<!-- ppu-perf-regression-890p -->';
+            const body = [
+              marker,
+              `## ${statusEmoji} PPU 890P Performance Regression`,
+              '',
+              `| Info | Value |`,
+              `|------|-------|`,
+              `| **Status** | ${statusText} |`,
+              `| **Base** | \`${process.env.BASE_REF}\` @ \`${baseSha}\` |`,
+              `| **Head** | \`${headSha}\` |`,
+              `| **Image** | \`${process.env.PPU_IMAGE}\` |`,
+              `| **Workflow** | [Run #${process.env.GITHUB_RUN_ID}](${runUrl}) |`,
+              `| **Board** | ZW-M890P |`,
+              `| **Manifest** | \`maint/scripts/ppu_perf_890p_allowlist.txt\` |`,
+              '',
+              mdContent,
+              '',
+              `<details><summary>Artifacts</summary>`,
+              '',
+              `- [Download artifacts](${runUrl}#artifacts)`,
+              `- NAS: \`/mnt/wl_nas/devops/tilelang-ci/perf-regression/${process.env.GITHUB_RUN_ID}/ZW-M890P/\``,
+              '',
+              `</details>`,
+            ].join('\n');
+
+            // Find and update existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body,
+              });
+            }
+
+      - name: Gate verdict
+        if: always()
+        shell: bash
+        run: |
+          RESULT_DIR="${{ steps.fetch-results.outputs.result_dir }}"
+          GATE_RC="${{ steps.fetch-results.outputs.gate_rc }}"
+          COMPARE_JSON="$RESULT_DIR/regression_compare.json"
+          echo "Gate exit code: $GATE_RC"
+
+          if [[ ! -f "$COMPARE_JSON" ]] || ! python3 - "$COMPARE_JSON" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1]) as f:
+              gate = json.load(f).get("gate")
+          if not isinstance(gate, dict) or gate.get("correctness_ok") is not True:
+              raise SystemExit(1)
+          PY
+          then
+            echo "FAIL: Gate JSON is missing, invalid, or reports a correctness failure."
+            exit 1
+          fi
+
+          if [[ "$GATE_RC" == "0" ]]; then
+            echo "PASS: No correctness failures."
+          elif [[ "$GATE_RC" == "1" ]]; then
+            echo "FAIL: Correctness failure detected."
+            exit 1
+          elif [[ "$GATE_RC" == "2" ]]; then
+            echo "FAIL: Schema/usage error or results not available."
+            exit 1
+          else
+            echo "FAIL: Unknown gate result ($GATE_RC)."
+            exit 1
+          fi
