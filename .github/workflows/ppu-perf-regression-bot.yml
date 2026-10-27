@@ -15,7 +15,7 @@ concurrency:
 
 env:
   PYTHONUNBUFFERED: "1"
-  PPU_IMAGE: "download.t-head.cn/docker_release/pytorch:sdk2.2.0-2.13.0-ubuntu24.04-hggcrt3-py312-20261005"
+  PPU_IMAGE: "download.t-head.cn/docker_release/pytorch:sdk2.2.0-2.10.0-ubuntu24.04-hggcrt3-py312-20261005"
 
 jobs:
   # -----------------------------------------------------------------------

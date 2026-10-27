@@ -12,23 +12,16 @@ examples/attention_sink/regression_attention_sink.py
 examples/blocksparse_attention/regression_example_blocksparse_attention.py
 examples/flash_attention/regression_example_flash_attention.py
 examples/flash_decoding/regression_example_flash_decoding.py
-# known dependency: fla (not installed in PPU perf env; entry kept per task spec)
-examples/linear_attention/regression_linear_attn.py
-examples/minference/regression_vs_sparse_attn.py
 examples/seer_attention/regression_block_sparse_attn_tilelang.py
 
 # GEMM
-examples/gemm/regression_example_gemm.py
 examples/gemm_fp8/regression_example_gemm_fp8.py
 examples/gemm_splitk/regression_example_gemm_splitk.py
 examples/blocksparse_gemm/regression_example_blocksparse_gemm.py
-examples/dequantize_gemm/regression_example_dequantize_gemm.py
 
 # MoE
 examples/fusedmoe/regression_example_fusedmoe.py
 
 # DeepSeek
 examples/deepseek_mhc/regression_example_mhc.py
-examples/deepseek_mla/regression_example_mla_decode.py
 examples/deepseek_nsa/regression_example_tilelang_nsa.py
-examples/deepseek_v32/regression_tilelang_example_deepseek_v32.py

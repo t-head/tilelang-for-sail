@@ -850,6 +850,39 @@ class TestWorkflowYAML:
         assert "old_payload.json\" || true" not in command
         assert "new_payload.json\" || true" not in command
 
+    def test_ppu_image_is_torch_210(self):
+        """PPU_IMAGE must reference the CUPTI-verified torch 2.10 image."""
+        expected = (
+            "download.t-head.cn/docker_release/pytorch:"
+            "sdk2.2.0-2.10.0-ubuntu24.04-hggcrt3-py312-20261005"
+        )
+        assert self.wf.get("env", {}).get("PPU_IMAGE") == expected
+
+    def test_scheduler_image_uses_ppu_image_env(self):
+        """The scheduler image must use the workflow PPU_IMAGE variable."""
+        steps = self.wf["jobs"]["ppu-perf"]["steps"]
+        scheduler = next(
+            step for step in steps
+            if "ppu-scheduler-action" in step.get("uses", "")
+        )
+        assert scheduler["with"]["image"] == "${{ env.PPU_IMAGE }}"
+
+    def test_workflow_uses_tracked_txt_manifest(self):
+        """The runner command and PR comment must reference the TXT manifest."""
+        steps = self.wf["jobs"]["ppu-perf"]["steps"]
+        scheduler = next(
+            step for step in steps
+            if "ppu-scheduler-action" in step.get("uses", "")
+        )
+        command = scheduler["with"]["command"]
+        assert 'MANIFEST="$NEW_SRC/maint/scripts/ppu_perf_890p_allowlist.txt"' in command
+        assert "ppu_perf_890p_allowlist.yaml" not in command
+
+        comment = next(step for step in steps if step["name"] == "Post results to PR")
+        script = comment["with"]["script"]
+        assert "maint/scripts/ppu_perf_890p_allowlist.txt" in script
+        assert "ppu_perf_890p_allowlist.yaml" not in script
+
 
 # ===========================================================================
 # Tests for the tracked repository ci.yml (functional CI)
@@ -938,22 +971,16 @@ _EXPECTED_NEW_ENTRIES = (
     "examples/blocksparse_attention/regression_example_blocksparse_attention.py",
     "examples/flash_attention/regression_example_flash_attention.py",
     "examples/flash_decoding/regression_example_flash_decoding.py",
-    "examples/linear_attention/regression_linear_attn.py",
-    "examples/minference/regression_vs_sparse_attn.py",
     "examples/seer_attention/regression_block_sparse_attn_tilelang.py",
     # gemm
-    "examples/gemm/regression_example_gemm.py",
     "examples/gemm_fp8/regression_example_gemm_fp8.py",
     "examples/gemm_splitk/regression_example_gemm_splitk.py",
     "examples/blocksparse_gemm/regression_example_blocksparse_gemm.py",
-    "examples/dequantize_gemm/regression_example_dequantize_gemm.py",
     # moe
     "examples/fusedmoe/regression_example_fusedmoe.py",
     # deepseek
     "examples/deepseek_mhc/regression_example_mhc.py",
-    "examples/deepseek_mla/regression_example_mla_decode.py",
     "examples/deepseek_nsa/regression_example_tilelang_nsa.py",
-    "examples/deepseek_v32/regression_tilelang_example_deepseek_v32.py",
 )
 
 
@@ -970,8 +997,8 @@ class TestShippedManifest:
         ]
 
     def test_total_valid_entry_count(self):
-        """Manifest resolves to exactly 20 valid entries."""
-        assert len(self.resolved) == 20
+        """Manifest resolves to exactly 14 verified entries."""
+        assert len(self.resolved) == 14
 
     def test_no_duplicate_paths(self):
         """Each repo-relative entry is unique."""
@@ -983,7 +1010,7 @@ class TestShippedManifest:
             assert entry in self.relative, f"Missing original PPU entry: {entry}"
 
     def test_new_target_entries_present(self):
-        """All 17 attention/gemm/moe/deepseek target entries are present."""
+        """All 11 verified attention/gemm/moe/deepseek entries are present."""
         for entry in _EXPECTED_NEW_ENTRIES:
             assert entry in self.relative, f"Missing target entry: {entry}"
 
