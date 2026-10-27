@@ -14,6 +14,7 @@ Exit codes:
   0  All listed files ran successfully (some may report latency of 0).
   1  At least one file failed or was not found.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,6 +32,11 @@ try:
     from tabulate import tabulate
 except Exception:  # pragma: no cover
     tabulate = None  # type: ignore
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    yaml = None  # type: ignore
 
 _RESULTS_JSON_PREFIX = "__TILELANG_PERF_RESULTS_JSON__="
 
@@ -81,7 +87,7 @@ def _parse_json_output(output: str) -> dict[str, float] | None:
     """
     for line in reversed(output.splitlines()):
         if line.startswith(_RESULTS_JSON_PREFIX):
-            payload = line[len(_RESULTS_JSON_PREFIX):].strip()
+            payload = line[len(_RESULTS_JSON_PREFIX) :].strip()
             items = json.loads(payload)
             if isinstance(items, dict):
                 return {str(k): float(v) for k, v in items.items()}
@@ -150,59 +156,122 @@ def discover_bench_files(examples_root: Path) -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
-# Manifest loading
+# Manifest loading (YAML schema v1)
 # ---------------------------------------------------------------------------
+
+_MANIFEST_SCHEMA_VERSION = 1
+_MANIFEST_PLATFORM = "ppu-890p"
+_MANIFEST_KEYS = {"schema_version", "platform", "benchmarks", "excluded"}
+_BENCHMARK_KEYS = {"path", "group", "expected_cases"}
+_EXCLUDED_KEYS = {"path", "reason"}
+
+
+def _validate_manifest_path(
+    path_value: Any,
+    location: str,
+    repo_root: Path,
+) -> tuple[str, Path]:
+    if not isinstance(path_value, str) or not path_value.strip():
+        raise ValueError(f"{location}: 'path' must be a non-empty string")
+
+    path_str = path_value.strip()
+    relative_path = Path(path_str)
+    if relative_path.is_absolute():
+        raise ValueError(f"{location}: path must be repo-relative: {path_str}")
+
+    candidate = (repo_root / relative_path).resolve()
+    try:
+        candidate.relative_to(repo_root.resolve())
+    except ValueError:
+        raise ValueError(f"{location}: path escapes repo root: {path_str}") from None
+
+    if not candidate.name.startswith("regression_") or not candidate.name.endswith(".py"):
+        raise ValueError(f"{location}: does not match regression_*.py: {path_str}")
+    return path_str, candidate
+
+
+def _reject_unknown_keys(entry: dict[Any, Any], allowed: set[str], location: str) -> None:
+    unknown = set(entry) - allowed
+    if unknown:
+        fields = ", ".join(sorted(repr(key) for key in unknown))
+        raise ValueError(f"{location}: unknown field(s): {fields}")
 
 
 def load_manifest(manifest_path: str, repo_root: Path) -> list[Path]:
-    """Load and validate a manifest file.
+    """Load a strict YAML v1 manifest and return enabled benchmark paths only."""
+    if yaml is None:
+        raise RuntimeError("PyYAML is required to load YAML manifests; install it with 'pip install pyyaml'")
 
-    Returns a de-duplicated, order-preserving list of absolute paths.
-    Raises on empty manifest, missing files, or path-escape attempts.
-    """
     manifest = Path(manifest_path)
+    if manifest.suffix.lower() not in {".yaml", ".yml"}:
+        raise ValueError(f"Manifest must be a YAML file (.yaml or .yml): {manifest}")
     if not manifest.is_file():
         raise FileNotFoundError(f"Manifest file not found: {manifest}")
 
-    seen: set[str] = set()
+    try:
+        document = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Manifest YAML parse error: {exc}") from exc
+
+    if not isinstance(document, dict):
+        raise ValueError(f"Manifest top-level must be a mapping, got {type(document).__name__}")
+    _reject_unknown_keys(document, _MANIFEST_KEYS, "manifest")
+    missing = _MANIFEST_KEYS - set(document)
+    if missing:
+        raise ValueError(f"Manifest missing required field(s): {', '.join(sorted(missing))}")
+
+    schema_version = document["schema_version"]
+    if type(schema_version) is not int or schema_version != _MANIFEST_SCHEMA_VERSION:
+        raise ValueError(f"Unsupported manifest schema_version: {schema_version!r} (expected {_MANIFEST_SCHEMA_VERSION})")
+    if document["platform"] != _MANIFEST_PLATFORM:
+        raise ValueError(f"Unsupported manifest platform: {document['platform']!r} (expected {_MANIFEST_PLATFORM!r})")
+
+    benchmarks = document["benchmarks"]
+    if not isinstance(benchmarks, list):
+        raise ValueError(f"'benchmarks' must be a list, got {type(benchmarks).__name__}")
+    if not benchmarks:
+        raise ValueError("Manifest 'benchmarks' list must not be empty")
+
+    excluded = document["excluded"]
+    if not isinstance(excluded, list):
+        raise ValueError(f"'excluded' must be a list, got {type(excluded).__name__}")
+
+    seen: dict[str, str] = {}
     paths: list[Path] = []
-    repo_root_resolved = repo_root.resolve()
+    for index, entry in enumerate(benchmarks):
+        location = f"benchmarks[{index}]"
+        if not isinstance(entry, dict):
+            raise ValueError(f"{location}: expected a mapping, got {type(entry).__name__}")
+        _reject_unknown_keys(entry, _BENCHMARK_KEYS, location)
+        path_str, candidate = _validate_manifest_path(entry.get("path"), location, repo_root)
 
-    for lineno, raw_line in enumerate(manifest.read_text().splitlines(), 1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
+        if "group" in entry and (not isinstance(entry["group"], str) or not entry["group"].strip()):
+            raise ValueError(f"{location}: 'group' must be a non-empty string")
+        if "expected_cases" in entry and (type(entry["expected_cases"]) is not int or entry["expected_cases"] < 1):
+            raise ValueError(f"{location}: 'expected_cases' must be a positive integer")
 
-        # Resolve relative to repo root
-        candidate = (repo_root / line).resolve()
-
-        # Security: must be inside repo
-        try:
-            candidate.relative_to(repo_root_resolved)
-        except ValueError:
-            raise ValueError(
-                f"Manifest line {lineno}: path escapes repo root: {line}"
-            ) from None
-
-        # Must match regression_*.py pattern
-        if not candidate.name.startswith("regression_") or not candidate.name.endswith(".py"):
-            raise ValueError(
-                f"Manifest line {lineno}: does not match regression_*.py: {line}"
-            )
-
+        duplicate_key = str(candidate)
+        if duplicate_key in seen:
+            raise ValueError(f"{location}: duplicate path {path_str!r}; already used by {seen[duplicate_key]}")
+        seen[duplicate_key] = location
         if not candidate.is_file():
-            raise FileNotFoundError(
-                f"Manifest line {lineno}: file not found: {line}"
-            )
+            raise FileNotFoundError(f"{location}: file not found: {path_str}")
+        paths.append(candidate)
 
-        # De-duplicate preserving order
-        key = str(candidate)
-        if key not in seen:
-            seen.add(key)
-            paths.append(candidate)
+    for index, entry in enumerate(excluded):
+        location = f"excluded[{index}]"
+        if not isinstance(entry, dict):
+            raise ValueError(f"{location}: expected a mapping, got {type(entry).__name__}")
+        _reject_unknown_keys(entry, _EXCLUDED_KEYS, location)
+        path_str, candidate = _validate_manifest_path(entry.get("path"), location, repo_root)
+        reason = entry.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(f"{location}: 'reason' must be a non-empty string")
 
-    if not paths:
-        raise ValueError("Manifest is empty or contains no valid entries")
+        duplicate_key = str(candidate)
+        if duplicate_key in seen:
+            raise ValueError(f"{location}: duplicate path {path_str!r}; already used by {seen[duplicate_key]}")
+        seen[duplicate_key] = location
 
     return paths
 
@@ -226,14 +295,16 @@ def run_single_benchmark(
         source = str(bench_file)
 
     if not bench_file_resolved.is_file():
-        return [CaseResult(
-            name=source,
-            latency=float("nan"),
-            status="not_found",
-            file=source,
-            source=source,
-            error=f"Benchmark file not found: {bench_file}",
-        )]
+        return [
+            CaseResult(
+                name=source,
+                latency=float("nan"),
+                status="not_found",
+                file=source,
+                source=source,
+                error=f"Benchmark file not found: {bench_file}",
+            )
+        ]
 
     env = {**os.environ, "TL_PERF_REGRESSION_FORMAT": "json"}
     env["TILELANG_DISABLE_CACHE"] = "1"
@@ -261,15 +332,17 @@ def run_single_benchmark(
                 if not line.startswith(_RESULTS_JSON_PREFIX):
                     print(line, end="", flush=True)
             details = stderr_content[-2000:] if stderr_content else ""
-            return [CaseResult(
-                name=source,
-                latency=float("nan"),
-                status="timeout",
-                file=source,
-                source=source,
-                error=f"Timed out after {timeout}s\n{details}".rstrip(),
-                duration_s=duration,
-            )]
+            return [
+                CaseResult(
+                    name=source,
+                    latency=float("nan"),
+                    status="timeout",
+                    file=source,
+                    source=source,
+                    error=f"Timed out after {timeout}s\n{details}".rstrip(),
+                    duration_s=duration,
+                )
+            ]
 
         duration = time.monotonic() - t0
         for line in stdout_content.splitlines(keepends=True):
@@ -277,34 +350,31 @@ def run_single_benchmark(
                 print(line, end="", flush=True)
 
         if proc.returncode != 0:
-            return [CaseResult(
-                name=source,
-                latency=float("nan"),
-                status="failed",
-                file=source,
-                source=source,
-                error=(
-                    f"Exit code {proc.returncode}\n"
-                    f"STDOUT:\n{stdout_content[-2000:]}\n"
-                    f"STDERR:\n{stderr_content[-2000:]}"
-                ),
-                duration_s=duration,
-            )]
+            return [
+                CaseResult(
+                    name=source,
+                    latency=float("nan"),
+                    status="failed",
+                    file=source,
+                    source=source,
+                    error=(f"Exit code {proc.returncode}\nSTDOUT:\n{stdout_content[-2000:]}\nSTDERR:\n{stderr_content[-2000:]}"),
+                    duration_s=duration,
+                )
+            ]
 
         parsed = parse_output(stdout_content)
         if parsed is None:
-            return [CaseResult(
-                name=source,
-                latency=float("nan"),
-                status="failed",
-                file=source,
-                source=source,
-                error=(
-                    "No parseable benchmark output\n"
-                    f"STDERR:\n{stderr_content[-2000:]}"
-                ),
-                duration_s=duration,
-            )]
+            return [
+                CaseResult(
+                    name=source,
+                    latency=float("nan"),
+                    status="failed",
+                    file=source,
+                    source=source,
+                    error=(f"No parseable benchmark output\nSTDERR:\n{stderr_content[-2000:]}"),
+                    duration_s=duration,
+                )
+            ]
 
         return [
             CaseResult(
@@ -320,15 +390,17 @@ def run_single_benchmark(
 
     except Exception as exc:
         duration = time.monotonic() - t0
-        return [CaseResult(
-            name=source,
-            latency=float("nan"),
-            status="failed",
-            file=source,
-            source=source,
-            error=str(exc)[:2000],
-            duration_s=duration,
-        )]
+        return [
+            CaseResult(
+                name=source,
+                latency=float("nan"),
+                status="failed",
+                file=source,
+                source=source,
+                error=str(exc)[:2000],
+                duration_s=duration,
+            )
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -356,8 +428,7 @@ def main() -> int:
     parser.add_argument(
         "--manifest",
         default=None,
-        help="Path to allowlist file (one repo-relative path per line). "
-             "If omitted, auto-discovers regression_*.py under examples/.",
+        help="Path to YAML allowlist file (schema_version 1). If omitted, auto-discovers regression_*.py under examples/.",
     )
     parser.add_argument(
         "--timeout",
@@ -387,7 +458,7 @@ def main() -> int:
     if args.manifest:
         try:
             bench_files = load_manifest(args.manifest, repo_root)
-        except (FileNotFoundError, ValueError) as exc:
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
             print(f"ERROR: manifest: {exc}", file=sys.stderr)
             return 1
     else:

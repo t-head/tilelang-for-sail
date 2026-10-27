@@ -6,6 +6,7 @@ Covers:
   - compare_perf_regression.py: comparison logic, fail-closed rules, gate verdicts
   - workflow YAML: structural assertions
 """
+
 from __future__ import annotations
 
 import json
@@ -13,6 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 # Add maint/scripts to path so we can import the modules
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -26,6 +28,7 @@ import ppu_compare_regression as cpr
 # ===========================================================================
 # Helpers
 # ===========================================================================
+
 
 def _make_payload(cases: list[dict], schema_version: int = 1, meta: dict | None = None) -> dict:
     """Build a minimal valid payload dict."""
@@ -42,8 +45,7 @@ def _write_payload(tmp_path: Path, name: str, payload: dict) -> Path:
     return p
 
 
-def _make_case(name: str, latency: float | None, status: str = "success",
-               file: str = "", error: str = "", source: str = "") -> dict:
+def _make_case(name: str, latency: float | None, status: str = "success", file: str = "", error: str = "", source: str = "") -> dict:
     file_identity = file or source or name
     case = {
         "name": name,
@@ -62,93 +64,199 @@ def _make_case(name: str, latency: float | None, status: str = "success",
 # Tests for run_current_regression.py — manifest loading
 # ===========================================================================
 
+
 class TestManifestLoading:
-    """Test manifest parsing and validation."""
+    """Test strict YAML manifest parsing and validation."""
+
+    @staticmethod
+    def _repo_with_benchmark(tmp_path: Path) -> tuple[Path, Path]:
+        repo = tmp_path / "repo"
+        bench = repo / "examples" / "ppu" / "topk" / "regression_topk.py"
+        bench.parent.mkdir(parents=True)
+        bench.write_text("# benchmark")
+        return repo, bench
+
+    @staticmethod
+    def _write_manifest(tmp_path: Path, document: object, suffix: str = ".yaml") -> Path:
+        manifest = tmp_path / f"manifest{suffix}"
+        manifest.write_text(yaml.safe_dump(document, sort_keys=False))
+        return manifest
+
+    @staticmethod
+    def _valid_document(path: str = "examples/ppu/topk/regression_topk.py") -> dict:
+        return {
+            "schema_version": 1,
+            "platform": "ppu-890p",
+            "benchmarks": [{"path": path}],
+            "excluded": [],
+        }
 
     def test_valid_manifest(self, tmp_path: Path):
-        """Manifest with valid entries loads correctly."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        examples = repo / "examples" / "ppu" / "topk"
-        examples.mkdir(parents=True)
-        bench = examples / "regression_topk.py"
-        bench.write_text("# bench")
+        repo, bench = self._repo_with_benchmark(tmp_path)
+        document = self._valid_document()
+        document["benchmarks"][0].update({"group": "ppu", "expected_cases": 1})
+        manifest = self._write_manifest(tmp_path, document)
 
-        manifest = tmp_path / "manifest.txt"
-        manifest.write_text("examples/ppu/topk/regression_topk.py\n")
+        assert rcr.load_manifest(str(manifest), repo) == [bench.resolve()]
 
-        result = rcr.load_manifest(str(manifest), repo)
-        assert len(result) == 1
-        assert result[0] == bench.resolve()
+    def test_wrong_schema_version_fails(self, tmp_path: Path):
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        document = self._valid_document()
+        document["schema_version"] = 2
+        manifest = self._write_manifest(tmp_path, document)
 
-    def test_duplicate_dedup(self, tmp_path: Path):
-        """Duplicate entries are removed, order preserved."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        d = repo / "examples" / "ppu" / "a"
-        d.mkdir(parents=True)
-        f = d / "regression_a.py"
-        f.write_text("# a")
+        with pytest.raises(ValueError, match="schema_version"):
+            rcr.load_manifest(str(manifest), repo)
 
-        manifest = tmp_path / "m.txt"
-        manifest.write_text(
-            "examples/ppu/a/regression_a.py\n"
-            "examples/ppu/a/regression_a.py\n"
+    def test_wrong_platform_fails(self, tmp_path: Path):
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        document = self._valid_document()
+        document["platform"] = "ppu-other"
+        manifest = self._write_manifest(tmp_path, document)
+
+        with pytest.raises(ValueError, match="platform"):
+            rcr.load_manifest(str(manifest), repo)
+
+    @pytest.mark.parametrize("benchmarks", [None, {}, "path", 1])
+    def test_benchmarks_must_be_a_list(self, tmp_path: Path, benchmarks: object):
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        document = self._valid_document()
+        document["benchmarks"] = benchmarks
+        manifest = self._write_manifest(tmp_path, document)
+
+        with pytest.raises(ValueError, match="'benchmarks' must be a list"):
+            rcr.load_manifest(str(manifest), repo)
+
+    def test_benchmark_entry_must_be_a_mapping(self, tmp_path: Path):
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        document = self._valid_document()
+        document["benchmarks"] = ["examples/ppu/topk/regression_topk.py"]
+        manifest = self._write_manifest(tmp_path, document)
+
+        with pytest.raises(ValueError, match="expected a mapping"):
+            rcr.load_manifest(str(manifest), repo)
+
+    def test_benchmark_path_must_be_nonempty(self, tmp_path: Path):
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        document = self._valid_document()
+        document["benchmarks"] = [{"path": ""}]
+        manifest = self._write_manifest(tmp_path, document)
+
+        with pytest.raises(ValueError, match="non-empty string"):
+            rcr.load_manifest(str(manifest), repo)
+
+    def test_unknown_benchmark_field_fails(self, tmp_path: Path):
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        document = self._valid_document()
+        document["benchmarks"][0]["note"] = "not in schema"
+        manifest = self._write_manifest(tmp_path, document)
+
+        with pytest.raises(ValueError, match="unknown field"):
+            rcr.load_manifest(str(manifest), repo)
+
+    @pytest.mark.parametrize("expected_cases", [0, -1, True, "1", []])
+    def test_expected_cases_must_be_a_positive_integer(self, tmp_path: Path, expected_cases: object):
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        document = self._valid_document()
+        document["benchmarks"][0]["expected_cases"] = expected_cases
+        manifest = self._write_manifest(tmp_path, document)
+
+        with pytest.raises(ValueError, match="positive integer"):
+            rcr.load_manifest(str(manifest), repo)
+
+    def test_duplicate_path_fails(self, tmp_path: Path):
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        document = self._valid_document()
+        document["benchmarks"] *= 2
+        manifest = self._write_manifest(tmp_path, document)
+
+        with pytest.raises(ValueError, match="duplicate path"):
+            rcr.load_manifest(str(manifest), repo)
+
+    def test_normalized_duplicate_path_fails(self, tmp_path: Path):
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        document = self._valid_document()
+        document["benchmarks"].append(
+            {
+                "path": "examples/ppu/topk/../topk/regression_topk.py",
+            }
         )
-        result = rcr.load_manifest(str(manifest), repo)
-        assert len(result) == 1
+        manifest = self._write_manifest(tmp_path, document)
 
-    def test_empty_manifest_fails(self, tmp_path: Path):
-        """Empty manifest raises ValueError."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        manifest = tmp_path / "empty.txt"
-        manifest.write_text("# only comments\n\n")
+        with pytest.raises(ValueError, match="duplicate path"):
+            rcr.load_manifest(str(manifest), repo)
 
-        with pytest.raises(ValueError, match="empty"):
+    def test_excluded_entry_is_validated_but_not_executed(self, tmp_path: Path):
+        repo, bench = self._repo_with_benchmark(tmp_path)
+        document = self._valid_document()
+        document["excluded"] = [
+            {
+                "path": "examples/ppu/missing/regression_excluded.py",
+                "reason": "Known unsupported operation",
+            }
+        ]
+        manifest = self._write_manifest(tmp_path, document)
+
+        assert rcr.load_manifest(str(manifest), repo) == [bench.resolve()]
+
+    def test_excluded_reason_must_be_nonempty(self, tmp_path: Path):
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        document = self._valid_document()
+        document["excluded"] = [
+            {
+                "path": "examples/ppu/missing/regression_excluded.py",
+                "reason": "",
+            }
+        ]
+        manifest = self._write_manifest(tmp_path, document)
+
+        with pytest.raises(ValueError, match="reason.*non-empty string"):
+            rcr.load_manifest(str(manifest), repo)
+
+    def test_txt_manifest_is_rejected(self, tmp_path: Path):
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        manifest = self._write_manifest(tmp_path, self._valid_document(), suffix=".txt")
+
+        with pytest.raises(ValueError, match="YAML file"):
+            rcr.load_manifest(str(manifest), repo)
+
+    def test_empty_benchmarks_fails(self, tmp_path: Path):
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        document = self._valid_document()
+        document["benchmarks"] = []
+        manifest = self._write_manifest(tmp_path, document)
+
+        with pytest.raises(ValueError, match="must not be empty"):
             rcr.load_manifest(str(manifest), repo)
 
     def test_path_escape_fails(self, tmp_path: Path):
-        """Paths that escape repo root are rejected."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        manifest = tmp_path / "m.txt"
-        manifest.write_text("../../etc/regression_evil.py\n")
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        manifest = self._write_manifest(tmp_path, self._valid_document("../../etc/regression_evil.py"))
 
         with pytest.raises(ValueError, match="escapes repo root"):
             rcr.load_manifest(str(manifest), repo)
 
-    def test_missing_file_fails(self, tmp_path: Path):
-        """Non-existent file in manifest raises FileNotFoundError."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        manifest = tmp_path / "m.txt"
-        manifest.write_text("examples/ppu/missing/regression_missing.py\n")
+    def test_missing_enabled_file_fails(self, tmp_path: Path):
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        manifest = self._write_manifest(
+            tmp_path,
+            self._valid_document("examples/ppu/missing/regression_missing.py"),
+        )
 
         with pytest.raises(FileNotFoundError, match="file not found"):
             rcr.load_manifest(str(manifest), repo)
 
     def test_non_regression_file_fails(self, tmp_path: Path):
-        """Files not matching regression_*.py are rejected."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        d = repo / "examples" / "ppu"
-        d.mkdir(parents=True)
-        f = d / "benchmark_foo.py"
-        f.write_text("# bench")
-
-        manifest = tmp_path / "m.txt"
-        manifest.write_text("examples/ppu/benchmark_foo.py\n")
+        repo, _ = self._repo_with_benchmark(tmp_path)
+        manifest = self._write_manifest(tmp_path, self._valid_document("examples/ppu/topk/benchmark_topk.py"))
 
         with pytest.raises(ValueError, match="regression_"):
             rcr.load_manifest(str(manifest), repo)
 
     def test_manifest_file_not_found(self, tmp_path: Path):
-        """Missing manifest file raises FileNotFoundError."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
+        repo, _ = self._repo_with_benchmark(tmp_path)
         with pytest.raises(FileNotFoundError, match="Manifest file not found"):
-            rcr.load_manifest(str(tmp_path / "no_such.txt"), repo)
+            rcr.load_manifest(str(tmp_path / "no_such.yaml"), repo)
 
 
 class TestDiscovery:
@@ -169,6 +277,7 @@ class TestDiscovery:
 # ===========================================================================
 # Tests for run_current_regression.py — payload structure
 # ===========================================================================
+
 
 class TestPayloadStructure:
     """Test payload building."""
@@ -206,7 +315,7 @@ class TestParseOutput:
     def test_json_list_format(self):
         """JSON list format is parsed correctly."""
         data = [{"name": "x", "latency": 3.0}]
-        output = f'__TILELANG_PERF_RESULTS_JSON__={json.dumps(data)}\n'
+        output = f"__TILELANG_PERF_RESULTS_JSON__={json.dumps(data)}\n"
         result = rcr.parse_output(output)
         assert result == {"x": 3.0}
 
@@ -238,12 +347,7 @@ class TestParseOutput:
         ``CUDA device capability: 89``.  The old truthiness check caused
         fallback to text parsing which picked up 89 as a latency value.
         """
-        output = (
-            "Loading PPU driver...\n"
-            "__TILELANG_PERF_RESULTS_JSON__=[]\n"
-            "CUDA device capability: 89\n"
-            "Device 0: Some PPU Card\n"
-        )
+        output = "Loading PPU driver...\n__TILELANG_PERF_RESULTS_JSON__=[]\nCUDA device capability: 89\nDevice 0: Some PPU Card\n"
         result = rcr.parse_output(output)
         assert result == {}
         # Crucially, 89 must NOT appear as a latency value
@@ -251,10 +355,7 @@ class TestParseOutput:
 
     def test_empty_dict_marker_with_capability_noise_no_fake_latency(self):
         """Empty dict marker + noise lines also returns empty dict."""
-        output = (
-            "__TILELANG_PERF_RESULTS_JSON__={}\n"
-            "CUDA device capability: 89\n"
-        )
+        output = "__TILELANG_PERF_RESULTS_JSON__={}\nCUDA device capability: 89\n"
         result = rcr.parse_output(output)
         assert result == {}
 
@@ -275,7 +376,7 @@ class TestRunSingleBenchmark:
         repo, script = self._script(
             tmp_path,
             "regression_success.py",
-            'print(\'__TILELANG_PERF_RESULTS_JSON__={"case_a":1.25}\')\n',
+            "print('__TILELANG_PERF_RESULTS_JSON__={\"case_a\":1.25}')\n",
         )
         results = rcr.run_single_benchmark(script, repo, timeout=2)
         assert [(r.name, r.status, r.latency) for r in results] == [("case_a", "success", 1.25)]
@@ -297,8 +398,7 @@ class TestRunSingleBenchmark:
         repo, script = self._script(
             tmp_path,
             "regression_stderr.py",
-            "import sys\nsys.stderr.write('x' * 200000)\n"
-            "print('__TILELANG_PERF_RESULTS_JSON__={\"case_a\":2.5}')\n",
+            "import sys\nsys.stderr.write('x' * 200000)\nprint('__TILELANG_PERF_RESULTS_JSON__={\"case_a\":2.5}')\n",
         )
         result = rcr.run_single_benchmark(script, repo, timeout=3)[0]
         assert result.status == "success"
@@ -331,20 +431,37 @@ class TestRunSingleBenchmark:
         bench_dir.mkdir(parents=True)
         good = bench_dir / "regression_good.py"
         bad = bench_dir / "regression_bad.py"
-        good.write_text('print(\'__TILELANG_PERF_RESULTS_JSON__={"good":1.0}\')\n')
+        good.write_text("print('__TILELANG_PERF_RESULTS_JSON__={\"good\":1.0}')\n")
         bad.write_text("raise RuntimeError('broken benchmark')\n")
-        manifest = repo / "manifest.txt"
-        manifest.write_text("examples/ppu/regression_good.py\nexamples/ppu/regression_bad.py\n")
+        manifest = repo / "manifest.yaml"
+        manifest.write_text(
+            yaml.safe_dump(
+                {
+                    "schema_version": 1,
+                    "platform": "ppu-890p",
+                    "benchmarks": [
+                        {"path": "examples/ppu/regression_good.py"},
+                        {"path": "examples/ppu/regression_bad.py"},
+                    ],
+                    "excluded": [],
+                },
+                sort_keys=False,
+            )
+        )
         output = repo / "payload.json"
 
         completed = subprocess.run(
             [
                 sys.executable,
                 str(_SCRIPTS_DIR / "ppu_run_regression.py"),
-                "--manifest", str(manifest),
-                "--repo-root", str(repo),
-                "--timeout", "2",
-                "--output", str(output),
+                "--manifest",
+                str(manifest),
+                "--repo-root",
+                str(repo),
+                "--timeout",
+                "2",
+                "--output",
+                str(output),
             ],
             capture_output=True,
             text=True,
@@ -361,36 +478,46 @@ class TestRunSingleBenchmark:
         Regression test: load_manifest resolves paths to absolute while a
         relative repo_root caused relative_to() to fail inside main().
         """
-        import os
         import subprocess as sp
 
         repo = tmp_path / "repo"
         bench_dir = repo / "examples" / "ppu"
         bench_dir.mkdir(parents=True)
         bench = bench_dir / "regression_rel.py"
-        bench.write_text('print(\'__TILELANG_PERF_RESULTS_JSON__={"k":1.0}\')\n')
-        manifest = repo / "manifest.txt"
-        manifest.write_text("examples/ppu/regression_rel.py\n")
+        bench.write_text("print('__TILELANG_PERF_RESULTS_JSON__={\"k\":1.0}')\n")
+        manifest = repo / "manifest.yaml"
+        manifest.write_text(
+            yaml.safe_dump(
+                {
+                    "schema_version": 1,
+                    "platform": "ppu-890p",
+                    "benchmarks": [{"path": "examples/ppu/regression_rel.py"}],
+                    "excluded": [],
+                },
+                sort_keys=False,
+            )
+        )
         output = repo / "payload.json"
 
         completed = sp.run(
             [
                 sys.executable,
                 str(_SCRIPTS_DIR / "ppu_run_regression.py"),
-                "--manifest", str(manifest),
-                "--repo-root", ".",
-                "--timeout", "5",
-                "--output", str(output),
+                "--manifest",
+                str(manifest),
+                "--repo-root",
+                ".",
+                "--timeout",
+                "5",
+                "--output",
+                str(output),
             ],
             capture_output=True,
             text=True,
             timeout=15,
             cwd=str(repo),
         )
-        assert completed.returncode == 0, (
-            f"Expected exit 0, got {completed.returncode}\n"
-            f"STDERR: {completed.stderr[-2000:]}"
-        )
+        assert completed.returncode == 0, f"Expected exit 0, got {completed.returncode}\nSTDERR: {completed.stderr[-2000:]}"
         payload = json.loads(output.read_text())
         assert payload["cases"][0]["status"] == "success"
 
@@ -440,10 +567,11 @@ class TestRunSingleBenchmark:
         repo, script = self._script(
             tmp_path,
             "regression_relroot.py",
-            'print(\'__TILELANG_PERF_RESULTS_JSON__={"case_rel":0.5}\')\n',
+            "print('__TILELANG_PERF_RESULTS_JSON__={\"case_rel\":0.5}')\n",
         )
         # Build a relative path to the repo directory
         import os
+
         old_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
@@ -459,6 +587,7 @@ class TestRunSingleBenchmark:
 # ===========================================================================
 # Tests for compare_perf_regression.py
 # ===========================================================================
+
 
 class TestCompare:
     """Test comparison logic and fail-closed rules."""
@@ -481,6 +610,13 @@ class TestCompare:
         assert result["gate"]["has_performance_regression"] is True
         # Phase 0: correctness is still OK
         assert result["gate"]["correctness_ok"] is True
+
+    def test_performance_only_regression_cli_is_report_only(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        old = _write_payload(tmp_path, "old.json", _make_payload([_make_case("a", 1.0)]))
+        new = _write_payload(tmp_path, "new.json", _make_payload([_make_case("a", 2.0)]))
+        monkeypatch.setattr(sys, "argv", ["ppu_compare_regression.py", "--old", str(old), "--new", str(new)])
+
+        assert cpr.main() == 0
 
     def test_two_regressions(self):
         """Multiple regressions are counted."""
@@ -553,13 +689,17 @@ class TestCompare:
 
     def test_multicase_source_failure_marks_all_old_cases(self):
         source = "examples/ppu/topk/regression_topk.py"
-        old = _make_payload([
-            _make_case("topk_a", 1.0, source=source),
-            _make_case("topk_b", 2.0, source=source),
-        ])
-        new = _make_payload([
-            _make_case(source, None, status="timeout", source=source, error="timeout"),
-        ])
+        old = _make_payload(
+            [
+                _make_case("topk_a", 1.0, source=source),
+                _make_case("topk_b", 2.0, source=source),
+            ]
+        )
+        new = _make_payload(
+            [
+                _make_case(source, None, status="timeout", source=source, error="timeout"),
+            ]
+        )
         result = cpr.compare_payloads(old, new)
         assert result["gate"]["correctness_ok"] is False
         assert "source_failure" in result["gate"]["correctness_failures"]
@@ -568,14 +708,18 @@ class TestCompare:
     def test_source_failure_blocks_when_other_source_succeeds(self):
         failed_source = "examples/ppu/topk/regression_topk.py"
         good_source = "examples/ppu/flash/regression_flash.py"
-        old = _make_payload([
-            _make_case("topk_a", 1.0, source=failed_source),
-            _make_case("flash_a", 2.0, source=good_source),
-        ])
-        new = _make_payload([
-            _make_case(failed_source, None, status="failed", source=failed_source),
-            _make_case("flash_a", 1.9, source=good_source),
-        ])
+        old = _make_payload(
+            [
+                _make_case("topk_a", 1.0, source=failed_source),
+                _make_case("flash_a", 2.0, source=good_source),
+            ]
+        )
+        new = _make_payload(
+            [
+                _make_case(failed_source, None, status="failed", source=failed_source),
+                _make_case("flash_a", 1.9, source=good_source),
+            ]
+        )
         result = cpr.compare_payloads(old, new)
         assert result["summary"]["common_success"] == 1
         assert result["gate"]["correctness_ok"] is False
@@ -609,19 +753,21 @@ class TestCompareMarkdown:
         assert "FAIL" in md
 
 
-
 # ===========================================================================
 # Tests for CLI help (smoke tests)
 # ===========================================================================
+
 
 class TestCLIHelp:
     """Verify CLI --help works without error."""
 
     def test_run_current_regression_help(self):
         import subprocess
+
         r = subprocess.run(
             [sys.executable, str(_SCRIPTS_DIR / "ppu_run_regression.py"), "--help"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         assert "--manifest" in r.stdout
@@ -629,19 +775,21 @@ class TestCLIHelp:
 
     def test_compare_perf_regression_help(self):
         import subprocess
+
         r = subprocess.run(
             [sys.executable, str(_SCRIPTS_DIR / "ppu_compare_regression.py"), "--help"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         assert "--old" in r.stdout
         assert "--new" in r.stdout
 
 
-
 # ===========================================================================
 # Tests for workflow YAML structure
 # ===========================================================================
+
 
 class TestWorkflowYAML:
     """Lightweight structural tests on the workflow YAML."""
@@ -649,62 +797,69 @@ class TestWorkflowYAML:
     @pytest.fixture(autouse=True)
     def load_workflow(self):
         import yaml
+
         wf_path = _REPO_ROOT / ".github" / "workflows" / "ppu-perf-regression-bot.yml"
         with open(wf_path) as f:
             self.wf = yaml.safe_load(f)
 
     def test_triggers(self):
-        """Workflow is driven exclusively by PR issue_comment events."""
+        """Workflow runs automatically for lifecycle updates to PRs targeting dev."""
         # PyYAML parses bare 'on:' as boolean True key
         on = self.wf.get("on") or self.wf.get(True)
         assert on is not None, "No 'on' trigger block found"
-        assert set(on.keys()) == {"issue_comment"}
-        assert on["issue_comment"] == {"types": ["created"]}
+        assert set(on) == {"pull_request"}
+        assert on["pull_request"] == {
+            "branches": ["dev"],
+            "types": ["opened", "synchronize", "reopened"],
+        }
         assert "workflow_dispatch" not in on
+        assert "issue_comment" not in on
         assert "push" not in on
-        assert "pull_request" not in on
 
     def test_permissions(self):
-        """Workflow has minimal required permissions."""
-        perms = self.wf["permissions"]
-        assert perms["contents"] == "read"
-        assert perms["issues"] == "write"
-        assert perms["pull-requests"] == "write"
+        """Workflow grants only checkout and PR-comment permissions."""
+        assert self.wf["permissions"] == {
+            "contents": "read",
+            "pull-requests": "write",
+        }
 
     def test_concurrency(self):
-        """Workflow has PR-based concurrency group that only reads issue.number."""
+        """Concurrency is scoped directly to the pull_request payload number."""
         conc = self.wf["concurrency"]
-        group = conc["group"]
-        assert "github.event.issue.number" in group
-        assert "inputs" not in group
-        assert "workflow_dispatch" not in group
+        assert conc["group"] == ("ppu-perf-890p-pr-${{ github.event.pull_request.number }}")
         assert conc["cancel-in-progress"] is True
 
-    def test_resolve_pr_job_exists(self):
-        """resolve-pr job exists with outputs."""
+    def test_issue_comment_and_resolve_pr_logic_removed(self):
+        """The workflow contains no legacy comment trigger or API resolver."""
         jobs = self.wf["jobs"]
-        assert "resolve-pr" in jobs
-        assert "outputs" in jobs["resolve-pr"]
-        outputs = jobs["resolve-pr"]["outputs"]
-        for key in ["pr_number", "base_ref", "base_sha", "head_sha"]:
-            assert key in outputs, f"Missing output: {key}"
+        assert set(jobs) == {"pre-commit-lint", "ppu-perf"}
+        workflow_text = (_REPO_ROOT / ".github" / "workflows" / "ppu-perf-regression-bot.yml").read_text()
+        for legacy in (
+            "issue_comment",
+            "resolve-pr",
+            "getCollaboratorPermissionLevel",
+            "github.rest.pulls.get",
+            "@ppu-regression",
+        ):
+            assert legacy not in workflow_text
 
     def test_pre_commit_lint_job_configuration(self):
-        """Quick Lint is a strict downstream gate of resolve-pr."""
+        """Quick Lint is a strict, same-repository PR gate without dependencies."""
         job = self.wf["jobs"]["pre-commit-lint"]
         assert job["name"] == "Quick Lint"
-        assert job["needs"] == "resolve-pr"
+        assert "needs" not in job
+        assert job["if"] == ("github.event.pull_request.head.repo.full_name == github.repository")
         assert job["runs-on"] == "ubuntu-latest"
         assert job["timeout-minutes"] == 30
         assert "continue-on-error" not in job
         assert "always()" not in str(job)
 
-    def test_pre_commit_lint_checkout_resolved_merge_ref(self):
-        """Lint checks out the resolved merge ref with complete submodules."""
+    def test_pre_commit_lint_checkout_event_merge_ref(self):
+        """Lint checks out github.ref, the pull_request merge ref."""
         steps = self.wf["jobs"]["pre-commit-lint"]["steps"]
         checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
         assert checkout["uses"] == "actions/checkout@v7"
-        assert checkout["with"]["ref"] == "${{ needs.resolve-pr.outputs.merge_ref }}"
+        assert checkout["with"]["ref"] == "${{ github.ref }}"
         assert checkout["with"]["fetch-depth"] == 0
         assert checkout["with"]["submodules"] == "recursive"
 
@@ -722,13 +877,41 @@ class TestWorkflowYAML:
         assert all("continue-on-error" not in step for step in steps)
         assert all("always()" not in str(step.get("if", "")) for step in steps)
 
-    def test_ppu_perf_job_exists(self):
-        """ppu-perf waits for both PR resolution and the lint gate."""
-        jobs = self.wf["jobs"]
-        assert "ppu-perf" in jobs
-        job = jobs["ppu-perf"]
-        assert job["needs"] == ["resolve-pr", "pre-commit-lint"]
+    def test_ppu_perf_depends_only_on_lint(self):
+        """The internal PPU job is reachable only after the same-repo lint gate."""
+        job = self.wf["jobs"]["ppu-perf"]
+        assert job["needs"] == "pre-commit-lint"
         assert "if" not in job
+        assert "continue-on-error" not in job
+
+    def test_ppu_perf_payload_mapping(self):
+        """PR, base, head, repository, and merge data come from the event payload."""
+        assert self.wf["jobs"]["ppu-perf"]["env"] == {
+            "PR_NUMBER": "${{ github.event.pull_request.number }}",
+            "BASE_REF": "${{ github.event.pull_request.base.ref }}",
+            "BASE_SHA": "${{ github.event.pull_request.base.sha }}",
+            "HEAD_SHA": "${{ github.event.pull_request.head.sha }}",
+            "HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}",
+            "MERGE_REF": "${{ github.ref }}",
+        }
+
+    def test_ppu_perf_checkout_event_merge_ref(self):
+        steps = self.wf["jobs"]["ppu-perf"]["steps"]
+        checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
+        assert checkout["with"]["ref"] == "${{ github.ref }}"
+
+    def test_start_and_result_comments_use_pull_request_number(self):
+        lint_steps = self.wf["jobs"]["pre-commit-lint"]["steps"]
+        start = next(step for step in lint_steps if step["name"] == "Post start comment")
+        perf_steps = self.wf["jobs"]["ppu-perf"]["steps"]
+        result = next(step for step in perf_steps if step["name"] == "Post results to PR")
+        expected = "${{ github.event.pull_request.number }}"
+        assert start["env"]["PR_NUMBER"] == expected
+        assert result["env"]["PR_NUMBER"] == expected
+        for step in (start, result):
+            script = step["with"]["script"]
+            assert "updateComment" in script
+            assert "createComment" in script
 
     def test_scheduler_step_exists_only_in_ppu_perf(self):
         """Only the gated PPU job can start the hardware scheduler action."""
@@ -740,81 +923,28 @@ class TestWorkflowYAML:
 
     def test_ppu_perf_timeout(self):
         """PPU job has 360-minute timeout."""
-        job = self.wf["jobs"]["ppu-perf"]
-        assert job["timeout-minutes"] == 360
+        assert self.wf["jobs"]["ppu-perf"]["timeout-minutes"] == 360
 
     def test_ppu_scheduler_action(self):
         """PPU job uses ppu-scheduler-action with correct board type."""
         steps = self.wf["jobs"]["ppu-perf"]["steps"]
-        bench_step = None
-        for s in steps:
-            if s.get("uses", "").startswith("t-head/ppu-scheduler-action"):
-                bench_step = s
-                break
-        assert bench_step is not None, "ppu-scheduler-action step not found"
+        bench_step = next(step for step in steps if step.get("uses", "").startswith("t-head/ppu-scheduler-action"))
         assert "ZW-M890P" in bench_step["with"]["node_selector"]
         assert bench_step["with"]["timeout_minutes"] == 300
 
     def test_no_hardcoded_main(self):
         """Pod command does not hardcode 'git checkout main'."""
         steps = self.wf["jobs"]["ppu-perf"]["steps"]
-        for s in steps:
-            if "uses" in s and "ppu-scheduler-action" in s["uses"]:
-                cmd = s["with"].get("command", "")
-                assert "git checkout main" not in cmd
+        scheduler = next(step for step in steps if "ppu-scheduler-action" in step.get("uses", ""))
+        assert "git checkout main" not in scheduler["with"].get("command", "")
 
-    def test_owner_check_t_head(self):
-        """Workflow checks for t-head owner, not tile-ai."""
-        # Check in the resolve-pr job steps
-        steps = self.wf["jobs"]["resolve-pr"]["steps"]
-        found = False
-        for s in steps:
-            script = s.get("with", {}).get("script", "")
-            if "t-head" in script:
-                found = True
-                break
-        assert found, "t-head owner check not found in resolve-pr"
-
-    def test_issue_comment_filter(self):
-        """resolve-pr gate accepts only the exact @ppu-regression comment on PRs."""
-        resolve_job = self.wf["jobs"]["resolve-pr"]
-        if_cond = resolve_job.get("if", "")
-        assert "github.event_name == 'issue_comment'" in if_cond
-        assert "github.event.issue.pull_request" in if_cond
-        assert "github.event.comment.body == '@ppu-regression'" in if_cond
-        assert "workflow_dispatch" not in if_cond
-        assert "contains(" not in if_cond
-
-    def test_permission_check_reads_only_comment_user(self):
-        """Permission check uses only comment author; no context.actor fallback."""
-        steps = self.wf["jobs"]["resolve-pr"]["steps"]
-        permission_step = next(step for step in steps if step["name"] == "Check permissions")
-        assert "if" not in permission_step
-        script = permission_step["with"]["script"]
-        assert "context.payload.comment?.user?.login" in script
-        assert "context.actor" not in script
-        assert "context.eventName" not in script
-        assert "['admin', 'maintain', 'write']" in script
-
-    def test_pr_number_sourced_only_from_issue_number(self):
-        """PR number is read strictly from issue payload, never dispatch inputs."""
-        steps = self.wf["jobs"]["resolve-pr"]["steps"]
-        resolve_step = next(step for step in steps if step["name"] == "Resolve PR details")
-        script = resolve_step["with"]["script"]
-        assert "context.payload.issue?.number" in script
-        assert "context.payload.inputs" not in script
-        assert "workflow_dispatch" not in script
-        assert "/^[1-9][0-9]*$/" in script
-        assert "${{" not in script
-
-    def test_start_comment_posts_without_dispatch_guard(self):
-        """Start comment upsert is unconditional on the comment-only workflow."""
-        steps = self.wf["jobs"]["resolve-pr"]["steps"]
-        start_step = next(step for step in steps if step["name"] == "Post start comment")
-        assert "workflow_dispatch" not in str(start_step.get("if", ""))
-        script = start_step["with"]["script"]
-        assert "updateComment" in script
-        assert "createComment" in script
+    def test_report_only_policy_has_no_failure_suppression(self):
+        """Performance is report-only without suppressing real workflow failures."""
+        workflow_text = (_REPO_ROOT / ".github" / "workflows" / "ppu-perf-regression-bot.yml").read_text()
+        assert "continue-on-error" not in workflow_text
+        assert "Performance regression detected (Phase 0: report-only)" in workflow_text
+        assert "branch-protection" not in workflow_text
+        assert "required-check" not in workflow_text
 
     def test_both_venvs_inherit_system_site_packages(self):
         steps = self.wf["jobs"]["ppu-perf"]["steps"]
@@ -847,46 +977,47 @@ class TestWorkflowYAML:
         command = scheduler["with"]["command"]
         assert "|| OLD_RC=$?" in command
         assert "|| NEW_RC=$?" in command
-        assert "old_payload.json\" || true" not in command
-        assert "new_payload.json\" || true" not in command
+        assert 'old_payload.json" || true' not in command
+        assert 'new_payload.json" || true' not in command
 
     def test_ppu_image_is_torch_210(self):
         """PPU_IMAGE must reference the CUPTI-verified torch 2.10 image."""
-        expected = (
-            "download.t-head.cn/docker_release/pytorch:"
-            "sdk2.2.0-2.10.0-ubuntu24.04-hggcrt3-py312-20261005"
-        )
+        expected = "download.t-head.cn/docker_release/pytorch:sdk2.2.0-2.10.0-ubuntu24.04-hggcrt3-py312-20261005"
         assert self.wf.get("env", {}).get("PPU_IMAGE") == expected
 
     def test_scheduler_image_uses_ppu_image_env(self):
         """The scheduler image must use the workflow PPU_IMAGE variable."""
         steps = self.wf["jobs"]["ppu-perf"]["steps"]
-        scheduler = next(
-            step for step in steps
-            if "ppu-scheduler-action" in step.get("uses", "")
-        )
+        scheduler = next(step for step in steps if "ppu-scheduler-action" in step.get("uses", ""))
         assert scheduler["with"]["image"] == "${{ env.PPU_IMAGE }}"
 
-    def test_workflow_uses_tracked_txt_manifest(self):
-        """The runner command and PR comment must reference the TXT manifest."""
+    def test_workflow_uses_tracked_yaml_manifest(self):
+        """The runner command and PR comment use only the YAML manifest."""
         steps = self.wf["jobs"]["ppu-perf"]["steps"]
-        scheduler = next(
-            step for step in steps
-            if "ppu-scheduler-action" in step.get("uses", "")
-        )
+        scheduler = next(step for step in steps if "ppu-scheduler-action" in step.get("uses", ""))
         command = scheduler["with"]["command"]
-        assert 'MANIFEST="$NEW_SRC/maint/scripts/ppu_perf_890p_allowlist.txt"' in command
-        assert "ppu_perf_890p_allowlist.yaml" not in command
+        assert 'MANIFEST="$NEW_SRC/maint/scripts/ppu_perf_890p_allowlist.yaml"' in command
 
         comment = next(step for step in steps if step["name"] == "Post results to PR")
-        script = comment["with"]["script"]
-        assert "maint/scripts/ppu_perf_890p_allowlist.txt" in script
-        assert "ppu_perf_890p_allowlist.yaml" not in script
+        assert "maint/scripts/ppu_perf_890p_allowlist.yaml" in comment["with"]["script"]
+
+        workflow_path = _REPO_ROOT / ".github" / "workflows" / "ppu-perf-regression-bot.yml"
+        assert "ppu_perf_890p_allowlist.txt" not in workflow_path.read_text()
+
+    def test_pyyaml_is_installed_in_both_runner_venvs(self):
+        """Both environments that execute the runner install pinned PyYAML."""
+        steps = self.wf["jobs"]["ppu-perf"]["steps"]
+        scheduler = next(step for step in steps if "ppu-scheduler-action" in step.get("uses", ""))
+        command = scheduler["with"]["command"]
+        venv_installs = [line.strip() for line in command.splitlines() if line.strip().startswith("pip install pytest ")]
+        assert len(venv_installs) == 2
+        assert all("pyyaml==6.0.3" in line for line in venv_installs)
 
 
 # ===========================================================================
 # Tests for the tracked repository ci.yml (functional CI)
 # ===========================================================================
+
 
 class TestFunctionalCIYAML:
     """Structural assertions on the tracked functional CI workflow."""
@@ -894,6 +1025,7 @@ class TestFunctionalCIYAML:
     @pytest.fixture(autouse=True)
     def load_ci(self):
         import yaml
+
         wf_path = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
         with open(wf_path) as f:
             self.ci = yaml.safe_load(f)
@@ -957,7 +1089,7 @@ class TestFunctionalCIYAML:
 # Tests for the shipped PPU 890P allowlist manifest
 # ===========================================================================
 
-_MANIFEST_PATH = _SCRIPTS_DIR / "ppu_perf_890p_allowlist.txt"
+_MANIFEST_PATH = _SCRIPTS_DIR / "ppu_perf_890p_allowlist.yaml"
 
 _EXPECTED_PPU_ENTRIES = (
     "examples/ppu/flash_decoding/regression_example_flash_decoding.py",
@@ -966,66 +1098,90 @@ _EXPECTED_PPU_ENTRIES = (
 )
 
 _EXPECTED_NEW_ENTRIES = (
-    # attention
     "examples/attention_sink/regression_attention_sink.py",
     "examples/blocksparse_attention/regression_example_blocksparse_attention.py",
     "examples/flash_attention/regression_example_flash_attention.py",
     "examples/flash_decoding/regression_example_flash_decoding.py",
     "examples/seer_attention/regression_block_sparse_attn_tilelang.py",
-    # gemm
     "examples/gemm_fp8/regression_example_gemm_fp8.py",
     "examples/gemm_splitk/regression_example_gemm_splitk.py",
     "examples/blocksparse_gemm/regression_example_blocksparse_gemm.py",
-    # moe
     "examples/fusedmoe/regression_example_fusedmoe.py",
-    # deepseek
     "examples/deepseek_mhc/regression_example_mhc.py",
     "examples/deepseek_nsa/regression_example_tilelang_nsa.py",
 )
 
+_EXPECTED_EXCLUDED_ENTRIES = (
+    "examples/linear_attention/regression_linear_attn.py",
+    "examples/minference/regression_vs_sparse_attn.py",
+    "examples/gemm/regression_example_gemm.py",
+    "examples/dequantize_gemm/regression_example_dequantize_gemm.py",
+    "examples/deepseek_mla/regression_example_mla_decode.py",
+    "examples/deepseek_v32/regression_tilelang_example_deepseek_v32.py",
+)
+
 
 class TestShippedManifest:
-    """Structural assertions on the tracked PPU 890P allowlist manifest."""
+    """Structural assertions on the tracked PPU 890P YAML manifest."""
 
     @pytest.fixture(autouse=True)
-    def load_entries(self):
-        # Delegate to the runner's loader to avoid duplicating validation.
-        resolved = rcr.load_manifest(str(_MANIFEST_PATH), _REPO_ROOT)
-        self.resolved: list[Path] = resolved
-        self.relative: list[str] = [
-            str(p.resolve().relative_to(_REPO_ROOT.resolve())) for p in resolved
-        ]
+    def load_manifest(self):
+        self.document = yaml.safe_load(_MANIFEST_PATH.read_text())
+        self.resolved = rcr.load_manifest(str(_MANIFEST_PATH), _REPO_ROOT)
+        self.relative = [str(path.resolve().relative_to(_REPO_ROOT.resolve())) for path in self.resolved]
 
-    def test_total_valid_entry_count(self):
-        """Manifest resolves to exactly 14 verified entries."""
+    def test_schema_header(self):
+        assert set(self.document) == {
+            "schema_version",
+            "platform",
+            "benchmarks",
+            "excluded",
+        }
+        assert self.document["schema_version"] == 1
+        assert self.document["platform"] == "ppu-890p"
+
+    def test_exact_enabled_and_excluded_counts(self):
+        assert len(self.document["benchmarks"]) == 14
+        assert len(self.document["excluded"]) == 6
         assert len(self.resolved) == 14
 
-    def test_no_duplicate_paths(self):
-        """Each repo-relative entry is unique."""
-        assert len(set(self.relative)) == len(self.relative)
+    def test_enabled_entry_schema(self):
+        for entry in self.document["benchmarks"]:
+            assert set(entry) <= {"path", "group", "expected_cases"}
+            assert isinstance(entry.get("path"), str) and entry["path"].strip()
+            if "group" in entry:
+                assert isinstance(entry["group"], str) and entry["group"].strip()
+            if "expected_cases" in entry:
+                assert type(entry["expected_cases"]) is int
+                assert entry["expected_cases"] > 0
 
-    def test_original_ppu_entries_preserved(self):
-        """The three original PPU-specific entries are still present."""
-        for entry in _EXPECTED_PPU_ENTRIES:
-            assert entry in self.relative, f"Missing original PPU entry: {entry}"
+    def test_excluded_entry_schema_and_reasons(self):
+        for entry in self.document["excluded"]:
+            assert set(entry) == {"path", "reason"}
+            assert isinstance(entry["path"], str) and entry["path"].strip()
+            assert isinstance(entry["reason"], str) and entry["reason"].strip()
 
-    def test_new_target_entries_present(self):
-        """All 11 verified attention/gemm/moe/deepseek entries are present."""
-        for entry in _EXPECTED_NEW_ENTRIES:
-            assert entry in self.relative, f"Missing target entry: {entry}"
+    def test_no_duplicate_or_overlapping_paths(self):
+        enabled = [entry["path"] for entry in self.document["benchmarks"]]
+        excluded = [entry["path"] for entry in self.document["excluded"]]
+        assert len(enabled + excluded) == len(set(enabled + excluded))
 
-    def test_entries_are_existing_regression_files(self):
-        """Every resolved path exists on disk and matches regression_*.py."""
-        for p in self.resolved:
-            assert p.is_file(), f"Not a file: {p}"
-            assert p.name.startswith("regression_") and p.name.endswith(".py"), (
-                f"basename does not match regression_*.py: {p.name}"
-            )
-
-    def test_entries_match_expected_union(self):
-        """Resolved entries equal the union of original + target entries (set equality)."""
+    def test_enabled_entries_match_verified_set(self):
         expected = set(_EXPECTED_PPU_ENTRIES) | set(_EXPECTED_NEW_ENTRIES)
         assert set(self.relative) == expected
+
+    def test_excluded_entries_match_expected_set(self):
+        excluded = {entry["path"] for entry in self.document["excluded"]}
+        assert excluded == set(_EXPECTED_EXCLUDED_ENTRIES)
+        assert excluded.isdisjoint(self.relative)
+
+    def test_enabled_entries_are_existing_regression_files(self):
+        for path in self.resolved:
+            assert path.is_file(), f"Not a file: {path}"
+            assert path.name.startswith("regression_") and path.name.endswith(".py")
+
+    def test_old_txt_manifest_is_removed(self):
+        assert not (_SCRIPTS_DIR / "ppu_perf_890p_allowlist.txt").exists()
 
 
 if __name__ == "__main__":

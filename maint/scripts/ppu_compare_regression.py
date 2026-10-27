@@ -20,6 +20,7 @@ Exit codes:
   1  Correctness failure detected
   2  Usage / schema error
 """
+
 from __future__ import annotations
 
 import argparse
@@ -109,10 +110,7 @@ def compare_payloads(
     only_new = sorted(set(new_cases) - set(old_cases))
 
     # Old success but new failed/timeout under the same case name.
-    old_ok_new_fail = sorted(
-        k for k in old_success
-        if k in new_cases and new_cases[k].get("status") != "success"
-    )
+    old_ok_new_fail = sorted(k for k in old_success if k in new_cases and new_cases[k].get("status") != "success")
 
     # A file-level failure uses the source path as its stable identity. If the
     # old payload has successful cases from that source, every such case is a
@@ -134,12 +132,14 @@ def compare_payloads(
     source_failures: list[dict[str, Any]] = []
     for source in sorted(set(old_success_by_source) & set(new_failures_by_source)):
         failed_cases = new_failures_by_source[source]
-        source_failures.append({
-            "source": source,
-            "new_statuses": sorted({str(case.get("status")) for case in failed_cases}),
-            "affected_old_cases": sorted(old_success_by_source[source]),
-            "errors": [str(case.get("error", "")) for case in failed_cases if case.get("error")],
-        })
+        source_failures.append(
+            {
+                "source": source,
+                "new_statuses": sorted({str(case.get("status")) for case in failed_cases}),
+                "affected_old_cases": sorted(old_success_by_source[source]),
+                "errors": [str(case.get("error", "")) for case in failed_cases if case.get("error")],
+            }
+        )
 
     # Build comparison rows
     comparisons: list[dict[str, Any]] = []
@@ -163,15 +163,17 @@ def compare_payloads(
         if speedup < regression_threshold:
             regressions.append(name)
 
-        comparisons.append({
-            "name": name,
-            "source": _case_source(old_success[name]) or _case_source(new_success[name]),
-            "old_latency": old_lat_f,
-            "new_latency": new_lat_f,
-            "speedup": round(speedup, 6),
-            "delta_pct": round(delta_pct, 2),
-            "status": status,
-        })
+        comparisons.append(
+            {
+                "name": name,
+                "source": _case_source(old_success[name]) or _case_source(new_success[name]),
+                "old_latency": old_lat_f,
+                "new_latency": new_lat_f,
+                "speedup": round(speedup, 6),
+                "delta_pct": round(delta_pct, 2),
+                "status": status,
+            }
+        )
 
     # Sort by speedup ascending (worst first)
     comparisons.sort(key=lambda x: x["speedup"])
@@ -316,6 +318,7 @@ def generate_chart(result: dict[str, Any], output_path: str) -> None:
     """Generate a PNG chart of speedups."""
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         import numpy as np

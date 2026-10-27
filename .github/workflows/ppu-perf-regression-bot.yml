@@ -1,16 +1,16 @@
 name: PPU 890P Performance Regression Bot
 
 on:
-  issue_comment:
-    types: [created]
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
-  issues: write
   pull-requests: write
 
 concurrency:
-  group: "ppu-perf-890p-pr-${{ github.event.issue.number }}"
+  group: "ppu-perf-890p-pr-${{ github.event.pull_request.number }}"
   cancel-in-progress: true
 
 env:
@@ -19,99 +19,21 @@ env:
 
 jobs:
   # -----------------------------------------------------------------------
-  # Job 1: Validate permissions, resolve PR refs via GitHub API
+  # Job 1: Run the repository pre-commit gate on the PR merge ref
   # -----------------------------------------------------------------------
-  resolve-pr:
-    name: Validate & Resolve PR
-    if: >-
-      github.event_name == 'issue_comment' &&
-      github.event.issue.pull_request &&
-      github.event.comment.body == '@ppu-regression'
+  pre-commit-lint:
+    name: Quick Lint
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    outputs:
-      pr_number: ${{ steps.resolve.outputs.pr_number }}
-      base_ref: ${{ steps.resolve.outputs.base_ref }}
-      base_sha: ${{ steps.resolve.outputs.base_sha }}
-      head_sha: ${{ steps.resolve.outputs.head_sha }}
-      head_repo: ${{ steps.resolve.outputs.head_repo }}
-      merge_ref: ${{ steps.resolve.outputs.merge_ref }}
-      is_fork: ${{ steps.resolve.outputs.is_fork }}
+    timeout-minutes: 30
     steps:
-      - name: Check permissions
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const username = context.payload.comment?.user?.login;
-            if (!username) {
-              core.setFailed('Unable to identify comment author');
-              return;
-            }
-            const { owner, repo } = context.repo;
-            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-              owner, repo, username,
-            });
-            const perm = data.permission;
-            core.info(`User ${username} has permission: ${perm}`);
-            const allowed = ['admin', 'maintain', 'write'];
-            if (!allowed.includes(perm)) {
-              core.setFailed(`User ${username} has insufficient permission: ${perm}`);
-            }
-
-      - name: Resolve PR details
-        id: resolve
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-
-            // Parse only the issue payload; never interpolate user input into JavaScript.
-            const rawPrNumber = context.payload.issue?.number;
-            const normalizedPrNumber = String(rawPrNumber ?? '');
-            if (!/^[1-9][0-9]*$/.test(normalizedPrNumber)) {
-              core.setFailed(`Invalid PR number: ${normalizedPrNumber}`);
-              return;
-            }
-            const prNumber = Number(normalizedPrNumber);
-
-            // Fetch PR details via API
-            const { data: pr } = await github.rest.pulls.get({
-              owner, repo, pull_number: prNumber,
-            });
-
-            // Validate repository owner and reject fork heads.
-            const isFork = pr.head.repo ? (pr.head.repo.full_name !== `${owner}/${repo}`) : true;
-
-            if (owner !== 't-head') {
-              core.setFailed(`Repository owner is '${owner}', expected 't-head'`);
-              return;
-            }
-
-            // Phase 1: reject forks
-            if (isFork) {
-              core.setFailed(`Fork PRs are not supported in Phase 0. PR head repo: ${pr.head.repo ? pr.head.repo.full_name : 'unknown'}`);
-              return;
-            }
-
-            const mergeRef = `refs/pull/${prNumber}/merge`;
-
-            core.setOutput('pr_number', String(prNumber));
-            core.setOutput('base_ref', pr.base.ref);
-            core.setOutput('base_sha', pr.base.sha);
-            core.setOutput('head_sha', pr.head.sha);
-            core.setOutput('head_repo', pr.head.repo ? pr.head.repo.full_name : '');
-            core.setOutput('merge_ref', mergeRef);
-            core.setOutput('is_fork', String(isFork));
-
-            core.info(`PR #${prNumber}: base=${pr.base.ref}@${pr.base.sha.substring(0, 8)}, head=${pr.head.sha.substring(0, 8)}, fork=${isFork}`);
-
       - name: Post start comment
         uses: actions/github-script@v9
         env:
-          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
-          BASE_REF: ${{ steps.resolve.outputs.base_ref }}
-          BASE_SHA: ${{ steps.resolve.outputs.base_sha }}
-          HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         with:
           script: |
             const prNumber = Number(process.env.PR_NUMBER);
@@ -132,7 +54,6 @@ jobs:
               '_Results will be updated here when complete._',
             ].join('\n');
 
-            // Find existing comment with marker
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -155,20 +76,10 @@ jobs:
                 body,
               });
             }
-
-  # -----------------------------------------------------------------------
-  # Job 2: Run the repository pre-commit gate on the resolved PR merge ref
-  # -----------------------------------------------------------------------
-  pre-commit-lint:
-    name: Quick Lint
-    needs: resolve-pr
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
       - name: Checkout PR merge ref
         uses: actions/checkout@v7
         with:
-          ref: ${{ needs.resolve-pr.outputs.merge_ref }}
+          ref: ${{ github.ref }}
           fetch-depth: 0
           submodules: recursive
 
@@ -184,26 +95,27 @@ jobs:
         run: pipx run pre-commit run --all-files --color=always --show-diff-on-failure
 
   # -----------------------------------------------------------------------
-  # Job 3: Run benchmarks on PPU 890P pod
+  # Job 2: Run benchmarks on PPU 890P pod
   # -----------------------------------------------------------------------
   ppu-perf:
     name: 890P Perf Regression
-    needs: [resolve-pr, pre-commit-lint]
+    needs: pre-commit-lint
     runs-on: k8s-runner-group-cpu-thead
     container:
       image: ghcr.io/actions/actions-runner:latest
     timeout-minutes: 360
     env:
-      PR_NUMBER: ${{ needs.resolve-pr.outputs.pr_number }}
-      BASE_REF: ${{ needs.resolve-pr.outputs.base_ref }}
-      BASE_SHA: ${{ needs.resolve-pr.outputs.base_sha }}
-      HEAD_SHA: ${{ needs.resolve-pr.outputs.head_sha }}
-      MERGE_REF: ${{ needs.resolve-pr.outputs.merge_ref }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      MERGE_REF: ${{ github.ref }}
     steps:
       - name: Checkout PR merge ref
         uses: actions/checkout@v7
         with:
-          ref: ${{ needs.resolve-pr.outputs.merge_ref }}
+          ref: ${{ github.ref }}
           fetch-depth: 0
           submodules: recursive
 
@@ -233,7 +145,7 @@ jobs:
             NEW_SRC="$WORKSPACE/source"
             OLD_SRC="$WORKSPACE/old_source"
             NAS_OUT="/mnt/wl_nas/devops/tilelang-ci/perf-regression/${GITHUB_RUN_ID}/ZW-M890P"
-            MANIFEST="$NEW_SRC/maint/scripts/ppu_perf_890p_allowlist.txt"
+            MANIFEST="$NEW_SRC/maint/scripts/ppu_perf_890p_allowlist.yaml"
             FILE_TIMEOUT=600
             GATE_RC=0
 
@@ -260,7 +172,7 @@ jobs:
             source "$WORKSPACE/venv_new/bin/activate"
             pip install "$NEW_SRC"/dist/*.whl
             # Install remaining deps into venv
-            pip install pytest tabulate matplotlib einops
+            pip install pytest pyyaml==6.0.3 tabulate matplotlib einops
             deactivate
             echo "::endgroup::"
 
@@ -279,7 +191,7 @@ jobs:
               python -m build --wheel || { echo "[FATAL] OLD wheel build failed"; exit 1; }
             source "$WORKSPACE/venv_old/bin/activate"
             pip install "$OLD_SRC"/dist/*.whl
-            pip install pytest tabulate matplotlib einops
+            pip install pytest pyyaml==6.0.3 tabulate matplotlib einops
             deactivate
             echo "::endgroup::"
 
@@ -414,6 +326,7 @@ jobs:
         if: always()
         uses: actions/github-script@v9
         env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           RESULT_DIR: ${{ steps.fetch-results.outputs.result_dir }}
           GATE_RC: ${{ steps.fetch-results.outputs.gate_rc }}
         with:
@@ -480,7 +393,7 @@ jobs:
               `| **Image** | \`${process.env.PPU_IMAGE}\` |`,
               `| **Workflow** | [Run #${process.env.GITHUB_RUN_ID}](${runUrl}) |`,
               `| **Board** | ZW-M890P |`,
-              `| **Manifest** | \`maint/scripts/ppu_perf_890p_allowlist.txt\` |`,
+              `| **Manifest** | \`maint/scripts/ppu_perf_890p_allowlist.yaml\` |`,
               '',
               mdContent,
               '',
