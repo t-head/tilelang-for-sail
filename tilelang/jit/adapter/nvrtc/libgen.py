@@ -345,7 +345,9 @@ class NVRTCLibraryGenerator(LibraryGenerator):
         from tilelang.transform import PassConfigKey
 
         cfg = self.pass_configs or {}
-        verbose = bool(cfg.get(PassConfigKey.TL_ENABLE_PTXAS_VERBOSE_OUTPUT, False))
+        # Note: verbose output is controlled by self.verbose; ptxas-style
+        # verbose flags can be passed through tl.device_compile_flags.
+        verbose = self.verbose
 
         options = []
         extra_flags = cfg.get(PassConfigKey.TL_DEVICE_COMPILE_FLAGS, None)
