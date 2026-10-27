@@ -181,6 +181,44 @@ def test_straight_line_loads_keep_precise_waits():
     ]
 
 
+@pytest.mark.parametrize("conditional_reload", [False, True])
+@pytest.mark.parametrize("drain_tail", [False, True])
+@pytest.mark.parametrize("nested", [False, True])
+def test_prefetch_loop_preserves_incoming_dependencies(conditional_reload, drain_tail, nested):
+    src = tir.Var("src", "handle")
+    condition = tir.Var("condition", "bool")
+    x, y, z = [tir.decl_buffer((128,), "uint8", name=name, scope="shared") for name in ("X", "Y", "Z")]
+    reload = _load(x, src)
+    if conditional_reload:
+        reload = tir.IfThenElse(condition, reload, None)
+    # Reading Y after the X prefetch drains the local queue, so no pending
+    # tail remains to trigger the old wrap-around heuristic. The initial X
+    # load still has to complete before the first iteration's read.
+    tail = [reload, tir.Evaluate(y[0])] if drain_tail else [tir.Evaluate(y[0]), reload]
+    loop = tir.For(tir.Var("i", "int32"), 0, 2, tir.ForKind.SERIAL, tir.SeqStmt([_load(y, src), tir.Evaluate(x[0]), *tail]))
+    if nested:
+        loop = tir.For(tir.Var("j", "int32"), 0, 2, tir.ForKind.SERIAL, loop)
+    func = tir.PrimFunc([src, condition, x.data, y.data, z.data], tir.SeqStmt([_load(x, src), _load(z, src), loop, tir.Evaluate(z[0])]))
+    result = tilelang.ppu.transform.InjectAIUSyncBarrier()(tvm.IRModule({"main": func}))["main"]
+    for enabled in (False, True):
+        events = _events(result.body, {"condition": enabled})
+        # The unrelated newer Z group may remain in flight on straight-line
+        # paths; conditional loads retain the pass's existing wait-all policy.
+        pending, open_group = [], set()
+        for kind, value in events:
+            if kind == "load":
+                open_group.add(value)
+            elif kind == "commit":
+                pending.append(open_group)
+                open_group = set()
+            elif kind == "wait":
+                pending = pending[-value:] if value else []
+            else:
+                assert value not in open_group, events
+                assert all(value not in group for group in pending), events
+        assert events[4] == ("wait", 0 if conditional_reload else 1), events
+
+
 @pytest.mark.parametrize("incoming", [False, True])
 @pytest.mark.parametrize("nested", [False, True])
 def test_commit_scope_owns_mixed_loads_and_closes_incoming_group(incoming, nested):

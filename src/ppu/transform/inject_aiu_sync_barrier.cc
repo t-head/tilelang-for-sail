@@ -275,28 +275,23 @@ public:
                           seq[i].as<SBlockRealizeNode>() ||
                           seq[i].as<SBlockNode>();
       if (!pending_groups.empty()) {
-        // For container nodes (For/Block): skip use-detection only if the
-        // container also loads the same buffer (prefetch pattern), in which
-        // case the internal wrap-around handles the wait. Otherwise the
-        // outer wait is needed for correctness.
-        bool skip_use =
-            is_container && ContainsAIULoadForVars(seq[i], pending_groups);
-        if (!skip_use) {
-          int newest_needed = FindNewestUsedGroup(seq[i], pending_groups);
-          if (newest_needed >= 0) {
-            int wait_count = wait_all_
-                                 ? 0
-                                 : static_cast<int>(pending_groups.size()) -
-                                       newest_needed - 1;
-            if (needs_wait[i] < 0 || wait_count < needs_wait[i]) {
-              needs_wait[i] = wait_count;
-            }
-            if (wait_count == 0) {
-              pending_groups.clear();
-            } else {
-              pending_groups.erase(pending_groups.begin(),
-                                   pending_groups.begin() + newest_needed + 1);
-            }
+        // Container-local analysis does not carry incoming groups. Reloading
+        // a destination inside a loop is not proof that its first use waits:
+        // a later consumer can drain the queue and suppress wrap-around waits.
+        // Establish incoming dependencies before entering the container.
+        int newest_needed = FindNewestUsedGroup(seq[i], pending_groups);
+        if (newest_needed >= 0) {
+          int wait_count = wait_all_ ? 0
+                                     : static_cast<int>(pending_groups.size()) -
+                                           newest_needed - 1;
+          if (needs_wait[i] < 0 || wait_count < needs_wait[i]) {
+            needs_wait[i] = wait_count;
+          }
+          if (wait_count == 0) {
+            pending_groups.clear();
+          } else {
+            pending_groups.erase(pending_groups.begin(),
+                                 pending_groups.begin() + newest_needed + 1);
           }
         }
       }
@@ -375,33 +370,6 @@ private:
       }
     }
     return newest;
-  }
-
-  /*!
-   * \brief Check if a statement contains aiu_load that writes to any of the
-   * pending groups' dst vars. Used to detect prefetch patterns inside loops.
-   */
-  bool ContainsAIULoadForVars(const Stmt &stmt,
-                              const std::vector<PendingGroup> &groups) const {
-    std::unordered_set<const VarNode *> all_vars;
-    for (const auto &g : groups) {
-      all_vars.insert(g.dst_vars.begin(), g.dst_vars.end());
-    }
-    for (const Call &call : CompilerAIULoadCollector().Collect(stmt)) {
-      if (!call->args.empty()) {
-        if (auto *access_call = call->args[0].as<CallNode>()) {
-          if (access_call->op.same_as(builtin::tvm_access_ptr()) &&
-              access_call->args.size() > 1) {
-            if (auto *var = access_call->args[1].as<VarNode>()) {
-              if (all_vars.count(var)) {
-                return true;
-              }
-            }
-          }
-        }
-      }
-    }
-    return false;
   }
 
   int CountAIUGroups(const Stmt &stmt) {
