@@ -750,6 +750,15 @@ private:
     return Optional<PrimExpr>();
   }
 
+  void RequireSmemAlignment(const Var &data_var, int alignment) {
+    String key = data_var->name_hint;
+    auto it = smem_alignment_map_.find(key);
+    int64_t prev = it != smem_alignment_map_.end() ? (*it).second->value : 0;
+    if (alignment > prev) {
+      smem_alignment_map_.Set(key, IntImm(DataType::Int(32), alignment));
+    }
+  }
+
   Optional<Buffer> FindRemapBuffer(const Buffer &buffer) const {
     if (buffer_remap_.count(buffer)) {
       return buffer;
@@ -894,6 +903,16 @@ private:
               call->annotations, call->span);
           return VisitExpr_(fallback.get());
         }
+        // SWZL interprets the shared address in 64B/128B swizzle blocks.
+        // Preserve that base alignment when allocations are merged, even
+        // when this function has no AIU copies.
+        ICHECK(resolved.defined());
+        Buffer buffer = Downcast<BufferLoad>(resolved.value())->buffer;
+        if (auto key = FindRemapBuffer(buffer)) {
+          buffer = buffer_remap_[key.value()];
+        }
+        RequireSmemAlignment(buffer->data,
+                             is_const_int(call->args[4], 1) ? 64 : 128);
         use_warp_binding_ = true;
         auto new_access_ptr =
             HandleAccessPtrAndOffset(access_ptr, std::nullopt, call->dtype);
@@ -1167,13 +1186,7 @@ private:
 
     RequireSmemAlignmentCallback require_smem_alignment_callback =
         [this](Var data_var, int alignment) {
-          String key = data_var->name_hint;
-          auto it = smem_alignment_map_.find(key);
-          int64_t prev =
-              it != smem_alignment_map_.end() ? (*it).second->value : 0;
-          if (alignment > prev) {
-            smem_alignment_map_.Set(key, IntImm(DataType::Int(32), alignment));
-          }
+          RequireSmemAlignment(data_var, alignment);
         };
 
     LowerArgs lower_args;
