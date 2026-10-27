@@ -868,6 +868,32 @@ private:
       Call access_ptr_call = Downcast<Call>(access_ptr);
 
       if (access_ptr_call->op.same_as(tl::access_ptr())) {
+        // GEMM proposes SWZL from the row width before the actual shared
+        // layout is known. Only retain it when that layout matches its mode.
+        Optional<PrimExpr> resolved =
+            ResolveBufferLoad(access_ptr_call->args[0]);
+        bool layout_matches = false;
+        if (resolved.defined()) {
+          Buffer buffer = Downcast<BufferLoad>(resolved.value())->buffer;
+          buffer = FindRemapBuffer(buffer).value_or(buffer);
+          Optional<Layout> layout = FindLayout(buffer);
+          if (layout.defined()) {
+            SwizzleMode mode = DetectSwizzleMode(layout.value(), buffer);
+            layout_matches = (mode == SwizzleMode::Swizzle128B() &&
+                              is_const_int(call->args[4], 0)) ||
+                             (mode == SwizzleMode::Swizzle64B() &&
+                              is_const_int(call->args[4], 1));
+          }
+        }
+        if (!layout_matches) {
+          // Reuse ordinary ldmatrix lowering, including lane-dependent
+          // address remapping. Do not apply SWZL's warp-uniform binding.
+          Call fallback(
+              call->dtype, tl::ptx_ldmatrix(),
+              {call->args[0], call->args[1], call->args[2], call->args[3]},
+              call->annotations, call->span);
+          return VisitExpr_(fallback.get());
+        }
         use_warp_binding_ = true;
         auto new_access_ptr =
             HandleAccessPtrAndOffset(access_ptr, std::nullopt, call->dtype);
