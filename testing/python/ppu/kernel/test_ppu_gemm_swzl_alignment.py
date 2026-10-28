@@ -15,8 +15,8 @@ from tilelang.layout import make_full_bank_swizzled_layout, make_half_bank_swizz
 @pytest.mark.parametrize("dtype", ["bfloat16", "float8_e4m3fn"])
 @pytest.mark.parametrize("row_bytes", [64, 128])
 @pytest.mark.parametrize("prefix", [16, 64, 192])
-@pytest.mark.parametrize("scope,merge", [("shared.dyn", False), ("shared", False), ("shared", True)])
-def test_gemm_swzl_alignment(dtype, row_bytes, prefix, scope, merge):
+@pytest.mark.parametrize("scope", ["shared.dyn", "shared"])
+def test_gemm_swzl_alignment(dtype, row_bytes, prefix, scope):
     k = row_bytes * 8 // tilelang.tvm.DataType(dtype).bits
     layout = make_full_bank_swizzled_layout if row_bytes == 128 else make_half_bank_swizzled_layout
 
@@ -54,20 +54,18 @@ def test_gemm_swzl_alignment(dtype, row_bytes, prefix, scope, merge):
             pass_configs={
                 "tl.disable_aiu_lower": True,
                 "tl.disable_ldmat_swzl": disabled,
-                "tirx.merge_static_smem": merge,
             },
         )
         source = kernel.get_kernel_source()
         assert ("tix_ldmatrix_swzl" in source) == (not disabled)
         alignment = 16 if disabled else row_bytes
-        if scope == "shared" and not merge:
+        if scope == "shared":
             assert re.search(r"__align__\(16\).*\ba_pad\[", source), source
             for name in ("b_A", "c_B"):
                 assert re.search(rf"__align__\({alignment}\).*\b{name}\[", source), source
         else:
-            base = "buf_dyn_shmem" if scope == "shared.dyn" else "buf_shmem"
-            base_alignment = 1024 if scope == "shared.dyn" else alignment
-            assert re.search(rf"__align__\({base_alignment}\).*\b{base}\[", source), source
+            base = "buf_dyn_shmem"
+            assert re.search(rf"__align__\(1024\).*\b{base}\[", source), source
             offsets = {}
             for name in ("a_pad", "b_A", "c_B"):
                 match = re.search(rf"void\*\s+{name}\s*=.*?{base}\s*\+\s*(\d+)", source)

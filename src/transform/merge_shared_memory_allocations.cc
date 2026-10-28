@@ -524,16 +524,6 @@ public:
     }
   }
 
-  void RecordMergedAlignment(
-      std::unordered_map<std::string, int> &alignments) const {
-    // Aligned offsets are insufficient if the merged allocation itself is
-    // under-aligned, especially for statically allocated shared memory.
-    for (const auto &[var, required] : shmem_alignment_map_) {
-      int &alignment = alignments[std::string(merged_buf_var_->name_hint)];
-      alignment = std::max(alignment, required);
-    }
-  }
-
 private:
   std::vector<Stmt> MakeAliasBindings() const {
     struct AliasInfo {
@@ -1603,10 +1593,13 @@ private:
   bool preserve_aliases_{true};
 };
 
-Stmt MergeSharedMemoryAllocations(
-    Stmt stmt, bool merge_static_smem, bool enable_aggressive_merge,
-    int align_bytes, bool verbose, bool preserve_aliases, bool disable_reuse,
-    std::unordered_map<std::string, int> &explicit_alignments_by_name) {
+Stmt MergeSharedMemoryAllocations(Stmt stmt, bool merge_static_smem,
+                                  bool enable_aggressive_merge,
+                                  int align_bytes = 16, bool verbose = false,
+                                  bool preserve_aliases = true,
+                                  bool disable_reuse = false,
+                                  const std::unordered_map<std::string, int>
+                                      &explicit_alignments_by_name = {}) {
   AllocateCollector collector;
   collector(stmt);
   // The kSmemAlignmentMap attribute is keyed by buffer-var name (names are
@@ -1634,7 +1627,6 @@ Stmt MergeSharedMemoryAllocations(
                        disable_reuse ? false : enable_aggressive_merge, false,
                        disable_reuse, resolve(collector.dyn_shmem_allocs_));
     stmt = rewriter(std::move(stmt));
-    rewriter.RecordMergedAlignment(explicit_alignments_by_name);
   }
   if (merge_static_smem && collector.static_shmem_allocs_.size() > 1) {
     SharedMemoryRewriter rewriter(collector.static_shmem_allocs_, false,
@@ -1643,7 +1635,6 @@ Stmt MergeSharedMemoryAllocations(
                        disable_reuse ? false : enable_aggressive_merge, false,
                        disable_reuse, resolve(collector.static_shmem_allocs_));
     stmt = rewriter(std::move(stmt));
-    rewriter.RecordMergedAlignment(explicit_alignments_by_name);
   }
   return stmt;
 }
@@ -1680,13 +1671,6 @@ Pass MergeSharedMemoryAllocations(bool enable_aggressive_merge = false,
         std::move(n->body), merge_static_smem, enable_aggressive_merge,
         align_bytes, debug_merge_shared_memory_allocations, preserve_aliases,
         disable_reuse, explicit_alignments);
-    if (!explicit_alignments.empty()) {
-      Map<String, IntImm> alignments;
-      for (const auto &[name, alignment] : explicit_alignments) {
-        alignments.Set(name, IntImm(DataType::Int(32), alignment));
-      }
-      f = WithAttr(std::move(f), kSmemAlignmentMap, alignments);
-    }
     return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tl.MergeSharedMemoryAllocations",

@@ -1,4 +1,4 @@
-"""Explicit per-buffer alignment must survive merging and PPU codegen."""
+"""Explicit alignment for dynamic shared and unmerged static shared."""
 
 import re
 
@@ -14,10 +14,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.parametrize("scope,merge", [("shared", False), ("shared", True), ("shared.dyn", False)])
+@pytest.mark.parametrize("scope", ["shared", "shared.dyn"])
 @pytest.mark.parametrize("alignment", [64, 128, 256])
 @pytest.mark.parametrize("disable_reuse", [False, True])
-def test_explicit_alignment_codegen(scope, merge, alignment, disable_reuse):
+def test_explicit_alignment_codegen(scope, alignment, disable_reuse):
     @T.prim_func
     def kernel(src: T.Tensor((128,), "uint8"), dst: T.Tensor((144,), "uint8")):
         with T.Kernel(1, threads=32):
@@ -38,18 +38,16 @@ def test_explicit_alignment_codegen(scope, merge, alignment, disable_reuse):
         tvm.transform.PassContext(
             config={
                 "tl.disable_aiu_lower": True,
-                "tirx.merge_static_smem": merge,
                 "tl.disable_shared_memory_reuse": disable_reuse,
             }
         ),
     ):
         source = tilelang.lower(kernel, target=target, enable_device_compile=False).kernel_source
-    if scope == "shared" and not merge:
+    if scope == "shared":
         assert re.search(r"__align__\(16\).*\ba_pad\[", source), source
         assert re.search(rf"__align__\({alignment}\).*\bz_shared\[", source), source
     else:
-        base = "buf_dyn_shmem" if scope == "shared.dyn" else "buf_shmem"
-        base_alignment = 1024 if scope == "shared.dyn" else alignment
-        assert re.search(rf"__align__\({base_alignment}\).*\b{base}\[", source), source
+        base = "buf_dyn_shmem"
+        assert re.search(rf"__align__\(1024\).*\b{base}\[", source), source
         match = re.search(rf"void\*\s+z_shared\s*=.*?{base}\s*\+\s*(\d+)", source)
         assert match and int(match.group(1)) == alignment, source
