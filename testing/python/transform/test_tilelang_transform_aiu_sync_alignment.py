@@ -33,6 +33,10 @@ def _commit():
     return tir.Evaluate(tir.Call("handle", tvm.ir.Op.get("tirx.ptx_commit_group"), []))
 
 
+def _wait(count=0):
+    return tir.Evaluate(tir.Call("handle", tvm.ir.Op.get("tirx.ptx_wait_group"), [count]))
+
+
 def _events(stmt, conditions):
     events = []
     if isinstance(stmt, tir.SeqStmt):
@@ -43,10 +47,21 @@ def _events(stmt, conditions):
         if branch is not None:
             events.extend(_events(branch, conditions))
     elif isinstance(stmt, tir.For):
-        for _ in range(int(stmt.extent)):
+        extent = conditions[stmt.extent.name] if isinstance(stmt.extent, tir.Var) else int(stmt.extent)
+        for _ in range(extent):
             events.extend(_events(stmt.body, conditions))
     elif isinstance(stmt, tir.AttrStmt):
         events.extend(_events(stmt.body, conditions))
+    elif isinstance(stmt, tir.SBlockRealize):
+        enabled = conditions[stmt.predicate.name] if isinstance(stmt.predicate, tir.Var) else bool(stmt.predicate)
+        if enabled:
+            events.extend(_events(stmt.block, conditions))
+    elif isinstance(stmt, tir.SBlock):
+        if stmt.init is not None and conditions.get("run_init", True):
+            events.extend(_events(stmt.init, conditions))
+        events.extend(_events(stmt.body, conditions))
+    elif isinstance(stmt, tir.BufferStore):
+        events.append(("write", stmt.buffer.name))
     elif isinstance(stmt, tir.Evaluate):
         value = stmt.value
         if isinstance(value, tir.BufferLoad):
@@ -163,6 +178,81 @@ def test_multiple_branch_paths_wait_for_all_groups(arms, in_loop):
                 assert value not in open_group | outstanding, events
 
 
+@pytest.mark.parametrize("extent", [0, 2, "dynamic"])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("tail", ["reload", "different", "drained", "partial", "branch", "branch_drained"])
+def test_loop_exit_preserves_new_pending_generations(extent, nested, tail):
+    src = tir.Var("src", "handle")
+    n = tir.Var("n", "int32")
+    condition = tir.Var("condition", "bool")
+    x, y, z = [tir.decl_buffer((128,), "uint8", name=name, scope="shared") for name in ("X", "Y", "Z")]
+    suffix = [_load(y if tail == "different" else x, src)]
+    if tail == "partial":
+        suffix.extend([_load(y, src), _wait(1)])
+    elif tail == "drained":
+        suffix.append(_wait())
+    elif tail in ("branch", "branch_drained"):
+        then = tir.SeqStmt([*suffix, _wait()]) if tail == "branch_drained" else suffix[0]
+        suffix = [tir.IfThenElse(condition, then, _wait())]
+    body = tir.SeqStmt([_wait(), tir.Evaluate(x[0]), *suffix])
+    loop = tir.For(tir.Var("i", "int32"), 0, n if extent == "dynamic" else extent, tir.ForKind.SERIAL, body)
+    if nested:
+        loop = tir.For(tir.Var("j", "int32"), 0, 2, tir.ForKind.SERIAL, loop)
+    # Initial X is already complete. A later consumer must nevertheless wait
+    # for a *new* generation issued at the loop tail, before reading X or Y.
+    func = tir.PrimFunc(
+        [src, n, condition, x.data, y.data, z.data],
+        tir.SeqStmt([_load(x, src), _wait(), loop, _load(z, src), tir.Evaluate(x[0]), tir.Evaluate(y[0]), tir.Evaluate(z[0])]),
+    )
+    result = tilelang.ppu.transform.InjectAIUSyncBarrier()(tvm.IRModule({"main": func}))["main"]
+    for trips, enabled in product((0, 1, 3), (False, True)):
+        events = _events(result.body, {"n": trips, "condition": enabled})
+        pending, open_group = [], set()
+        for kind, value in events:
+            if kind == "load":
+                assert all(value not in group for group in pending), events
+                open_group.add(value)
+            elif kind == "commit":
+                pending.append(open_group)
+                open_group = set()
+            elif kind == "wait":
+                pending = pending[-value:] if value else []
+            else:
+                assert value not in open_group, events
+                assert all(value not in group for group in pending), events
+        # If all paths drain inside the loop, no wait should be inserted
+        # between the final Z commit and the reads of X and Y.
+        if tail in ("drained", "branch_drained") or extent == 0:
+            z_load = events.index(("load", "Z"))
+            assert events[z_load + 1 : z_load + 4] == [("commit", None), ("read", "X"), ("read", "Y")], events
+
+
+@pytest.mark.parametrize("drain_tail", [False, True])
+def test_block_exit_does_not_assume_reduction_init_always_runs(drain_tail):
+    src = tir.Var("src", "handle")
+    predicate = tir.Var("predicate", "bool")
+    x, y = [tir.decl_buffer((128,), "uint8", name=name, scope="shared") for name in ("X", "Y")]
+    body = tir.SeqStmt([_load(y, src), _wait()]) if drain_tail else tir.SeqStmt([_load(y, src), tir.Evaluate(0)])
+    block = tir.SBlock([], [], [], "test", body, init=_wait())
+    realize = tir.SBlockRealize([], predicate, block)
+    func = tir.PrimFunc([src, predicate, x.data, y.data], tir.SeqStmt([_load(x, src), realize, tir.Evaluate(x[0]), tir.Evaluate(y[0])]))
+    result = tilelang.ppu.transform.InjectAIUSyncBarrier()(tvm.IRModule({"main": func}))["main"]
+    for enabled, run_init in product((False, True), repeat=2):
+        events = _events(result.body, {"predicate": enabled, "run_init": run_init})
+        pending, open_group = [], set()
+        for kind, value in events:
+            if kind == "load":
+                open_group.add(value)
+            elif kind == "commit":
+                pending.append(open_group)
+                open_group = set()
+            elif kind == "wait":
+                pending = pending[-value:] if value else []
+            else:
+                assert value not in open_group, events
+                assert all(value not in group for group in pending), events
+
+
 def test_straight_line_loads_keep_precise_waits():
     src = tir.Var("src", "handle")
     x, y = [tir.decl_buffer((128,), "uint8", name=name, scope="shared") for name in ("X", "Y")]
@@ -216,7 +306,145 @@ def test_prefetch_loop_preserves_incoming_dependencies(conditional_reload, drain
             else:
                 assert value not in open_group, events
                 assert all(value not in group for group in pending), events
-        assert events[4] == ("wait", 0 if conditional_reload else 1), events
+        if conditional_reload and not drain_tail:
+            # The generated loop-head wait-all already covers incoming X.
+            assert events[4] == ("load", "Y"), events
+        else:
+            assert events[4] == ("wait", 0 if conditional_reload else 1), events
+
+
+@pytest.mark.parametrize(
+    "pattern,covered",
+    [
+        ("explicit", True),
+        ("independent_work", True),
+        ("wait_scope", True),
+        ("wait_scope_one", False),
+        ("opaque_scope", False),
+        ("both_branches", True),
+        ("guarded_use", True),
+        ("one_branch", False),
+        ("late_wait", False),
+        ("overwrite", False),
+        ("access_ptr", False),
+        ("condition_read", False),
+        ("bound_read", False),
+        ("wait_one", False),
+        ("positive_inner", True),
+        ("zero_inner", False),
+        ("dynamic_inner", False),
+        ("dynamic_guarded_use", True),
+    ],
+)
+@pytest.mark.parametrize("nested", [False, True])
+def test_incoming_wait_coverage(pattern, covered, nested):
+    src = tir.Var("src", "handle")
+    condition = tir.Var("condition", "bool")
+    extent = tir.Var("extent", "int32")
+    x, z = [tir.decl_buffer((128,), "uint8", name=name, scope="shared") for name in ("X", "Z")]
+    read = tir.Evaluate(x[0])
+    body = tir.SeqStmt([_wait(), read])
+    if pattern == "independent_work":
+        body = tir.SeqStmt([tir.BufferStore(z, tir.IntImm("uint8", 7), [0]), _wait(), read])
+    elif pattern in ("wait_scope", "wait_scope_one"):
+        count = 1 if pattern == "wait_scope_one" else 0
+        body = tir.AttrStmt(0, "async_wait_queue_scope", 0, tir.AttrStmt(0, "async_wait_inflight_count", count, read))
+    elif pattern == "opaque_scope":
+        body = tir.AttrStmt(0, "async_scope", 1, body)
+    elif pattern == "both_branches":
+        body = tir.SeqStmt([tir.IfThenElse(condition, _wait(), _wait()), read])
+    elif pattern == "guarded_use":
+        body = tir.IfThenElse(condition, body, None)
+    elif pattern == "one_branch":
+        body = tir.SeqStmt([tir.IfThenElse(condition, _wait(), None), read])
+    elif pattern == "late_wait":
+        body = tir.SeqStmt([read, _wait()])
+    elif pattern == "overwrite":
+        body = tir.SeqStmt([tir.BufferStore(x, tir.IntImm("uint8", 7), [0]), _wait()])
+    elif pattern == "access_ptr":
+        body = tir.SeqStmt([tir.Evaluate(x.access_ptr("rw")), _wait()])
+    elif pattern == "condition_read":
+        body = tir.IfThenElse(x[0] != 0, body, _wait())
+    elif pattern == "bound_read":
+        body = tir.For(tir.Var("j", "int32"), 0, tir.Cast("int32", x[0]), tir.ForKind.SERIAL, body)
+    elif pattern == "wait_one":
+        body = tir.SeqStmt([_wait(1), read])
+    elif pattern in ("positive_inner", "zero_inner", "dynamic_inner", "dynamic_guarded_use"):
+        inner_extent = 2 if pattern == "positive_inner" else 0 if pattern == "zero_inner" else extent
+        inner_body = body if pattern == "dynamic_guarded_use" else _wait()
+        inner = tir.For(tir.Var("j", "int32"), 0, inner_extent, tir.ForKind.SERIAL, inner_body)
+        body = inner if pattern == "dynamic_guarded_use" else tir.SeqStmt([inner, read])
+    loop = tir.For(tir.Var("i", "int32"), 0, 2, tir.ForKind.SERIAL, body)
+    if nested:
+        loop = tir.For(tir.Var("outer", "int32"), 0, 2, tir.ForKind.SERIAL, loop)
+    func = tir.PrimFunc([src, condition, extent, x.data, z.data], tir.SeqStmt([_load(x, src), loop]))
+    result = tilelang.ppu.transform.InjectAIUSyncBarrier()(tvm.IRModule({"main": func}))["main"]
+    # Check placement, not just the total count: independent work must stay
+    # before the existing wait, and a later wait cannot protect an earlier use.
+    prefix = []
+
+    def before_loop(stmt):
+        if isinstance(stmt, tir.For):
+            return False
+        if isinstance(stmt, tir.SeqStmt):
+            for child in stmt.seq:
+                if not before_loop(child):
+                    return False
+        else:
+            prefix.extend(_events(stmt, {}))
+        return True
+
+    before_loop(result.body)
+    assert prefix == [("load", "X"), ("commit", None)] + ([] if covered else [("wait", 0)])
+    # Buffer-dependent conditions/bounds and pointer calls are checked above
+    # structurally; the simple event interpreter covers the other paths.
+    if pattern not in ("condition_read", "bound_read", "access_ptr"):
+        for enabled, trips in product((False, True), (0, 2)):
+            pending = False
+            for kind, value in _events(result.body, {"condition": enabled, "extent": trips}):
+                if kind == "load" and value == "X":
+                    pending = True
+                elif kind == "wait" and value == 0:
+                    pending = False
+                elif kind in ("read", "write") and value == "X":
+                    assert not pending, (pattern, enabled, trips)
+
+
+@pytest.mark.parametrize("unsafe_newest", [False, True])
+def test_incoming_wait_coverage_is_per_group(unsafe_newest):
+    src = tir.Var("src", "handle")
+    x, z = [tir.decl_buffer((128,), "uint8", name=name, scope="shared") for name in ("X", "Z")]
+    first, second = (z, x) if unsafe_newest else (x, z)
+    loop = tir.For(
+        tir.Var("i", "int32"),
+        0,
+        2,
+        tir.ForKind.SERIAL,
+        tir.SeqStmt([tir.Evaluate(first[0]), _wait(), tir.Evaluate(second[0])]),
+    )
+    func = tir.PrimFunc([src, x.data, z.data], tir.SeqStmt([_load(x, src), _load(z, src), loop]))
+    result = tilelang.ppu.transform.InjectAIUSyncBarrier()(tvm.IRModule({"main": func}))["main"]
+    events = _events(result.body, {})
+    assert events[4] == ("wait", 0 if unsafe_newest else 1), events
+    assert events[5] == ("read", first.name), events
+
+
+@pytest.mark.parametrize("wait_count", [0, 1])
+def test_explicit_wait_all_retires_completed_groups(wait_count):
+    src = tir.Var("src", "handle")
+    x, z = [tir.decl_buffer((128,), "uint8", name=name, scope="shared") for name in ("X", "Z")]
+    loop = tir.For(
+        tir.Var("i", "int32"),
+        0,
+        2,
+        tir.ForKind.SERIAL,
+        tir.SeqStmt([tir.Evaluate(x[0]), _wait(), tir.Evaluate(z[0])]),
+    )
+    body = tir.SeqStmt([_load(x, src), _wait(wait_count), _load(z, src), loop])
+    func = tir.PrimFunc([src, x.data, z.data], body)
+    result = tilelang.ppu.transform.InjectAIUSyncBarrier()(tvm.IRModule({"main": func}))["main"]
+    events = _events(result.body, {})
+    assert events[5] == (("read", "X") if wait_count == 0 else ("wait", 1)), events
 
 
 @pytest.mark.parametrize("incoming", [False, True])

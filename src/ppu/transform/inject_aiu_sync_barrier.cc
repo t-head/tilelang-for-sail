@@ -136,6 +136,8 @@ Stmt MakeWait(const Stmt &body, int wait_count) {
  */
 struct PendingGroup {
   std::unordered_set<const VarNode *> dst_vars;
+  // Container exits summarize destinations, not a fixed number of commits.
+  bool unknown_count = false;
 };
 
 // A commit closes every uncommitted load on queue 0. Compiler-managed loads
@@ -274,16 +276,28 @@ public:
       bool is_container = seq[i].as<ForNode>() ||
                           seq[i].as<SBlockRealizeNode>() ||
                           seq[i].as<SBlockNode>();
+      // An explicit standalone wait-all also retires tracked groups. Do not
+      // apply this to a whole container: it can issue new groups after a wait.
+      if (IsWaitAll(seq[i])) {
+        pending_groups.clear();
+      }
       if (!pending_groups.empty()) {
-        // Container-local analysis does not carry incoming groups. Reloading
-        // a destination inside a loop is not proof that its first use waits:
-        // a later consumer can drain the queue and suppress wrap-around waits.
-        // Establish incoming dependencies before entering the container.
-        int newest_needed = FindNewestUsedGroup(seq[i], pending_groups);
+        // Child statements have already been transformed. An existing wait<0>
+        // may cover incoming groups, but a reload (or a later wait) does not.
+        // Only omit the entry wait when every path to a conflicting access
+        // drains the incoming groups first. Keep backedge analysis separate.
+        int newest_needed = -1;
+        for (int g = 0; g < static_cast<int>(pending_groups.size()); ++g) {
+          if (CheckIncomingGroup(seq[i], pending_groups[g].dst_vars) ==
+              IncomingState::kConflict) {
+            newest_needed = g;
+          }
+        }
         if (newest_needed >= 0) {
-          int wait_count = wait_all_ ? 0
-                                     : static_cast<int>(pending_groups.size()) -
-                                           newest_needed - 1;
+          int wait_count =
+              (wait_all_ || HasUnknownCount(pending_groups))
+                  ? 0
+                  : static_cast<int>(pending_groups.size()) - newest_needed - 1;
           if (needs_wait[i] < 0 || wait_count < needs_wait[i]) {
             needs_wait[i] = wait_count;
           }
@@ -294,6 +308,23 @@ public:
                                  pending_groups.begin() + newest_needed + 1);
           }
         }
+      }
+      if (is_container && ContainsAIULoad(seq[i])) {
+        // Incoming coverage and outgoing work are different generations.
+        // A wait in the loop body can retire the former and then issue the
+        // latter. Carry that outgoing may-state to subsequent consumers.
+        PendingGroup outgoing;
+        outgoing.unknown_count = true;
+        for (const auto &group : pending_groups) {
+          outgoing.dst_vars.insert(group.dst_vars.begin(),
+                                   group.dst_vars.end());
+        }
+        CollectOutgoing(seq[i], &outgoing.dst_vars);
+        pending_groups.clear();
+        if (!outgoing.dst_vars.empty()) {
+          pending_groups.push_back(std::move(outgoing));
+        }
+        has_any_aiu |= ContainsAIULoad(seq[i]);
       }
       if (ContainsAIULoad(seq[i]) && !is_container && !IsAsyncScope(seq[i])) {
         has_any_aiu = true;
@@ -316,10 +347,11 @@ public:
     // the total.
     if (!pending_groups.empty() && in_for_body_) {
       int new_commits_before = 0;
+      bool unknown_count = HasUnknownCount(pending_groups);
       for (int i = 0; i < static_cast<int>(seq.size()); ++i) {
         int newest_needed = FindNewestUsedGroup(seq[i], pending_groups);
         if (newest_needed >= 0) {
-          int wait_count = wait_all_
+          int wait_count = (wait_all_ || unknown_count)
                                ? 0
                                : static_cast<int>(pending_groups.size()) -
                                      newest_needed - 1 + new_commits_before;
@@ -327,6 +359,11 @@ public:
             needs_wait[i] = wait_count;
           }
           break;
+        }
+        if ((seq[i].as<ForNode>() || seq[i].as<SBlockRealizeNode>() ||
+             seq[i].as<SBlockNode>()) &&
+            ContainsAIULoad(seq[i])) {
+          unknown_count = true;
         }
         // Count commit groups emitted before this point in the iteration.
         if (!wait_all_ && ContainsAIULoad(seq[i]) && !seq[i].as<ForNode>() &&
@@ -356,6 +393,177 @@ public:
 private:
   const bool wait_all_;
   bool in_for_body_ = false;
+
+  bool HasUnknownCount(const std::vector<PendingGroup> &groups) const {
+    for (const auto &group : groups) {
+      if (group.unknown_count) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // May-pending destinations at a container exit. Only a proven wait-all
+  // kills state; branch outputs are unioned. This summary deliberately does
+  // not pretend a loop/branch batch is one runtime commit group.
+  void CollectOutgoing(const Stmt &stmt,
+                       std::unordered_set<const VarNode *> *pending) {
+    if (IsWaitAll(stmt)) {
+      pending->clear();
+      return;
+    }
+    if (const auto *seq = stmt.as<SeqStmtNode>()) {
+      for (const auto &child : seq->seq) {
+        CollectOutgoing(child, pending);
+      }
+      return;
+    }
+    if (const auto *branch = stmt.as<IfThenElseNode>()) {
+      auto other = *pending;
+      CollectOutgoing(branch->then_case, pending);
+      if (branch->else_case.defined()) {
+        CollectOutgoing(branch->else_case.value(), &other);
+      }
+      pending->insert(other.begin(), other.end());
+      return;
+    }
+    if (const auto *loop = stmt.as<ForNode>()) {
+      const int64_t *extent = as_const_int(loop->extent);
+      if (extent && *extent <= 0) {
+        return;
+      }
+      auto incoming = *pending;
+      CollectOutgoing(loop->body, pending);
+      // This kill-all/gen transfer reaches a fixed point after one iteration.
+      // A dynamic loop can also execute zero times and retain incoming work.
+      if (!extent) {
+        pending->insert(incoming.begin(), incoming.end());
+      }
+      return;
+    }
+    if (const auto *block = stmt.as<SBlockRealizeNode>()) {
+      auto skipped = *pending;
+      CollectOutgoing(block->block, pending);
+      if (!is_one(block->predicate)) {
+        pending->insert(skipped.begin(), skipped.end());
+      }
+      return;
+    }
+    if (const auto *block = stmt.as<SBlockNode>()) {
+      if (block->init.defined()) {
+        auto skipped = *pending;
+        CollectOutgoing(block->init.value(), pending);
+        // Reduction initialization need not execute on every realization.
+        pending->insert(skipped.begin(), skipped.end());
+      }
+      CollectOutgoing(block->body, pending);
+      return;
+    }
+    if (const auto *attr = stmt.as<AttrStmtNode>()) {
+      if (attr->attr_key == s_tir::attr::async_scope) {
+        return;
+      }
+      if (attr->attr_key == s_tir::attr::async_wait_queue_scope &&
+          is_zero(attr->value)) {
+        const auto *count = attr->body.as<AttrStmtNode>();
+        if (count &&
+            count->attr_key == s_tir::attr::async_wait_inflight_count &&
+            is_zero(count->value)) {
+          pending->clear();
+          CollectOutgoing(count->body, pending);
+          return;
+        }
+      }
+      if (attr->attr_key == s_tir::attr::async_commit_queue_scope) {
+        CollectOutgoing(attr->body, pending);
+        return;
+      }
+    }
+    // Unknown scopes may issue work, but do not prove completion.
+    std::vector<PendingGroup> groups;
+    CollectAIUDstGroups(stmt, &groups);
+    for (const auto &group : groups) {
+      pending->insert(group.dst_vars.begin(), group.dst_vars.end());
+    }
+  }
+
+  enum class IncomingState { kPending, kDrained, kConflict };
+
+  bool IsWaitAll(const Stmt &stmt) const {
+    const auto *eval = stmt.as<EvaluateNode>();
+    const auto *call = eval ? eval->value.as<CallNode>() : nullptr;
+    return call && call->op.same_as(builtin::ptx_wait_group()) &&
+           call->args.size() == 1 && is_zero(call->args[0]);
+  }
+
+  // Track only groups committed before this statement, not new generations
+  // issued inside it. Once a wait-all executes, those incoming groups are done.
+  // Unrecognized constructs stay conservative; in particular pipeline-owned
+  // scopes are opaque and wait<N> is not a proof of incoming-group completion.
+  IncomingState
+  CheckIncomingGroup(const Stmt &stmt,
+                     const std::unordered_set<const VarNode *> &vars) const {
+    if (const auto *seq = stmt.as<SeqStmtNode>()) {
+      for (const Stmt &child : seq->seq) {
+        auto state = CheckIncomingGroup(child, vars);
+        if (state != IncomingState::kPending) {
+          return state;
+        }
+      }
+      return IncomingState::kPending;
+    }
+    if (const auto *branch = stmt.as<IfThenElseNode>()) {
+      if (UsesAnyVar(branch->condition, vars)) {
+        return IncomingState::kConflict;
+      }
+      auto then_state = CheckIncomingGroup(branch->then_case, vars);
+      auto else_state =
+          branch->else_case.defined()
+              ? CheckIncomingGroup(branch->else_case.value(), vars)
+              : IncomingState::kPending;
+      if (then_state == IncomingState::kConflict ||
+          else_state == IncomingState::kConflict) {
+        return IncomingState::kConflict;
+      }
+      return then_state == IncomingState::kDrained &&
+                     else_state == IncomingState::kDrained
+                 ? IncomingState::kDrained
+                 : IncomingState::kPending;
+    }
+    if (const auto *loop = stmt.as<ForNode>()) {
+      if (UsesAnyVar(loop->min, vars) || UsesAnyVar(loop->extent, vars)) {
+        return IncomingState::kConflict;
+      }
+      auto state = CheckIncomingGroup(loop->body, vars);
+      const auto *extent = loop->extent.as<IntImmNode>();
+      // A wait in a possibly zero-trip loop cannot protect a later statement.
+      if (state == IncomingState::kDrained && !(extent && extent->value > 0)) {
+        return IncomingState::kPending;
+      }
+      return state;
+    }
+    if (const auto *attr = stmt.as<AttrStmtNode>()) {
+      if (attr->attr_key == s_tir::attr::async_wait_queue_scope &&
+          is_zero(attr->value)) {
+        const auto *count = attr->body.as<AttrStmtNode>();
+        if (count &&
+            count->attr_key == s_tir::attr::async_wait_inflight_count &&
+            is_zero(count->value)) {
+          return IncomingState::kDrained;
+        }
+      }
+      // These scopes execute their body unconditionally. Do not generalize
+      // this to arbitrary attributes or pipeline-owned async_scope regions.
+      if (attr->attr_key == s_tir::attr::async_commit_queue_scope) {
+        return CheckIncomingGroup(attr->body, vars);
+      }
+    }
+    if (IsWaitAll(stmt)) {
+      return IncomingState::kDrained;
+    }
+    return UsesAnyVar(stmt, vars) ? IncomingState::kConflict
+                                  : IncomingState::kPending;
+  }
 
   /*!
    * \brief Find the newest (highest-index) pending group whose dst vars
@@ -455,7 +663,7 @@ private:
    * \brief Check if a statement uses any buffer whose data Var is in the set.
    * Checks BufferLoad, BufferStore, and tvm_access_ptr references.
    */
-  bool UsesAnyVar(const Stmt &stmt,
+  bool UsesAnyVar(const ObjectRef &stmt,
                   const std::unordered_set<const VarNode *> &vars) const {
     bool found = false;
     PostOrderVisit(stmt, [&](const ObjectRef &node) {
