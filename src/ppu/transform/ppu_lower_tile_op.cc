@@ -211,6 +211,8 @@ public:
     auto target = f->GetAttr<Target>(tvm::attr::kTarget);
     ICHECK(target.defined()) << "LowerTileOpPass: Require the target attribute";
     substituter.target_ = target.value();
+    substituter.smem_alignment_map_ =
+        f->GetAttr<Map<String, IntImm>>(kSmemAlignmentMap).value_or({});
     PrimFuncNode *fptr = f.CopyOnWrite();
     fptr->body = substituter.VisitStmt(f->body);
     fptr->body =
