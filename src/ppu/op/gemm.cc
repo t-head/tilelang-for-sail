@@ -27,6 +27,7 @@ namespace ppu {
 namespace {
 
 constexpr const char *kPpuMMA = "ppu.mma";
+constexpr const char *kPpuMMABlockScaled = "ppu.mma.blockscaled";
 
 void FatalUnsupportedPpuArchGemm(const GemmNode &op, Target target,
                                  const char *inst_name) {
@@ -158,10 +159,8 @@ struct Gemm {
     return ComputeDefaultWarpPartition(policy, M, N, num_warps, kNPerWarp);
   }
 
-  static bool ReuseExistingSharedLayout(String /* gemm_inst */) {
-    // PPU: never reuse existing shared layouts; the Python infer_layout
-    // always returns authoritative layouts for all buffers.
-    return false;
+  static bool ReuseExistingSharedLayout(String gemm_inst) {
+    return gemm_inst == kPpuMMA || gemm_inst == kPpuMMABlockScaled;
   }
 
   static String InstructionKind(String gemm_inst) {
