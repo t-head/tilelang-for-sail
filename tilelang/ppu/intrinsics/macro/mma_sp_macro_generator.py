@@ -7,14 +7,14 @@ from tvm import DataType, tirx
 from tvm.tirx import PrimExpr, IndexMap, Buffer, BufferRegion, BufferLoad
 from tvm.ir import Range
 from tvm.runtime import convert
-from ..layout.utils import (
+from tilelang.ppu.intrinsics.layout.utils import (
     mma_store_index_map,
     get_ldmatrix_offset,
 )
 from tilelang.utils import is_fragment, get_buffer_region_from_load
-from tilelang.cuda.intrinsics.sparse_layout import get_e_factor, get_e_replicate_factor
+from tilelang.ppu.intrinsics.sparse_layout import get_e_factor, get_e_replicate_factor
 
-from tilelang.cuda.intrinsics.layout.mma_sp_layout import (
+from tilelang.ppu.intrinsics.layout.mma_sp_layout import (
     shared_16x16_to_mma_sp_layout_sr_a,
     shared_16x16_to_mma_sp_layout_sr_b,
     shared_16x32_to_mma_sp_layout_sr_a,

@@ -245,8 +245,8 @@ public:
     }
     // If any tile-op copies allocated mbarriers, inject the barrier buffer
     // into the tilelang_root block with a barrier_init annotation.
-    // Pipeline buffer versioning expands it for pipelining, and
-    // LowerSharedBarrier will process it into ptx_init_barrier_thread_count.
+    // Pipeline buffer versioning expands it for pipelining. No PPU tile op
+    // currently allocates mbarriers, so this path is inert on PPU.
     if (substituter.mbarrier_count_ > 0) {
       ICHECK(substituter.mbarrier_buffer_.defined())
           << "mbarrier_buffer_ must have been created by AllocMBarrier "
@@ -390,7 +390,7 @@ private:
       workspace_stack_.pop_back();
     }
 
-    // Apply arrive-count overrides before LowerSharedBarrier consumes them.
+    // Apply arrive-count overrides to the barrier_init annotation.
     if (!barrier_arrive_updates_.empty() &&
         block->annotations.count("barrier_init")) {
       auto barrier_init_map = Downcast<Map<Var, Array<PrimExpr>>>(

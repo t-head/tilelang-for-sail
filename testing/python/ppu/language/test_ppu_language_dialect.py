@@ -53,5 +53,9 @@ def test_ppu_language_composes_common_and_supported_intrinsics():
     assert (CUDA_ONLY_NAMES - {"rng_init", "pdl_trigger"}).isdisjoint(T.__all__)
     assert ROCM_ONLY_NAMES.isdisjoint(T.__all__)
     assert METAL_ONLY_TIR_EXPORTS.isdisjoint(T.__all__)
-    for name in (*PPU_ONLY_TIR_EXPORTS, "rng_init", "rng_rand", "rng_rand_float", "pdl_sync", "pdl_trigger"):
-        assert getattr(T, name).__module__ == "tilelang.ppu.language"
+    for name in PPU_ONLY_TIR_EXPORTS:
+        assert getattr(T, name).__module__ == "tilelang.ppu.language.tir"
+    for name in ("rng_init", "rng_rand", "rng_rand_float"):
+        assert getattr(T, name).__module__ == "tilelang.ppu.language.random"
+    for name in ("pdl_sync", "pdl_trigger"):
+        assert getattr(T, name).__module__ == "tilelang.ppu.language.pdl"

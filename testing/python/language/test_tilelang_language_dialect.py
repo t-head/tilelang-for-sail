@@ -229,14 +229,31 @@ def test_ppu_language_composes_common_and_supported_intrinsics():
 
     assert T.__tilelang_dialect__ == "ppu"
     assert set(T.__all__) >= set(T_comm.__all__)
-    assert T.copy is T_comm.copy
+    # The PPU dialect shadows T.copy with typed backend hints
+    # (prefer_instruction); see the CUDA dialect test for the contract.
+    assert T.copy is not T_comm.copy
     assert set(T.__all__) >= PPU_ONLY_TIR_EXPORTS
     assert {"ptx_ldmatrix", "ptx_mma", "ptx_mma_sp"} <= set(T.__all__)
     assert (CUDA_ONLY_NAMES - {"rng_init", "pdl_trigger"}).isdisjoint(T.__all__)
     assert ROCM_ONLY_NAMES.isdisjoint(T.__all__)
     assert METAL_ONLY_TIR_EXPORTS.isdisjoint(T.__all__)
-    for name in (*PPU_ONLY_TIR_EXPORTS, "rng_init", "rng_rand", "rng_rand_float", "pdl_sync", "pdl_trigger"):
-        assert getattr(T, name).__module__ == "tilelang.ppu.language"
+    for name in PPU_ONLY_TIR_EXPORTS:
+        assert getattr(T, name).__module__ == "tilelang.ppu.language.tir"
+    for name in ("rng_init", "rng_rand", "rng_rand_float"):
+        assert getattr(T, name).__module__ == "tilelang.ppu.language.random"
+    for name in ("pdl_sync", "pdl_trigger"):
+        assert getattr(T, name).__module__ == "tilelang.ppu.language.pdl"
+
+
+def test_ppu_whole_module_implementations_live_under_ppu():
+    from tilelang.ppu import language as T
+
+    assert T.copy.__module__ == "tilelang.ppu.language.copy_op"
+    assert T.gemm.__module__ == "tilelang.ppu.language.gemm_op"
+    assert T.pdl_trigger.__module__ == "tilelang.ppu.language.pdl"
+    assert T.rng_init.__module__ == "tilelang.ppu.language.random"
+    assert T.ppu_aiu_load.__module__ == "tilelang.ppu.language.tir"
+    assert T.print.__module__ == "tilelang.ppu.language.print"
 
 
 @pytest.mark.parametrize(
