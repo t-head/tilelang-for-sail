@@ -164,3 +164,24 @@ tilelang_patch_tvm_loop_analysis("src/arith/ir_visitor_with_analyzer.cc"
       constraint_scope_.Current().Emplace(&analyzer_, op->extent > 0);
       this->VisitStmt(op->body);
     });]=])
+
+# IterMap may divide a positive divisor by a negative iterator scale. Its
+# padding/split composition requires a positive divisor; otherwise nested floor
+# divisions can change rounding. Keep such expressions on the normal fallback.
+# Regression: https://github.com/t-head/tilelang-for-sail/issues/52
+set(iter_map_source "${TVM_SOURCE}/src/arith/iter_affine_map.cc")
+file(READ "${iter_map_source}" iter_map_contents)
+set(iter_map_before "    } else if (CanProveDivisible(rhs, lhs->scale)")
+set(iter_map_after [=[    } else if (analyzer_->CanProve(lhs->scale > 0) &&
+               CanProveDivisible(rhs, lhs->scale)]=])
+string(FIND "${iter_map_contents}" "${iter_map_after}" iter_map_patched)
+if(iter_map_patched EQUAL -1)
+  string(REGEX MATCHALL "else if \\(CanProveDivisible\\(rhs, lhs->scale\\)" iter_map_matches "${iter_map_contents}")
+  list(LENGTH iter_map_matches iter_map_match_count)
+  if(NOT iter_map_match_count EQUAL 4)
+    message(FATAL_ERROR "Cannot apply TVM IterMap divisor fix: expected four scale-cancellation branches")
+  endif()
+  string(REPLACE "${iter_map_before}" "${iter_map_after}" iter_map_contents "${iter_map_contents}")
+  file(WRITE "${iter_map_source}" "${iter_map_contents}")
+  message(STATUS "Patched iter_affine_map.cc: require positive scale before divisor cancellation")
+endif()
