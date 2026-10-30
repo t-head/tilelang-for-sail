@@ -6,7 +6,7 @@ import pytest
 import torch
 
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 import tilelang.testing
 from tilelang.layout import (
     make_full_bank_swizzled_layout,

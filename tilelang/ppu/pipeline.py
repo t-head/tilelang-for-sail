@@ -6,7 +6,7 @@ from tvm.tirx import PrimFunc, SBlock
 from tvm.tirx.stmt_functor import post_order_visit
 
 import tilelang
-from tilelang.backend.pass_pipeline.pipeline import PassPipeline
+from tilelang.backend.pass_pipeline import PassPipeline
 from tilelang.backend.pass_pipeline.pipeline_utils import (
     LayoutVisual,
     allow_vectorize,
@@ -66,7 +66,7 @@ def _AlignAIUSharedMemory(func, mod, ctx):
 
 def PPUPassPipelineBodyPrologue(mod: IRModule, target: Target) -> IRModule:
     mod = tirx.transform.BindTarget(target)(mod)
-    mod = tilelang.transform.MaterializeKernelLaunch()(mod)
+    mod = tilelang.transform.MaterializeKernelLaunch(lower_thread_binding=True, default_threads=128)(mod)
     if should_force_let_inline():
         # Force-let inline whenever the pass config requests it.
         mod = tilelang.transform.LetInline()(mod)
@@ -153,8 +153,8 @@ def PPUPassPipelineBody(mod: IRModule, target: Target) -> IRModule:
     # Buffer allocation placement is handled uniformly for both paths.
     mod = tilelang.transform.PlanAndUpdateBufferAllocationLocation()(mod)
     # @PPU-specific
-    # LowerSharedBarrier emits hardware mbarrier code (the cutlass Barrier type,
-    # tl::tl_shuffle_elect, tl::fence_barrier_init) which only exists on ppu0015+.
+    # The PPU codegen lowers shared.barrier buffers into hardware mbarrier
+    # objects (the cutlass Barrier type) which only exist on ppu0015+.
     # Reject T.alloc_barrier() up front on pre-PPU1.5 targets instead of letting
     # hgcc fail later with cryptic "identifier 'Barrier' is undefined" errors.
     if not have_mbarrier(target) and _module_has_shared_barrier(mod):
@@ -248,4 +248,3 @@ def PPUPassPipelineBody(mod: IRModule, target: Target) -> IRModule:
 
 
 PPU_PIPELINE = PassPipeline("ppu", PPUPassPipelineBody)
-ppu_pipeline = PPU_PIPELINE

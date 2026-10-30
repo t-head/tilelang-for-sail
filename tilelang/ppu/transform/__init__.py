@@ -21,9 +21,7 @@ def LowerL2PersistentCache():
     ``l2_persistent_map`` PrimFunc attribute set by ``LowerL2Persistent``.
     """
     # PPU: call the independently registered PPU transform implementation.
-    if hasattr(_ffi_api, "LowerL2PersistentCache"):
-        return _ffi_api.LowerL2PersistentCache()  # type: ignore
-    return lambda f: f
+    return _ffi_api.LowerL2PersistentCache()  # type: ignore
 
 
 def LowerLDGSTG():
@@ -85,16 +83,16 @@ def PersistThreadblock():
 
 
 __all__ = [
-    "InjectAIUSyncBarrier",
-    "InjectPpuUniform",
-    "LowerL2PersistentCache",
-    "LowerLDGSTG",
     "LowerThreadAllreduce",
     "LowerL2Persistent",
-    "LowerTileOp",
-    "AnnotateChainedGemm",
+    "LowerL2PersistentCache",
+    "LowerLDGSTG",
     "PackSubwordWarpShuffle",
     "MarkPpuSyncCalls",
-    "PersistThreadblock",
+    "InjectPpuUniform",
+    "InjectAIUSyncBarrier",
+    "AnnotateChainedGemm",
+    "LowerTileOp",
     "ReorderAIULoads",
+    "PersistThreadblock",
 ]
