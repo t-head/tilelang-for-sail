@@ -16,6 +16,7 @@ from tilelang.layout import (
     make_swizzled_layout,
     make_ppu_swizzled_layout,
 )
+from tilelang.tools.compile_only import cuda_codegen_available
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
@@ -250,12 +251,16 @@ def test_reused_shared_codegen_matches_cuda(threads, disable_sync):
                 T.gemm(a, b, c, clear_accum=True)
                 T.copy(c, C[step, :, :])
 
-    for kind, arch in (("cuda", "sm_80"), ("ppu", "ppu_10"), ("ppu", "ppu_15")):
+    # The CUDA reference leg only runs on wheels that embed CUDA codegen
+    # (PPU-only builds lack AnnotateDeviceBoundTmaCopies).
+    targets = [("cuda", "sm_80")] if cuda_codegen_available() else []
+    targets += [("ppu", "ppu_10"), ("ppu", "ppu_15")]
+    for kind, arch in targets:
         target = tvm.target.Target({"kind": kind, "arch": arch})
         with target, tvm.transform.PassContext(config={"tl.disable_thread_storage_sync": disable_sync}):
             artifact = tilelang.lower(main, target=target, enable_device_compile=False)
         # No duplicate B allocation. Auto-sync protects the loop's WAR hazard;
-        # disabling it leaves only the caller's explicit barrier, on both targets.
+        # disabling it leaves only the caller's explicit barrier, on both arches.
         functions = list(artifact.device_mod.functions.values())
         assert len(functions) == 1
         assert int(functions[0].attrs["dyn_shared_memory_buf"]) == 16 * 64 * 2
