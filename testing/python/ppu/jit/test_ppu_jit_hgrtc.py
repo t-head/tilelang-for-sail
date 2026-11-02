@@ -129,7 +129,7 @@ def run_gemm_jit_kernel(
         num_threads,
     )
 
-    matmul_kernel = tilelang.compile(program, out_idx=-1, execution_backend="nvrtc")
+    matmul_kernel = tilelang.compile(program, out_idx=-1, execution_backend="hgrtc")
 
     in_dtype = T.dtype(in_dtype).as_torch()
     out_dtype = T.dtype(out_dtype).as_torch()
@@ -173,7 +173,7 @@ def test_gemm_jit_kernel():
     )
 
 
-def run_nvrtc_kernel_do_bench(
+def run_hgrtc_kernel_do_bench(
     M, N, K, trans_A, trans_B, in_dtype, out_dtype, dtypeAccum, block_M, block_N, block_K, num_stages=3, num_threads=128
 ):
     program = matmul(
@@ -192,14 +192,14 @@ def run_nvrtc_kernel_do_bench(
         num_threads,
     )
 
-    matmul_kernel = tilelang.compile(program, execution_backend="nvrtc")
+    matmul_kernel = tilelang.compile(program, execution_backend="hgrtc")
 
     profiler = matmul_kernel.get_profiler()
 
-    nvrtc_latency = profiler.do_bench(func=matmul_kernel)
-    print(f"NVRTC Latency: {nvrtc_latency} ms")
+    hgrtc_latency = profiler.do_bench(func=matmul_kernel)
+    print(f"HGRTC Latency: {hgrtc_latency} ms")
 
-    assert nvrtc_latency is not None
+    assert hgrtc_latency is not None
 
     tvm_latency = profiler.do_bench()
     print(f"TVM Latency: {tvm_latency} ms")
@@ -209,11 +209,11 @@ def run_nvrtc_kernel_do_bench(
 
 @tilelang.testing.requires_ppu
 @pytest.mark.perf
-def test_nvrtc_kernel_do_bench():
-    run_nvrtc_kernel_do_bench(512, 1024, 768, False, False, T.float16, T.float16, T.float32, 128, 256, 32, 2)
+def test_hgrtc_kernel_do_bench():
+    run_hgrtc_kernel_do_bench(512, 1024, 768, False, False, T.float16, T.float16, T.float32, 128, 256, 32, 2)
 
 
-def run_nvrtc_kernel_multi_stream(
+def run_hgrtc_kernel_multi_stream(
     M, N, K, trans_A, trans_B, in_dtype, out_dtype, dtypeAccum, block_M, block_N, block_K, num_stages=3, num_threads=128
 ):
     program = matmul(
@@ -232,7 +232,7 @@ def run_nvrtc_kernel_multi_stream(
         num_threads,
     )
 
-    matmul_kernel = tilelang.compile(program, execution_backend="nvrtc")
+    matmul_kernel = tilelang.compile(program, execution_backend="hgrtc")
     in_dtype = T.dtype(in_dtype).as_torch()
     out_dtype = T.dtype(out_dtype).as_torch()
     tensor_a = torch.randn(M, K, dtype=in_dtype).cuda()
@@ -252,11 +252,11 @@ def run_nvrtc_kernel_multi_stream(
 
 
 @tilelang.testing.requires_ppu
-def test_nvrtc_kernel_multi_stream():
-    run_nvrtc_kernel_multi_stream(512, 1024, 768, False, False, T.float16, T.float16, T.float32, 128, 256, 32, 2)
+def test_hgrtc_kernel_multi_stream():
+    run_hgrtc_kernel_multi_stream(512, 1024, 768, False, False, T.float16, T.float16, T.float32, 128, 256, 32, 2)
 
 
-def run_nvrtc_dynamic_shape(
+def run_hgrtc_dynamic_shape(
     M, N, K, trans_A, trans_B, in_dtype, out_dtype, dtypeAccum, block_M, block_N, block_K, num_stages=3, num_threads=128
 ):
     program = matmul(
@@ -275,7 +275,7 @@ def run_nvrtc_dynamic_shape(
         num_threads,
     )
 
-    matmul_kernel = tilelang.compile(program, execution_backend="nvrtc")
+    matmul_kernel = tilelang.compile(program, execution_backend="hgrtc")
     if isinstance(M, T.Var):
         M = 1024
     if isinstance(N, T.Var):
@@ -302,12 +302,12 @@ def run_nvrtc_dynamic_shape(
 
 
 @tilelang.testing.requires_ppu
-def test_nvrtc_dynamic_shape():
-    run_nvrtc_dynamic_shape(T.dynamic("m"), 1024, 768, False, False, T.float16, T.float16, T.float32, 128, 256, 32, 2)
+def test_hgrtc_dynamic_shape():
+    run_hgrtc_dynamic_shape(T.dynamic("m"), 1024, 768, False, False, T.float16, T.float16, T.float32, 128, 256, 32, 2)
 
-    run_nvrtc_dynamic_shape(T.dynamic("m"), T.dynamic("n"), 768, False, False, T.float16, T.float16, T.float32, 128, 256, 32, 2)
+    run_hgrtc_dynamic_shape(T.dynamic("m"), T.dynamic("n"), 768, False, False, T.float16, T.float16, T.float32, 128, 256, 32, 2)
 
-    run_nvrtc_dynamic_shape(T.dynamic("m"), T.dynamic("n"), T.dynamic("k"), False, False, T.float16, T.float16, T.float32, 128, 256, 32, 2)
+    run_hgrtc_dynamic_shape(T.dynamic("m"), T.dynamic("n"), T.dynamic("k"), False, False, T.float16, T.float16, T.float32, 128, 256, 32, 2)
 
 
 def check_hopper():
@@ -350,11 +350,11 @@ def convolution_im2col(N, C, H, W, F, K, S, D, P, block_M, block_N, block_K, num
     return main
 
 
-def run_nvrtc_im2col_tma_desc(N, C, H, W, F, K, S, D, P, block_M, block_N, block_K, num_stages=3, num_threads=256):
-    """Test im2col TMA descriptor functionality in NVRTC backend."""
+def run_hgrtc_im2col_tma_desc(N, C, H, W, F, K, S, D, P, block_M, block_N, block_K, num_stages=3, num_threads=256):
+    """Test im2col TMA descriptor functionality in the hgrtc backend."""
     program = convolution_im2col(N, C, H, W, F, K, S, D, P, block_M, block_N, block_K, num_stages, num_threads)
 
-    conv_kernel = tilelang.compile(program, out_idx=-1, execution_backend="nvrtc")
+    conv_kernel = tilelang.compile(program, out_idx=-1, execution_backend="hgrtc")
 
     a = torch.randn(N, H, W, C).cuda().half()
     b = torch.randn(K, K, C, F).cuda().half()
@@ -374,24 +374,24 @@ def run_nvrtc_im2col_tma_desc(N, C, H, W, F, K, S, D, P, block_M, block_N, block
 
 
 @tilelang.testing.requires_ppu
-def test_nvrtc_im2col_tma_desc():
-    """Test im2col TMA descriptor with NVRTC backend."""
+def test_hgrtc_im2col_tma_desc():
+    """Test im2col TMA descriptor with the hgrtc backend."""
     if not check_hopper():
         import pytest
 
         pytest.skip("Test requires Hopper GPU (compute capability 9.0)")
 
     # Small test case for im2col TMA descriptor
-    run_nvrtc_im2col_tma_desc(
+    run_hgrtc_im2col_tma_desc(
         N=4, C=64, H=32, W=32, F=64, K=3, S=1, D=1, P=1, block_M=64, block_N=128, block_K=32, num_stages=3, num_threads=256
     )
 
 
 @tilelang.testing.requires_ppu
-def test_nvrtc_l2_persistent_map():
+def test_hgrtc_l2_persistent_map():
     """Test L2 persistent cache annotation with elementwise add.
 
-    Note: unlike the tvm_ffi backend, the NVRTC-style PPU path lowers the
+    Note: unlike the tvm_ffi backend, the hgrtc PPU path lowers the
     L2 access-policy window on the device side (lower_l2_persistent_cache),
     so there is no host-side source assertion here.
     """
@@ -400,7 +400,7 @@ def test_nvrtc_l2_persistent_map():
     M = 1024
     N = 1024
 
-    @tilelang.jit(out_idx=[-1], execution_backend="nvrtc")
+    @tilelang.jit(out_idx=[-1], execution_backend="hgrtc")
     def elementwise_add_with_l2_cache(
         M,
         N,
@@ -445,12 +445,12 @@ def test_nvrtc_l2_persistent_map():
 
 
 @tilelang.testing.requires_ppu_compute_version_gt(1, 5)
-def test_nvrtc_pdl():
+def test_hgrtc_pdl():
     """Test pdl."""
 
     N = 64
 
-    @tilelang.jit(execution_backend="nvrtc")
+    @tilelang.jit(execution_backend="hgrtc")
     def multi_kernels_with_pdl(N, block_size=256, dtype=T.float32):
         @T.prim_func
         def main(

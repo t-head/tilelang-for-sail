@@ -1215,11 +1215,11 @@ class TLPyWrapper(TLWrapper):
 
             wrapper_class = TLNVRTCSourceWrapper
         elif is_ppu_target(self.target):
-            from tilelang.jit.adapter.nvrtc import TLPPUNVRTCSourceWrapper
+            from tilelang.jit.adapter.hgrtc import TLHgrtcSourceWrapper
 
-            wrapper_class = TLPPUNVRTCSourceWrapper
+            wrapper_class = TLHgrtcSourceWrapper
         else:
-            raise ValueError(f"Unsupported target for NVRTC backend: {self.target}")
+            raise ValueError(f"Unsupported target for runtime-compile backends (nvrtc/hgrtc): {self.target}")
         wrapper = wrapper_class(
             scheduled_ir_module=self.scheduled_ir_module,
             source=py_source,
