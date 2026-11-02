@@ -1140,13 +1140,22 @@ class TestFunctionalCIYAML:
         assert any("-m compileall -q -f tilelang" in r for r in runs)
         assert any("pipx run pre-commit run --all-files --color=always --show-diff-on-failure" in r for r in runs)
 
-    def test_on_block_unchanged_from_baseline(self):
-        """We did not alter the baseline trigger surface of ci.yml."""
+    def test_on_block_matches_upstream_triggers(self):
+        """Functional CI runs for PR updates or manual dispatch, never push."""
         on = self.ci.get("on") or self.ci.get(True)
         assert on is not None
-        assert "push" in on
-        assert "pull_request" in on
-        assert "workflow_dispatch" in on
+        assert set(on) == {"pull_request", "workflow_dispatch"}
+        assert "push" not in on
+        assert on["pull_request"] == {
+            "types": [
+                "labeled",
+                "unlabeled",
+                "opened",
+                "synchronize",
+                "reopened",
+                "ready_for_review",
+            ]
+        }
 
 
 # ===========================================================================
