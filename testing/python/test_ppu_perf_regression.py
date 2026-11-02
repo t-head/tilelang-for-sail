@@ -1158,21 +1158,17 @@ _MANIFEST_PATH = _SCRIPTS_DIR / "ppu_perf_890p_allowlist.yaml"
 _EXPECTED_PPU_ENTRIES = (
     "examples/ppu/flash_decoding/regression_example_flash_decoding.py",
     "examples/ppu/seer_attention/regression_block_sparse_attn_tilelang.py",
-    "examples/ppu/topk/regression_topk_tilelang.py",
 )
 
 _EXPECTED_NEW_ENTRIES = (
     "examples/attention_sink/regression_attention_sink.py",
-    "examples/blocksparse_attention/regression_example_blocksparse_attention.py",
     "examples/flash_attention/regression_example_flash_attention.py",
     "examples/flash_decoding/regression_example_flash_decoding.py",
     "examples/seer_attention/regression_block_sparse_attn_tilelang.py",
-    "examples/gemm_fp8/regression_example_gemm_fp8.py",
     "examples/gemm_splitk/regression_example_gemm_splitk.py",
     "examples/blocksparse_gemm/regression_example_blocksparse_gemm.py",
     "examples/fusedmoe/regression_example_fusedmoe.py",
     "examples/deepseek_mhc/regression_example_mhc.py",
-    "examples/deepseek_nsa/regression_example_tilelang_nsa.py",
 )
 
 _EXPECTED_EXCLUDED_ENTRIES = (
@@ -1182,6 +1178,10 @@ _EXPECTED_EXCLUDED_ENTRIES = (
     "examples/dequantize_gemm/regression_example_dequantize_gemm.py",
     "examples/deepseek_mla/regression_example_mla_decode.py",
     "examples/deepseek_v32/regression_tilelang_example_deepseek_v32.py",
+    "examples/ppu/topk/regression_topk_tilelang.py",
+    "examples/blocksparse_attention/regression_example_blocksparse_attention.py",
+    "examples/gemm_fp8/regression_example_gemm_fp8.py",
+    "examples/deepseek_nsa/regression_example_tilelang_nsa.py",
 )
 
 
@@ -1205,9 +1205,9 @@ class TestShippedManifest:
         assert self.document["platform"] == "ppu-890p"
 
     def test_exact_enabled_and_excluded_counts(self):
-        assert len(self.document["benchmarks"]) == 14
-        assert len(self.document["excluded"]) == 6
-        assert len(self.resolved) == 14
+        assert len(self.document["benchmarks"]) == 10
+        assert len(self.document["excluded"]) == 10
+        assert len(self.resolved) == 10
 
     def test_enabled_entry_schema(self):
         for entry in self.document["benchmarks"]:

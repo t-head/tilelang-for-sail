@@ -11,13 +11,9 @@ benchmarks:
     group: ppu
   - path: examples/ppu/seer_attention/regression_block_sparse_attn_tilelang.py
     group: ppu
-  - path: examples/ppu/topk/regression_topk_tilelang.py
-    group: ppu
 
   # Attention
   - path: examples/attention_sink/regression_attention_sink.py
-    group: attention
-  - path: examples/blocksparse_attention/regression_example_blocksparse_attention.py
     group: attention
   - path: examples/flash_attention/regression_example_flash_attention.py
     group: attention
@@ -27,8 +23,6 @@ benchmarks:
     group: attention
 
   # GEMM
-  - path: examples/gemm_fp8/regression_example_gemm_fp8.py
-    group: gemm
   - path: examples/gemm_splitk/regression_example_gemm_splitk.py
     group: gemm
   - path: examples/blocksparse_gemm/regression_example_blocksparse_gemm.py
@@ -40,8 +34,6 @@ benchmarks:
 
   # DeepSeek
   - path: examples/deepseek_mhc/regression_example_mhc.py
-    group: deepseek
-  - path: examples/deepseek_nsa/regression_example_tilelang_nsa.py
     group: deepseek
 
 excluded:
@@ -57,3 +49,11 @@ excluded:
     reason: PPU compilation fails with a LayoutInference conflict
   - path: examples/deepseek_v32/regression_tilelang_example_deepseek_v32.py
     reason: PPU backend does not support the required TMA operation
+  - path: examples/ppu/topk/regression_topk_tilelang.py
+    reason: "CI run 40630162805 OLD/NEW latency variance: example_topk max CV 7.470%"
+  - path: examples/blocksparse_attention/regression_example_blocksparse_attention.py
+    reason: "CI run 40630162805 OLD/NEW latency variance: max single-case CV 6.879%"
+  - path: examples/gemm_fp8/regression_example_gemm_fp8.py
+    reason: "CI run 40630162805 OLD/NEW latency variance: example_tilelang_gemm_fp8_2xAcc CV 5.425%"
+  - path: examples/deepseek_nsa/regression_example_tilelang_nsa.py
+    reason: "CI run 40630162805 OLD/NEW latency variance: decode CV 9.283%, fwd CV 8.513%"
