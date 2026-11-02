@@ -39,6 +39,7 @@ HOST_KERNEL_PATH = "host_kernel.cu"
 EXECUTABLE_PATH = "executable.so"
 KERNEL_LIB_PATH = "kernel_lib.so"
 KERNEL_CUBIN_PATH = "kernel.cubin"
+KERNEL_HGBIN_PATH = "kernel.hgbin"
 KERNEL_PY_PATH = "kernel.py"
 PARAMS_PATH = "params.json"
 TargetLike = str | dict[str, object] | Target
@@ -58,7 +59,7 @@ class CompileArgs:
     """
 
     out_idx: list[int] | int | None = None
-    execution_backend: Literal["auto", "tvm_ffi", "cython", "nvrtc", "torch"] = "auto"
+    execution_backend: Literal["auto", "tvm_ffi", "cython", "nvrtc", "hgrtc", "torch"] = "auto"
     target: TargetLike = "auto"
     target_host: TargetLike | None = None
     verbose: bool = False
@@ -254,13 +255,18 @@ class AutotuneResult:
 
         kernel_lib_path = os.path.join(cache_path, kernel_lib_file)
 
-        if kernel.execution_backend == "nvrtc":
-            # Save cubin and python helper file
+        if kernel.execution_backend in ("nvrtc", "hgrtc"):
+            # Save the compiled binary (cubin/hgbin) and python helper file
             src_lib_path = kernel.adapter.libpath
             kernel_py_path = os.path.join(cache_path, KERNEL_PY_PATH)
-            py_src_path = src_lib_path.replace(".cubin", ".py")
+            # Prefer the adapter's own launcher path: the binary and its .py
+            # companion always share one base name in the runtime-compile backends.
+            py_src_path = getattr(getattr(kernel.adapter, "lib_generator", None), "pypath", None)
+            if py_src_path is None:
+                _base, _ = os.path.splitext(src_lib_path)
+                py_src_path = _base + ".py"
             if verbose:
-                logger.debug(f"Saving kernel nvrtc python code to file: {kernel_py_path}")
+                logger.debug(f"Saving kernel launcher python code to file: {kernel_py_path}")
             self._safe_write_file(kernel_py_path, "wb", lambda f: f.write(self._load_binary(py_src_path)))
             if verbose:
                 logger.debug(f"Saving kernel library to file: {kernel_lib_path}")
@@ -568,6 +574,8 @@ class AutotuneResult:
         """Return the cache filename for one backend's executable artifact."""
         if execution_backend == "nvrtc":
             return KERNEL_CUBIN_PATH
+        if execution_backend == "hgrtc":
+            return KERNEL_HGBIN_PATH
         if execution_backend == "tvm_ffi":
             return EXECUTABLE_PATH
         if execution_backend == "cutedsl":
@@ -578,7 +586,7 @@ class AutotuneResult:
     def _get_required_kernel_files(cls, path: Path, execution_backend: str) -> list[Path]:
         """Return backend-specific files required to reload a kernel."""
         files = [path / cls._get_kernel_lib_file(execution_backend)]
-        if execution_backend == "nvrtc":
+        if execution_backend in ("nvrtc", "hgrtc"):
             files.append(path / KERNEL_PY_PATH)
         return files
 

@@ -249,11 +249,6 @@ class TLNVRTCSourceWrapper(TLCUDASourceWrapper):
 
     _generated_host_func: str | None = None
 
-    # Host-launcher template and launch-code renderer are class-level hooks so
-    # subclasses (e.g. the PPU variant at the bottom of this file) can reuse
-    # the whole create_dispatch_func machinery with a different runtime driver.
-    _host_func_template = PREDEF_HOST_FUNC_PY
-
     def __init__(
         self,
         scheduled_ir_module: IRModule,
@@ -446,7 +441,7 @@ class TLNVRTCSourceWrapper(TLCUDASourceWrapper):
             kernel_launch_code += L2_PERSISTENT_MAP_RESET_HANDLE_PY
 
         # Wrap the kernel dispatch logic in an external C function
-        host_func = self._host_func_template.format(repr(list(function_informations.keys())), def_args, kernel_launch_code)
+        host_func = PREDEF_HOST_FUNC_PY.format(repr(list(function_informations.keys())), def_args, kernel_launch_code)
         return host_func
 
     def _render_kernel_launch(
@@ -644,135 +639,3 @@ class TLNVRTCSourceWrapper(TLCUDASourceWrapper):
         Default to 0 (NULL stream) for convenience.
         """
         return {"name": "stream=0", "type": "int"}
-
-
-PREDEF_HOST_FUNC_PPU_PY = '''
-import ctypes
-import os
-
-
-def _load_hg_driver():
-    """Load the HGGC driver library and perform one-time initialization.
-
-    Unlike CUDA (cudaSetDevice implicitly cuInit's), the HGGC driver must be
-    initialized explicitly with hgInit(0) before any module/launch API call.
-    """
-    _sdk = os.environ.get("PPU_SDK", "")
-    _candidates = [
-        os.path.join(_sdk, "lib", "libhggc.so"),
-        os.path.join(_sdk, "targets", "x86_64-linux", "lib", "libhggc.so"),
-        "libhggc.so",
-    ]
-    _lib = None
-    for _cand in _candidates:
-        try:
-            _lib = ctypes.CDLL(_cand)
-            break
-        except OSError:
-            continue
-    if _lib is None:
-        raise RuntimeError(
-            "Failed to load libhggc.so; please source the PPU SDK envsetup.sh "
-            f"(PPU_SDK={{_sdk!r}})"
-        )
-    _lib.hgInit.argtypes = [ctypes.c_uint]
-    _lib.hgInit.restype = ctypes.c_int
-    _res = _lib.hgInit(0)
-    if _res != 0:
-        raise RuntimeError(f"hgInit(0) failed: HGresult={{_res}}")
-    _lib.hgFuncSetAttribute.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
-    _lib.hgFuncSetAttribute.restype = ctypes.c_int
-    _lib.hgLaunchKernel.argtypes = [
-        ctypes.c_void_p,
-        ctypes.c_uint, ctypes.c_uint, ctypes.c_uint,
-        ctypes.c_uint, ctypes.c_uint, ctypes.c_uint,
-        ctypes.c_uint,
-        ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_void_p),
-        ctypes.c_void_p,
-    ]
-    _lib.hgLaunchKernel.restype = ctypes.c_int
-    return _lib
-
-
-_hg = _load_hg_driver()
-
-_function_names = {}
-
-def call({}):
-    {}
-'''
-
-# HG_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES == 8 (hggc_v2/hggc.h)
-PPU_SET_SMEM_ATTR_PY = """
-    _ppu_res = _hg.hgFuncSetAttribute(kernels["{0}"], 8, {1})
-    if _ppu_res != 0:
-        raise RuntimeError(f"Failed to set max dynamic shared memory size to {1} for kernel {0}: HGresult={{_ppu_res}}")
-"""
-
-PPU_KERNEL_LAUNCH_FUNC_PY = """
-    _ppu_args_{0} = [{1}]
-    _ppu_params_{0} = (ctypes.c_void_p * len(_ppu_args_{0}))(*[ctypes.addressof(_a) for _a in _ppu_args_{0}])
-    _ppu_res = _hg.hgLaunchKernel(kernels["{0}"], {2}, {3}, {4}, {5}, {6}, {7}, {8}, ctypes.c_void_p(stream), _ppu_params_{0}, None)
-    if _ppu_res != 0:
-        raise RuntimeError(f"Failed to launch kernel {0}: HGresult={{_ppu_res}}")
-"""
-
-
-class TLPPUNVRTCSourceWrapper(TLNVRTCSourceWrapper):
-    """PPU variant of the NVRTC-style wrapper.
-
-    Same architecture as TLNVRTCSourceWrapper (pure-Python launcher driving a
-    vendor driver API), but the generated launcher talks to the HGGC driver
-    (libhggc.so) through ctypes instead of cuda-python: hgcc-compiled .hgbin
-    modules are loaded with hgModuleLoadData in NVRTCLibraryGenerator and
-    kernels are launched here with hgLaunchKernel, the CUlaunch* equivalent.
-    """
-
-    _host_func_template = PREDEF_HOST_FUNC_PPU_PY
-
-    def parse_source_information(self):
-        super().parse_source_information()
-        # cuTensorMapEncode* (TMA), the L2 persisting-cache window and PDL
-        # launch attributes are CUDA-only host-side APIs; the PPU Python
-        # launcher does not support them.
-        self.tma_descriptor_args = None
-        self.l2_persistent_map = {}
-        self.pdl_sync_map = {}
-
-    def _render_kernel_launch(
-        self,
-        function_name: str,
-        grid_strs: tuple[str, str, str],
-        block_strs: tuple[str, str, str],
-        smem_str,
-        call_args: list,
-        device_index,
-        extra_code: str,
-    ) -> str:
-        # The HGGC driver takes kernel parameters as an array of pointers to
-        # the actual argument values (void**), so each argument is materialized
-        # as a ctypes object whose address goes into the params array.
-        constructions = []
-        for arg_name, arg_type in call_args:
-            if arg_type == "ctypes.c_void_p":
-                constructions.append(f"ctypes.c_void_p({arg_name})")
-            else:
-                constructions.append(f"{arg_type}({arg_name})")
-        args_str = ", ".join(constructions)
-
-        launch_code = ""
-        if smem_str != 0:
-            launch_code += PPU_SET_SMEM_ATTR_PY.format(function_name, smem_str)
-        launch_code += PPU_KERNEL_LAUNCH_FUNC_PY.format(
-            function_name,
-            args_str,
-            grid_strs[0],
-            grid_strs[1],
-            grid_strs[2],
-            block_strs[0],
-            block_strs[1],
-            block_strs[2],
-            smem_str,
-        )
-        return launch_code
