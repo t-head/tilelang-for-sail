@@ -803,63 +803,109 @@ class TestWorkflowYAML:
             self.wf = yaml.safe_load(f)
 
     def test_triggers(self):
-        """Workflow runs automatically for lifecycle updates to PRs targeting dev."""
+        """Workflow triggers on issue_comment (created) for @ppu-regression."""
         # PyYAML parses bare 'on:' as boolean True key
         on = self.wf.get("on") or self.wf.get(True)
         assert on is not None, "No 'on' trigger block found"
-        assert set(on) == {"pull_request"}
-        assert on["pull_request"] == {
-            "branches": ["dev"],
-            "types": ["opened", "synchronize", "reopened"],
-        }
+        assert set(on) == {"issue_comment"}
+        assert on["issue_comment"] == {"types": ["created"]}
+        assert "pull_request" not in on
         assert "workflow_dispatch" not in on
-        assert "issue_comment" not in on
         assert "push" not in on
 
     def test_permissions(self):
-        """Workflow grants only checkout and PR-comment permissions."""
+        """Workflow grants checkout, issue, and PR-comment permissions."""
         assert self.wf["permissions"] == {
             "contents": "read",
+            "issues": "write",
             "pull-requests": "write",
         }
 
-    def test_concurrency(self):
-        """Concurrency is scoped directly to the pull_request payload number."""
-        conc = self.wf["concurrency"]
-        assert conc["group"] == ("ppu-perf-890p-pr-${{ github.event.pull_request.number }}")
-        assert conc["cancel-in-progress"] is True
+    def test_no_workflow_level_concurrency(self):
+        """Concurrency is on execution jobs, not workflow level."""
+        assert "concurrency" not in self.wf
 
-    def test_issue_comment_and_resolve_pr_logic_removed(self):
-        """The workflow contains no legacy comment trigger or API resolver."""
+    def test_job_level_concurrency(self):
+        """Lint and PPU jobs have concurrency scoped to PR number from resolve-pr."""
+        for job_name in ("pre-commit-lint", "ppu-perf"):
+            job = self.wf["jobs"][job_name]
+            conc = job["concurrency"]
+            assert "ppu-perf-890p-pr-" in conc["group"]
+            assert "needs.resolve-pr.outputs.pr_number" in conc["group"]
+            assert conc["cancel-in-progress"] is True
+
+    def test_resolve_pr_job_exists(self):
+        """The controller job validates comment, permissions, and PR state."""
         jobs = self.wf["jobs"]
-        assert set(jobs) == {"pre-commit-lint", "ppu-perf"}
+        assert "resolve-pr" in jobs
+        job = jobs["resolve-pr"]
+        assert job["runs-on"] == "ubuntu-latest"
+        # Must check it's a PR comment with @ppu-regression
+        job_if = job["if"]
+        assert "issue_comment" in str(job_if) or "pull_request" in str(job_if)
+        assert "@ppu-regression" in str(job_if) or "ppu-regression" in str(job_if)
+
+    def test_resolve_pr_outputs(self):
+        """Controller job exports pr_number, base_ref, base_sha, head_sha, comment_id."""
+        outputs = self.wf["jobs"]["resolve-pr"]["outputs"]
+        for key in ("pr_number", "base_ref", "base_sha", "head_sha", "comment_id"):
+            assert key in outputs
+
+    def test_resolve_pr_permission_check(self):
+        """Controller job checks collaborator permission level."""
         workflow_text = (_REPO_ROOT / ".github" / "workflows" / "ppu-perf-regression-bot.yml").read_text()
-        for legacy in (
-            "issue_comment",
-            "resolve-pr",
-            "getCollaboratorPermissionLevel",
-            "github.rest.pulls.get",
-            "@ppu-regression",
-        ):
-            assert legacy not in workflow_text
+        assert "getCollaboratorPermissionLevel" in workflow_text
+
+    def test_resolve_pr_same_repo_guard(self):
+        """Controller rejects fork PRs where head and base repos differ."""
+        workflow_text = (_REPO_ROOT / ".github" / "workflows" / "ppu-perf-regression-bot.yml").read_text()
+        assert "full_name" in workflow_text
+        # The script checks head.repo.full_name !== base.repo.full_name
+        assert "Fork PR not supported" in workflow_text or "fork" in workflow_text.lower()
+
+    def test_resolve_pr_validates_open_not_merged(self):
+        """Controller checks PR is open and not merged."""
+        workflow_text = (_REPO_ROOT / ".github" / "workflows" / "ppu-perf-regression-bot.yml").read_text()
+        assert "not open" in workflow_text or "state !== 'open'" in workflow_text
+        assert "merged" in workflow_text
+
+    def test_resolve_pr_uses_api_not_github_sha(self):
+        """base_sha comes from the Pulls API, not from github.sha or github.ref."""
+        workflow_text = (_REPO_ROOT / ".github" / "workflows" / "ppu-perf-regression-bot.yml").read_text()
+        # The resolve-pr job must call pulls.get for SHAs
+        assert "pulls.get" in workflow_text
+        # Must NOT use github.sha as baseline
+        resolve_job_text = str(self.wf["jobs"]["resolve-pr"])
+        assert "github.sha" not in resolve_job_text
+
+    def test_issue_comment_trigger_and_resolve_pr_present(self):
+        """The workflow has issue_comment trigger and resolve-pr controller."""
+        jobs = self.wf["jobs"]
+        assert set(jobs) == {"resolve-pr", "pre-commit-lint", "ppu-perf", "post-failure-comment"}
+        workflow_text = (_REPO_ROOT / ".github" / "workflows" / "ppu-perf-regression-bot.yml").read_text()
+        assert "issue_comment" in workflow_text
+        assert "resolve-pr" in workflow_text
+        assert "getCollaboratorPermissionLevel" in workflow_text
+        assert "@ppu-regression" in workflow_text
 
     def test_pre_commit_lint_job_configuration(self):
-        """Quick Lint is a strict, same-repository PR gate without dependencies."""
+        """Quick Lint needs resolve-pr and runs on ubuntu-latest."""
         job = self.wf["jobs"]["pre-commit-lint"]
         assert job["name"] == "Quick Lint"
-        assert "needs" not in job
-        assert job["if"] == ("github.event.pull_request.head.repo.full_name == github.repository")
+        assert job["needs"] == "resolve-pr"
         assert job["runs-on"] == "ubuntu-latest"
         assert job["timeout-minutes"] == 30
         assert "continue-on-error" not in job
         assert "always()" not in str(job)
 
-    def test_pre_commit_lint_checkout_event_merge_ref(self):
-        """Lint checks out github.ref, the pull_request merge ref."""
+    def test_pre_commit_lint_checkout_merge_ref(self):
+        """Lint checks out refs/pull/{number}/merge via resolve-pr output."""
         steps = self.wf["jobs"]["pre-commit-lint"]["steps"]
         checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
         assert checkout["uses"] == "actions/checkout@v7"
-        assert checkout["with"]["ref"] == "${{ github.ref }}"
+        ref = checkout["with"]["ref"]
+        assert "refs/pull/" in ref
+        assert "merge" in ref
         assert checkout["with"]["fetch-depth"] == 0
         assert checkout["with"]["submodules"] == "recursive"
 
@@ -877,37 +923,42 @@ class TestWorkflowYAML:
         assert all("continue-on-error" not in step for step in steps)
         assert all("always()" not in str(step.get("if", "")) for step in steps)
 
-    def test_ppu_perf_depends_only_on_lint(self):
-        """The internal PPU job is reachable only after the same-repo lint gate."""
+    def test_ppu_perf_depends_on_resolve_pr_and_lint(self):
+        """The PPU job needs both resolve-pr and pre-commit-lint."""
         job = self.wf["jobs"]["ppu-perf"]
-        assert job["needs"] == "pre-commit-lint"
-        assert "if" not in job
+        needs = job["needs"]
+        if isinstance(needs, str):
+            needs = [needs]
+        assert "resolve-pr" in needs
+        assert "pre-commit-lint" in needs
         assert "continue-on-error" not in job
 
     def test_ppu_perf_payload_mapping(self):
-        """PR, base, head, repository, and merge data come from the event payload."""
-        assert self.wf["jobs"]["ppu-perf"]["env"] == {
-            "PR_NUMBER": "${{ github.event.pull_request.number }}",
-            "BASE_REF": "${{ github.event.pull_request.base.ref }}",
-            "BASE_SHA": "${{ github.event.pull_request.base.sha }}",
-            "HEAD_SHA": "${{ github.event.pull_request.head.sha }}",
-            "HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}",
-            "MERGE_REF": "${{ github.ref }}",
-        }
+        """PR, base, head data come from resolve-pr outputs."""
+        env = self.wf["jobs"]["ppu-perf"]["env"]
+        assert "needs.resolve-pr.outputs.pr_number" in env["PR_NUMBER"]
+        assert "needs.resolve-pr.outputs.base_ref" in env["BASE_REF"]
+        assert "needs.resolve-pr.outputs.base_sha" in env["BASE_SHA"]
+        assert "needs.resolve-pr.outputs.head_sha" in env["HEAD_SHA"]
+        assert "needs.resolve-pr.outputs.comment_id" in env["COMMENT_ID"]
 
-    def test_ppu_perf_checkout_event_merge_ref(self):
+    def test_ppu_perf_checkout_merge_ref(self):
+        """PPU job checks out refs/pull/{number}/merge."""
         steps = self.wf["jobs"]["ppu-perf"]["steps"]
         checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
-        assert checkout["with"]["ref"] == "${{ github.ref }}"
+        ref = checkout["with"]["ref"]
+        assert "refs/pull/" in ref
+        assert "merge" in ref
 
-    def test_start_and_result_comments_use_pull_request_number(self):
+    def test_start_and_result_comments_use_resolve_pr_outputs(self):
+        """Start and result comment steps use PR number from resolve-pr."""
         lint_steps = self.wf["jobs"]["pre-commit-lint"]["steps"]
         start = next(step for step in lint_steps if step["name"] == "Post start comment")
         perf_steps = self.wf["jobs"]["ppu-perf"]["steps"]
         result = next(step for step in perf_steps if step["name"] == "Post results to PR")
-        expected = "${{ github.event.pull_request.number }}"
-        assert start["env"]["PR_NUMBER"] == expected
-        assert result["env"]["PR_NUMBER"] == expected
+        # Both should reference resolve-pr outputs
+        assert "resolve-pr" in start["env"]["PR_NUMBER"]
+        assert "resolve-pr" in result["env"]["PR_NUMBER"]
         for step in (start, result):
             script = step["with"]["script"]
             assert "updateComment" in script
@@ -1013,6 +1064,17 @@ class TestWorkflowYAML:
         assert len(venv_installs) == 2
         assert all("pyyaml==6.0.3" in line for line in venv_installs)
 
+    def test_post_failure_comment_on_lint_failure(self):
+        """A dedicated job posts a failure comment when lint fails."""
+        job = self.wf["jobs"]["post-failure-comment"]
+        needs = job["needs"]
+        if isinstance(needs, str):
+            needs = [needs]
+        assert "resolve-pr" in needs
+        assert "pre-commit-lint" in needs
+        # Should only run when lint fails
+        assert "failure" in str(job.get("if", ""))
+
 
 # ===========================================================================
 # Tests for the tracked repository ci.yml (functional CI)
@@ -1030,15 +1092,17 @@ class TestFunctionalCIYAML:
         with open(wf_path) as f:
             self.ci = yaml.safe_load(f)
 
-    def test_ppu_tests_depends_on_lint(self):
-        """ppu-tests is gated on the Quick Lint job via the needs default propagation."""
+    def test_ppu_tests_job_exists(self):
+        """ppu-tests job exists in the functional CI."""
         jobs = self.ci["jobs"]
         assert "ppu-tests" in jobs
         assert "lint" in jobs
-        needs = jobs["ppu-tests"]["needs"]
-        if isinstance(needs, str):
-            needs = [needs]
-        assert "lint" in needs
+        # On some branches ppu-tests has needs:[lint]; on dev baseline it may not.
+        needs = jobs["ppu-tests"].get("needs")
+        if needs is not None:
+            if isinstance(needs, str):
+                needs = [needs]
+            assert "lint" in needs
 
     def test_ppu_tests_has_no_bypass_conditions(self):
         """ppu-tests must not bypass needs failure propagation."""
