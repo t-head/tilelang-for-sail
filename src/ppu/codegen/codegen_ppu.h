@@ -35,8 +35,9 @@ public:
                          std::ostream &os) final; // NOLINT(*)
   void PrintVecBinaryOp(const std::string &op, DataType t, PrimExpr lhs,
                         PrimExpr rhs,
-                        std::ostream &os) final;      // NOLINT(*)
-  void PrintType(DataType t, std::ostream &os) final; // NOLINT(*)
+                        std::ostream &os) final;                // NOLINT(*)
+  void PrintType(DataType t, std::ostream &os) final;           // NOLINT(*)
+  void PrintVecConstructor(DataType t, std::ostream &os) final; // NOLINT(*)
   void PrintVecElemLoad(const std::string &vec, DataType t, int i,
                         std::ostream &os) final; // NOLINT(*)
   void PrintVecElemStore(const std::string &vec, DataType t, int i,
@@ -130,6 +131,8 @@ private:
   bool need_mma_sp_instruction_h_{false};
   // whether need tl intrin header (get_lane_idx/get_warp_idx*/tl_shuffle_elect)
   bool need_intrin_h_{false};
+  // whether need tl atomic header
+  bool need_atomic_h_{false};
   // whether need tl barrier header (mbarrier_cp_async_arrive*)
   bool need_barrier_h_{false};
   // whether need cast_smem_ptr_to_int helper function
