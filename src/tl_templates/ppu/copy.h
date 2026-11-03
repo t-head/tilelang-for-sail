@@ -283,6 +283,82 @@ TL_DEVICE void store_global_128_conditional(void *ptr, uint4 value, bool pred) {
   global_store<uint4, 16>(ptr, value, pred);
 }
 
+// 256-bit global accessors. The PPU ISA exposes vector loads/stores up to
+// 128 bits (v4.u32), so a 256-bit access is performed as two 128-bit halves.
+// The generic template returns the pointee type so assignments to vector
+// structs (fp8_e4_32_t, ...) type-check without a hand-written operator=
+// from ulonglong4 on every such type.
+
+template <typename T>
+TL_DEVICE T load_global_256(const T *ptr) {
+  static_assert(sizeof(T) == 32,
+                "tl::load_global_256 requires a 32-byte vector type");
+  uint4 lo{};
+  uint4 hi{};
+  global_load<uint4, 16>(lo, ptr, true);
+  global_load<uint4, 16>(hi, reinterpret_cast<const uint8_t *>(ptr) + 16, true);
+  ulonglong4 ret;
+  ret.x = (static_cast<unsigned long long>(lo.y) << 32) | lo.x;
+  ret.y = (static_cast<unsigned long long>(lo.w) << 32) | lo.z;
+  ret.z = (static_cast<unsigned long long>(hi.y) << 32) | hi.x;
+  ret.w = (static_cast<unsigned long long>(hi.w) << 32) | hi.z;
+  return *reinterpret_cast<T *>(&ret);
+}
+
+template <typename T>
+TL_DEVICE T load_global_256_conditional(const T *ptr, bool pred) {
+  static_assert(sizeof(T) == 32,
+                "tl::load_global_256_conditional requires a 32-byte vector type");
+  uint4 lo{};
+  uint4 hi{};
+  global_load<uint4, 16>(lo, ptr, pred);
+  global_load<uint4, 16>(hi, reinterpret_cast<const uint8_t *>(ptr) + 16, pred);
+  ulonglong4 ret;
+  ret.x = (static_cast<unsigned long long>(lo.y) << 32) | lo.x;
+  ret.y = (static_cast<unsigned long long>(lo.w) << 32) | lo.z;
+  ret.z = (static_cast<unsigned long long>(hi.y) << 32) | hi.x;
+  ret.w = (static_cast<unsigned long long>(hi.w) << 32) | hi.z;
+  return *reinterpret_cast<T *>(&ret);
+}
+
+template <typename T>
+TL_DEVICE void store_global_256(void *ptr, const T &value) {
+  static_assert(sizeof(T) == 32,
+                "tl::store_global_256 requires a 32-byte vector type");
+  const ulonglong4 &v = reinterpret_cast<const ulonglong4 &>(value);
+  uint4 lo;
+  lo.x = static_cast<unsigned>(v.x);
+  lo.y = static_cast<unsigned>(v.x >> 32);
+  lo.z = static_cast<unsigned>(v.y);
+  lo.w = static_cast<unsigned>(v.y >> 32);
+  uint4 hi;
+  hi.x = static_cast<unsigned>(v.z);
+  hi.y = static_cast<unsigned>(v.z >> 32);
+  hi.z = static_cast<unsigned>(v.w);
+  hi.w = static_cast<unsigned>(v.w >> 32);
+  global_store<uint4, 16>(ptr, lo, true);
+  global_store<uint4, 16>(reinterpret_cast<uint8_t *>(ptr) + 16, hi, true);
+}
+
+template <typename T>
+TL_DEVICE void store_global_256_conditional(void *ptr, const T &value, bool pred) {
+  static_assert(sizeof(T) == 32,
+                "tl::store_global_256_conditional requires a 32-byte vector type");
+  const ulonglong4 &v = reinterpret_cast<const ulonglong4 &>(value);
+  uint4 lo;
+  lo.x = static_cast<unsigned>(v.x);
+  lo.y = static_cast<unsigned>(v.x >> 32);
+  lo.z = static_cast<unsigned>(v.y);
+  lo.w = static_cast<unsigned>(v.y >> 32);
+  uint4 hi;
+  hi.x = static_cast<unsigned>(v.z);
+  hi.y = static_cast<unsigned>(v.z >> 32);
+  hi.z = static_cast<unsigned>(v.w);
+  hi.w = static_cast<unsigned>(v.w >> 32);
+  global_store<uint4, 16>(ptr, lo, pred);
+  global_store<uint4, 16>(reinterpret_cast<uint8_t *>(ptr) + 16, hi, pred);
+}
+
 enum class AiuPrefetch : uint32_t {
   kNone = 0,
   kLLC64B = 64,

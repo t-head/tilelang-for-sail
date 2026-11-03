@@ -271,11 +271,11 @@ def _if_else_aiu_load_kernel(block_M=128, block_N=128, block_K=64):
 # ---------------------------------------------------------------------------
 
 
-def _compile_with_aiu(func):
+def _compile_with_aiu(func, out_idx=[-1]):
     """Compile a kernel with AIU lowering enabled and return the CUDA source."""
     kernel = tilelang.compile(
         func,
-        out_idx=[-1],
+        out_idx=out_idx,
         pass_configs={
             PassConfigKey.TL_DISABLE_AIU_LOWER: False,
         },
@@ -481,7 +481,7 @@ def test_dynamic_extent_pipeline_no_duplicate_commit():
     grouping strategy ever merges multiple loads into a shared commit group,
     this count assertion must be updated accordingly.
     """
-    source = _compile_with_aiu(_dynamic_extent_kv_kernel())
+    source = _compile_with_aiu(_dynamic_extent_kv_kernel(), out_idx=[-2])
 
     assert "tl::aiu_load" in source, "Expected tl::aiu_load in generated CUDA source"
     num_loads = source.count("tl::aiu_load")
@@ -505,7 +505,7 @@ def test_if_branch_aiu_load_commit_shares_branch_scope():
     """aiu_loads inside IfThenElse branches must get their commit injected
     into the same conditional scope: no phantom commit on the unconditional
     path and no duplicates."""
-    source = _compile_with_aiu(_if_else_aiu_load_kernel())
+    source = _compile_with_aiu(_if_else_aiu_load_kernel(), out_idx=[-2])
 
     assert "tl::aiu_load" in source, "Expected tl::aiu_load in generated CUDA source"
     # No duplicates and no phantom commits: one commit site per aiu_load site.
