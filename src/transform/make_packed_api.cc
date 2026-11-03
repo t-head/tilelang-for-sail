@@ -746,9 +746,17 @@ MakePackedAPI(PrimFunc func,
         Call(DataType::Int(32), builtin::tvm_struct_get(),
              {anchor_tensor, IntImm(DataType::Int(32), 0),
               IntImm(DataType::Int(32), builtin::kDLTensorDeviceType)});
-    seq_init.push_back(MakeAssertEQ(
-        anchor_device_type, IntImm(DataType::Int(32), device_type.IntValue()),
-        name_hint + ": allocator anchor has the wrong device type"));
+    // Torch tensors on PPU present as kDLCUDA (same rule as the binder's).
+    PrimExpr anchor_device_ok =
+        anchor_device_type == IntImm(DataType::Int(32), device_type.IntValue());
+    if (device_type.IntValue() == DLDeviceType::kDLPPU) {
+      anchor_device_ok = anchor_device_ok ||
+                         (anchor_device_type == IntImm(DataType::Int(32), static_cast<int>(DLDeviceType::kDLCUDA)));
+    }
+    seq_init.push_back(AssertStmt(
+        anchor_device_ok, tvm::tirx::StringImm("RuntimeError"),
+        Array<tvm::tirx::StringImm>(
+            {tvm::tirx::StringImm(name_hint + ": allocator anchor has the wrong device type")})));
     PrimExpr anchor_device_id =
         Call(DataType::Int(32), builtin::tvm_struct_get(),
              {anchor_tensor, IntImm(DataType::Int(32), 0),
@@ -912,7 +920,12 @@ MakePackedAPI(PrimFunc func,
       set_prototype_field(builtin::kDLTensorByteOffset,
                           IntImm(DataType::UInt(64), 0));
       set_prototype_field(builtin::kDLTensorDeviceId, device_id);
-      set_prototype_field(builtin::kDLTensorDeviceType, device_type);
+      // Torch DLPack only sees kDLCUDA on PPU; keep the prototype torch-visible.
+      PrimExpr output_device_type = device_type;
+      if (device_type.IntValue() == DLDeviceType::kDLPPU) {
+        output_device_type = IntImm(DataType::Int(32), static_cast<int>(DLDeviceType::kDLCUDA));
+      }
+      set_prototype_field(builtin::kDLTensorDeviceType, output_device_type);
       PrimExpr prototype = Call(
           DataType::Handle(), builtin::tvm_struct_get(),
           {output_prototype_storage, IntImm(DataType::Int(32), output_ordinal),

@@ -23,6 +23,30 @@ bfloat16_t fast_exp(bfloat16_t x) { return bfloat16_t(fast_exp(float(x))); }
 // results unassignable.
 TL_DEVICE
 bfloat16_t fast_sqrt(bfloat16_t x) { return bfloat16_t(fast_sqrt(float(x))); }
+
+// cutlass only overloads fast_log/fast_sin/fast_cos for float/double, but the
+// hlog/hsin/hcos macros below redirect 16-bit call sites there; the float
+// return is not assignable to the 16-bit wrapper types. Route through float.
+TL_DEVICE
+half_t fast_log(half_t x) { return half_t(fast_log(float(x))); }
+
+TL_DEVICE
+bfloat16_t fast_log(bfloat16_t x) { return bfloat16_t(fast_log(float(x))); }
+
+TL_DEVICE
+half_t fast_sin(half_t x) { return half_t(fast_sin(float(x))); }
+
+TL_DEVICE
+bfloat16_t fast_sin(bfloat16_t x) { return bfloat16_t(fast_sin(float(x))); }
+
+TL_DEVICE
+half_t fast_cos(half_t x) { return half_t(fast_cos(float(x))); }
+
+TL_DEVICE
+bfloat16_t fast_cos(bfloat16_t x) { return bfloat16_t(fast_cos(float(x))); }
+
+TL_DEVICE
+half_t fast_sqrt(half_t x) { return half_t(fast_sqrt(float(x))); }
 } // namespace cutlass
 
 namespace tl {
@@ -30,5 +54,44 @@ TL_DEVICE float fast_rcp(float x) {
   float ret;
   asm volatile("ppu.rcp.approx.ftz.f32 %0, %1;" : "=f"(ret) : "f"(x));
   return ret;
+}
+
+// Pass operands by value: checking NaN must not re-evaluate the caller's
+// expression (which can, for example, be a returning atomic operation).
+// NaN detection uses the self-inequality idiom, which needs no isnan
+// intrinsic on the device.
+TL_DEVICE float clamp(float x, float lo, float hi) {
+  if (x != x)
+    return x;
+  if (lo != lo)
+    return lo;
+  if (hi != hi)
+    return hi;
+  return fminf(fmaxf(x, lo), hi);
+}
+
+TL_DEVICE double clamp(double x, double lo, double hi) {
+  if (x != x)
+    return x;
+  if (lo != lo)
+    return lo;
+  if (hi != hi)
+    return hi;
+  return fmin(fmax(x, lo), hi);
+}
+
+// Narrow formats, including FP8/FP16/BF16, are exactly representable in
+// float.
+template <typename T> TL_DEVICE T clamp(T x, T lo, T hi) {
+  return T(clamp(float(x), float(lo), float(hi)));
+}
+
+TL_DEVICE __half2 clamp2(__half2 x, __half2 lo, __half2 hi) {
+  return min2_nan(max2_nan(x, lo), hi);
+}
+
+TL_DEVICE __ppu_bfloat162 clamp2(__ppu_bfloat162 x, __ppu_bfloat162 lo,
+                                 __ppu_bfloat162 hi) {
+  return min2_nan(max2_nan(x, lo), hi);
 }
 } // namespace tl

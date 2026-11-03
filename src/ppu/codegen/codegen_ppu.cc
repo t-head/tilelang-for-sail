@@ -3263,6 +3263,101 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
       this->PrintExpr(op->args[0], os);
     }
     os << ")";
+  } else if (op->op.same_as(tl::clamp())) {
+    // NaN-propagating clamp, mirroring the CUDA backend: scalar calls go to
+    // tl::clamp, 16-bit vectors decompose into per-pair tl::clamp2 calls on
+    // the packed fields, and other vectors into per-lane tl::clamp calls.
+    ICHECK_EQ(op->args.size(), 3);
+    need_math_h_ = true;
+    DataType dtype = op->dtype;
+    std::vector<PrimExpr> args(op->args.begin(), op->args.end());
+    for (const PrimExpr &arg : args) {
+      ICHECK_EQ(arg.dtype(), dtype)
+          << "tl.clamp operands must have matching types";
+    }
+    if (!dtype.is_scalar()) {
+      // Bind effectful inputs before using them so identical calls (or loads
+      // around an atomic) are still evaluated independently, once per
+      // argument.
+      for (PrimExpr &arg : args) {
+        if (SideEffect(arg) > CallEffectKind::kPure) {
+          Var value("clamp_arg", dtype);
+          arg = Let(value, arg, value);
+        }
+      }
+    }
+    if (dtype.is_scalar()) {
+      os << "tl::clamp(" << PrintExpr(args[0]) << ", " << PrintExpr(args[1])
+         << ", " << PrintExpr(args[2]) << ")";
+    } else {
+      int lanes = dtype.lanes();
+      bool is_bf16x2 = dtype.is_bfloat16();
+      bool is_fp16x2 = dtype.is_float16();
+      std::vector<std::string> arg_ids;
+      arg_ids.reserve(args.size());
+      for (const PrimExpr &arg : args) {
+        arg_ids.push_back(SSAGetID(PrintExpr(arg), arg.dtype()));
+      }
+      std::string sret = name_supply_->FreshName("_");
+      this->PrintIndent();
+      this->PrintType(dtype, stream);
+      stream << ' ' << sret << ";\n";
+      int ssa_scope = BeginScope();
+      if ((is_bf16x2 || is_fp16x2) && CanEmitPackedX2Math(dtype)) {
+        // Each 32-bit field of the carrier packs a pair of elements; apply
+        // tl::clamp2 on each field directly (<= 8 lanes) or on each half of
+        // the 64-bit fields (12/16 lanes), same mapping as the binary
+        // packed-x2 path above.
+        static const char access[] = {'x', 'y', 'z', 'w'};
+        int num_pairs = lanes / 2;
+        std::string native_type = is_bf16x2 ? "__ppu_bfloat162" : "__half2";
+        auto make_half_pair = [&](const std::string &vec_name,
+                                  const std::string &field, int pair_offset) {
+          std::string pair = "tl::from_uint1<";
+          pair += native_type;
+          pair += ">(";
+          if (lanes <= 8) {
+            pair += "*(uint1*)(&(" + vec_name + "." + field + "))";
+          } else {
+            pair += "*(((uint1*)(&(" + vec_name + "." + field + "))) + " +
+                    std::to_string(pair_offset) + ")";
+          }
+          pair += ")";
+          return pair;
+        };
+        for (int p = 0; p < num_pairs; ++p) {
+          int field_idx = lanes <= 8 ? p : (p / 2);
+          ICHECK_LT(field_idx, 4);
+          int pair_offset = lanes <= 8 ? 0 : (p % 2);
+          std::string field(1, access[field_idx]);
+          this->PrintIndent();
+          if (lanes <= 8) {
+            stream << "*(uint1*)(&(" << sret << "." << field
+                   << ")) = tl::to_uint1(tl::clamp2(";
+          } else {
+            stream << "*(((uint1*)(&(" << sret << "." << field << "))) + "
+                   << pair_offset << ") = tl::to_uint1(tl::clamp2(";
+          }
+          stream << make_half_pair(arg_ids[0], field, pair_offset) << ", "
+                 << make_half_pair(arg_ids[1], field, pair_offset) << ", "
+                 << make_half_pair(arg_ids[2], field, pair_offset) << "));\n";
+        }
+      } else {
+        for (int lane = 0; lane < lanes; ++lane) {
+          std::ostringstream lane_call;
+          lane_call << "tl::clamp(";
+          for (size_t i = 0; i < args.size(); ++i) {
+            if (i != 0)
+              lane_call << ", ";
+            PrintVecElemLoad(arg_ids[i], dtype, lane, lane_call);
+          }
+          lane_call << ")";
+          PrintVecElemStore(sret, dtype, lane, lane_call.str());
+        }
+      }
+      EndScope(ssa_scope);
+      os << sret;
+    }
   } else if (op->op.same_as(tl::ldg128())) {
     // Explicit 128-bit global memory load: load_global_128(ptr) or
     // load_global_128_conditional(ptr, pred)
@@ -3279,16 +3374,20 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     os << ")";
   } else if (op->op.same_as(tl::ldg256())) {
     // Explicit 256-bit global memory load: load_global_256(ptr) or
-    // load_global_256_conditional(ptr, pred)
+    // load_global_256_conditional(ptr, pred). The builtin's result dtype is
+    // uint32x8 (ulonglong4), while the pointer argument carries the buffer's
+    // element type, so route through the exact ulonglong4 overload instead of
+    // letting the generic template deduce (and return) the element type.
     ICHECK(!op->args.empty()) << "T.ldg256 expects a pointer argument.";
     if (op->args.size() > 1) {
-      os << "tl::load_global_256_conditional(";
+      os << "tl::load_global_256_conditional((const ulonglong4*)(";
       this->PrintExpr(op->args[0], os);
-      os << ", ";
+      os << "), ";
       this->PrintExpr(op->args[1], os);
     } else {
-      os << "tl::load_global_256(";
+      os << "tl::load_global_256((const ulonglong4*)(";
       this->PrintExpr(op->args[0], os);
+      os << ")";
     }
     os << ")";
   } else if (op->op.same_as(tl::stg32())) {
@@ -3398,17 +3497,18 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     // store_global_256_conditional(ptr, value, pred)
     ICHECK(op->args.size() >= 2)
         << "T.stg256 expects pointer and value arguments.";
+    // Same ulonglong4 routing as T.ldg256 above.
     if (op->args.size() > 2) {
-      os << "tl::store_global_256_conditional(";
+      os << "tl::store_global_256_conditional((ulonglong4*)(";
       this->PrintExpr(op->args[0], os);
-      os << ", ";
+      os << "), ";
       this->PrintExpr(op->args[1], os);
       os << ", ";
       this->PrintExpr(op->args[2], os);
     } else {
-      os << "tl::store_global_256(";
+      os << "tl::store_global_256((ulonglong4*)(";
       this->PrintExpr(op->args[0], os);
-      os << ", ";
+      os << "), ";
       this->PrintExpr(op->args[1], os);
     }
     os << ")";
@@ -4702,33 +4802,29 @@ void CodeGenTileLangPPU::VisitExpr_(const BroadcastNode *op,
   int lanes = static_cast<int>(Downcast<IntImm>(op->lanes)->value);
   if ((op->dtype.is_int() || op->dtype.is_uint()) && op->dtype.bits() == 8) {
     const int64_t *p = as_const_int(op->value);
-    if (p) {
-      if (lanes == 4) {
-        // make_int8x4
-        ICHECK(p);
-        int64_t v = *p & 0xFF;
-        v = (v << 24) | (v << 16) | (v << 8) | v;
-        if (op->dtype.is_uint()) {
-          os << "(uint)" << v;
-        } else {
-          os << "(int)" << v;
-        }
-        return;
-      } else if (lanes == 32) {
-        // make_int8x32
-        const int64_t *p = as_const_int(op->value);
-        ICHECK(p);
-        int64_t v = *p & 0xFF;
-        v = (v << 24) | (v << 16) | (v << 8) | v;
-        if (op->dtype.is_uint()) {
-          os << "make_ulonglong4(" << v << ", " << v << ", " << v << ", " << v
-             << ")";
-        } else {
-          os << "make_longlong4(" << v << ", " << v << ", " << v << ", " << v
-             << ")";
-        }
-        return;
+    if (p && lanes == 4) {
+      // make_int8x4
+      int64_t v = *p & 0xFF;
+      v = (v << 24) | (v << 16) | (v << 8) | v;
+      if (op->dtype.is_uint()) {
+        os << "(uint)" << v;
+      } else {
+        os << "(int)" << v;
       }
+      return;
+    }
+    // Replicate the byte across the carrier type (int/int2/int4/longlong4),
+    // mirroring the CUDA backend. Restricted to side-effect-free values: an
+    // impure value (e.g. a cast of an rng call) must be re-evaluated per
+    // lane, which the generic fallback below preserves via the per-lane
+    // packing overloads in common.h.
+    if ((lanes == 4 || lanes == 8 || lanes == 16 || lanes == 32) &&
+        tirx::SideEffect(op->value) <= tirx::CallEffectKind::kReadState) {
+      std::string sval = SSAGetID(PrintExpr(op->value), op->value.dtype());
+      os << "tl::broadcast<";
+      PrintType(op->dtype, os);
+      os << ">(" << sval << ")";
+      return;
     }
   }
 
