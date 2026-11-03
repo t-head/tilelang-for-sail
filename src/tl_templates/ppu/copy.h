@@ -289,8 +289,7 @@ TL_DEVICE void store_global_128_conditional(void *ptr, uint4 value, bool pred) {
 // structs (fp8_e4_32_t, ...) type-check without a hand-written operator=
 // from ulonglong4 on every such type.
 
-template <typename T>
-TL_DEVICE T load_global_256(const T *ptr) {
+template <typename T> TL_DEVICE T load_global_256(const T *ptr) {
   static_assert(sizeof(T) == 32,
                 "tl::load_global_256 requires a 32-byte vector type");
   uint4 lo{};
@@ -307,8 +306,9 @@ TL_DEVICE T load_global_256(const T *ptr) {
 
 template <typename T>
 TL_DEVICE T load_global_256_conditional(const T *ptr, bool pred) {
-  static_assert(sizeof(T) == 32,
-                "tl::load_global_256_conditional requires a 32-byte vector type");
+  static_assert(
+      sizeof(T) == 32,
+      "tl::load_global_256_conditional requires a 32-byte vector type");
   uint4 lo{};
   uint4 hi{};
   global_load<uint4, 16>(lo, ptr, pred);
@@ -341,9 +341,11 @@ TL_DEVICE void store_global_256(void *ptr, const T &value) {
 }
 
 template <typename T>
-TL_DEVICE void store_global_256_conditional(void *ptr, const T &value, bool pred) {
-  static_assert(sizeof(T) == 32,
-                "tl::store_global_256_conditional requires a 32-byte vector type");
+TL_DEVICE void store_global_256_conditional(void *ptr, const T &value,
+                                            bool pred) {
+  static_assert(
+      sizeof(T) == 32,
+      "tl::store_global_256_conditional requires a 32-byte vector type");
   const ulonglong4 &v = reinterpret_cast<const ulonglong4 &>(value);
   uint4 lo;
   lo.x = static_cast<unsigned>(v.x);

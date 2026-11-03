@@ -271,8 +271,10 @@ def _if_else_aiu_load_kernel(block_M=128, block_N=128, block_K=64):
 # ---------------------------------------------------------------------------
 
 
-def _compile_with_aiu(func, out_idx=[-1]):
+def _compile_with_aiu(func, out_idx=None):
     """Compile a kernel with AIU lowering enabled and return the CUDA source."""
+    if out_idx is None:
+        out_idx = [-1]
     kernel = tilelang.compile(
         func,
         out_idx=out_idx,
