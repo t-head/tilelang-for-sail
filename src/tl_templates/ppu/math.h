@@ -26,15 +26,6 @@ half_t fast_sqrt(half_t x) { return half_t(fast_sqrt(float(x))); }
 TL_DEVICE
 bfloat16_t fast_sqrt(bfloat16_t x) { return bfloat16_t(fast_sqrt(float(x))); }
 
-// cutlass only overloads fast_log/fast_sin/fast_cos for float/double, but the
-// hlog/hsin/hcos macros below redirect 16-bit call sites there; the float
-// return is not assignable to the 16-bit wrapper types. Route through float.
-TL_DEVICE
-half_t fast_log(half_t x) { return half_t(fast_log(float(x))); }
-
-TL_DEVICE
-bfloat16_t fast_log(bfloat16_t x) { return bfloat16_t(fast_log(float(x))); }
-
 TL_DEVICE
 half_t fast_sin(half_t x) { return half_t(fast_sin(float(x))); }
 

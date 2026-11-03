@@ -206,119 +206,6 @@ TL_PATCH TL_DEVICE bfloat16_t hnearbyint(const bfloat16_t x) {
   return bfloat16_t(nearbyintf(float(x)));
 }
 
-TL_PATCH TL_DEVICE half_t hexp(const half_t x) {
-  return half_t(hexp(x.to_half()));
-}
-
-TL_PATCH TL_DEVICE half_t hceil(const half_t x) {
-  return half_t(ceilf(float(x)));
-}
-
-TL_PATCH TL_DEVICE bfloat16_t hceil(const bfloat16_t x) {
-  return bfloat16_t(ceilf(float(x)));
-}
-
-TL_PATCH TL_DEVICE half_t hcos(const half_t x) {
-  return half_t(cosf(float(x)));
-}
-
-TL_PATCH TL_DEVICE bfloat16_t hcos(const bfloat16_t x) {
-  return bfloat16_t(cosf(float(x)));
-}
-
-TL_PATCH TL_DEVICE half_t hexp2(const half_t x) {
-  return half_t(exp2f(float(x)));
-}
-
-TL_PATCH TL_DEVICE bfloat16_t hexp2(const bfloat16_t x) {
-  return bfloat16_t(exp2f(float(x)));
-}
-
-TL_PATCH TL_DEVICE half_t hexp10(const half_t x) {
-  return half_t(exp10f(float(x)));
-}
-
-TL_PATCH TL_DEVICE bfloat16_t hexp10(const bfloat16_t x) {
-  return bfloat16_t(exp10f(float(x)));
-}
-
-TL_PATCH TL_DEVICE half_t hfloor(const half_t x) {
-  return half_t(floorf(float(x)));
-}
-
-TL_PATCH TL_DEVICE bfloat16_t hfloor(const bfloat16_t x) {
-  return bfloat16_t(floorf(float(x)));
-}
-
-TL_PATCH TL_DEVICE half_t hlog(const half_t x) {
-  return half_t(logf(float(x)));
-}
-
-TL_PATCH TL_DEVICE bfloat16_t hlog(const bfloat16_t x) {
-  return bfloat16_t(logf(float(x)));
-}
-
-TL_PATCH TL_DEVICE half_t hlog10(const half_t x) {
-  return half_t(log10f(float(x)));
-}
-
-TL_PATCH TL_DEVICE bfloat16_t hlog10(const bfloat16_t x) {
-  return bfloat16_t(log10f(float(x)));
-}
-
-TL_PATCH TL_DEVICE half_t hlog2(const half_t x) {
-  return half_t(log2f(float(x)));
-}
-
-TL_PATCH TL_DEVICE bfloat16_t hlog2(const bfloat16_t x) {
-  return bfloat16_t(log2f(float(x)));
-}
-
-TL_PATCH TL_DEVICE half_t hrint(const half_t x) {
-  return half_t(rintf(float(x)));
-}
-
-TL_PATCH TL_DEVICE bfloat16_t hrint(const bfloat16_t x) {
-  return bfloat16_t(rintf(float(x)));
-}
-
-TL_PATCH TL_DEVICE half_t hsin(const half_t x) {
-  return half_t(sinf(float(x)));
-}
-
-TL_PATCH TL_DEVICE bfloat16_t hsin(const bfloat16_t x) {
-  return bfloat16_t(sinf(float(x)));
-}
-
-TL_PATCH TL_DEVICE half_t htan(const half_t x) {
-  return half_t(tanf(float(x)));
-}
-
-TL_PATCH TL_DEVICE bfloat16_t htan(const bfloat16_t x) {
-  return bfloat16_t(tanf(float(x)));
-}
-
-TL_PATCH TL_DEVICE half_t htrunc(const half_t x) {
-  return half_t(truncf(float(x)));
-}
-
-TL_PATCH TL_DEVICE bfloat16_t htrunc(const bfloat16_t x) {
-  return bfloat16_t(truncf(float(x)));
-}
-
-// The PPU SDK has no __ldg overloads for CUTLASS's 16-bit wrappers. Forward
-// through the bit-compatible native 16-bit integer type and rebuild the
-// wrapper from the loaded bits.
-TL_PATCH TL_DEVICE half_t __ldg(const half_t *ptr) {
-  unsigned short raw = __ldg(reinterpret_cast<const unsigned short *>(ptr));
-  return half_t(*reinterpret_cast<const half *>(&raw));
-}
-
-TL_PATCH TL_DEVICE bfloat16_t __ldg(const bfloat16_t *ptr) {
-  unsigned short raw = __ldg(reinterpret_cast<const unsigned short *>(ptr));
-  return bfloat16_t(*reinterpret_cast<const __ppu_bfloat16 *>(&raw));
-}
-
 TL_PATCH TL_DEVICE half_t hpow(const half_t x, const half_t y) {
   return half_t(powf(float(x), float(y)));
 }
@@ -1073,26 +960,6 @@ TL_DEVICE __ppu_bfloat162 abs2(__ppu_bfloat162 a) { return __habs2(a); }
 
 TL_DEVICE __half2 abs2(__half2 a) { return __habs2(a); }
 
-TL_DEVICE half_t RoundTiesAwayFromZero(half_t x) {
-  return half_t(roundf(float(x)));
-}
-
-TL_DEVICE float RoundTiesAwayFromZero(float x) { return roundf(x); }
-
-TL_DEVICE double RoundTiesAwayFromZero(double x) { return round(x); }
-
-TL_DEVICE bfloat16_t RoundTiesAwayFromZero(bfloat16_t x) {
-  return bfloat16_t(roundf(float(x)));
-}
-
-TL_DEVICE float_e4m3_t RoundTiesAwayFromZero(float_e4m3_t x) {
-  return float_e4m3_t(cutlass::float_e4m3_t(roundf(float(x))));
-}
-
-TL_DEVICE float_e5m2_t RoundTiesAwayFromZero(float_e5m2_t x) {
-  return float_e5m2_t(cutlass::float_e5m2_t(roundf(float(x))));
-}
-
 } // namespace tl
 
 using tl::tfloat32_t;
@@ -1110,9 +977,8 @@ using tl::tfloat32_t;
         __shfl_sync(mask, static_cast<uint32_t>(raw), src_lane, width));       \
     return reinterpret_cast<TYPE &>(ret);                                      \
   }                                                                            \
-  TL_PATCH TL_DEVICE TYPE __shfl_xor_sync(unsigned mask, TYPE val,             \
-                                          int lane_mask,                       \
-                                          int width = warpSize) {              \
+  TL_PATCH TL_DEVICE TYPE __shfl_xor_sync(                                     \
+      unsigned mask, TYPE val, int lane_mask, int width = warpSize) {          \
     RAW raw = reinterpret_cast<RAW &>(val);                                    \
     RAW ret = static_cast<RAW>(                                                \
         __shfl_xor_sync(mask, static_cast<uint32_t>(raw), lane_mask, width));  \
@@ -1146,22 +1012,6 @@ TL_DEFINE_SHFL_SYNC_OVERLOADS(tl::float_e5m2_t, uint8_t)
 // costly fp32 conversions and instruction overhead.
 //
 namespace tl {
-
-// Replicate a small repeating unit across a wider vector type, e.g. one
-// byte across longlong4. Works for any (V, U) with sizeof(V) % sizeof(U) == 0,
-// so codegen does not need a make_<type> constructor for every lane count.
-template <typename V, typename U> TL_DEVICE V broadcast(const U unit) {
-  static_assert(sizeof(V) % sizeof(U) == 0,
-                "tl::broadcast requires the vector size to be a multiple of "
-                "the unit size");
-  V result;
-  U *parts = reinterpret_cast<U *>(&result);
-#pragma unroll
-  for (int i = 0; i < static_cast<int>(sizeof(V) / sizeof(U)); ++i) {
-    parts[i] = unit;
-  }
-  return result;
-}
 
 // Generic passthroughs
 template <typename T>
