@@ -45,6 +45,34 @@ else()
             message(FATAL_ERROR "Failed to normalize Z3 install name for ${Z3_LIBRARY}")
         endif()
     endif()
+    # PyPI z3-solver >= 4.13.1 ships Linux libz3 with a versioned SONAME
+    # (e.g. libz3.so.4.15); only 4.13.0 ships an unversioned libz3.so SONAME.
+    # DT_NEEDED is recorded from the linked library's SONAME, so linking
+    # against a versioned SONAME pins the built wheel to the exact
+    # z3-solver version used at build time: any other runtime z3-solver
+    # fails at import with "OSError: libz3.so.<ver>: cannot open shared
+    # object file" because only the build version ships that file name.
+    # Every z3-solver release keeps an unversioned libz3.so alongside the
+    # versioned copy, so normalize the SONAME of a build-tree copy (mirrors
+    # the macOS install_name_tool handling above) to make the produced
+    # binaries resolvable against any z3-solver in the supported range.
+    if(UNIX AND NOT APPLE AND Z3_LIBRARY)
+        find_program(Z3_PATCHELF_EXECUTABLE patchelf)
+        if(NOT Z3_PATCHELF_EXECUTABLE)
+            message(FATAL_ERROR "patchelf is required to normalize the PyPI z3 SONAME (pip install patchelf)")
+        endif()
+        set(Z3_ORIGINAL_LIBRARY "${Z3_LIBRARY}")
+        set(Z3_LIBRARY "${CMAKE_BINARY_DIR}/lib/libz3${CMAKE_SHARED_LIBRARY_SUFFIX}")
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+        configure_file("${Z3_ORIGINAL_LIBRARY}" "${Z3_LIBRARY}" COPYONLY)
+        execute_process(
+            COMMAND "${Z3_PATCHELF_EXECUTABLE}" --set-soname libz3${CMAKE_SHARED_LIBRARY_SUFFIX} "${Z3_LIBRARY}"
+            RESULT_VARIABLE Z3_SONAME_RESULT
+        )
+        if(NOT Z3_SONAME_RESULT EQUAL 0)
+            message(FATAL_ERROR "Failed to normalize Z3 SONAME for ${Z3_LIBRARY}")
+        endif()
+    endif()
 endif()
 message("-- Found Z3 include dir: ${Z3_INCLUDE_DIR}")
 message("-- Found Z3 library: ${Z3_LIBRARY}")
