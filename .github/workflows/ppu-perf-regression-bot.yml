@@ -24,11 +24,7 @@ jobs:
        github.event.comment.body == '@ppu-regression') ||
       (github.event_name == 'push' &&
        github.repository == 't-head/tilelang-for-sail' &&
-       github.ref == 'refs/heads/feature/ci-testing-dev' &&
-       github.actor == 'youxin-lcy' &&
-       github.event.pusher.name == 'youxin-lcy' &&
-       github.event.head_commit.author.username == 'youxin-lcy' &&
-       github.event.head_commit.author.name == 'youxin-lcy')
+       github.ref == 'refs/heads/feature/ci-testing-dev')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -94,7 +90,6 @@ jobs:
             const PUSH_ALLOWED_REPO = 't-head/tilelang-for-sail';
             const PUSH_ALLOWED_REF = 'refs/heads/feature/ci-testing-dev';
             const PUSH_ALLOWED_BRANCH = 'feature/ci-testing-dev';
-            const PUSH_REQUIRED_IDENTITY = 'youxin-lcy';
             const strictExactString = (value, expected, label) => {
               if (typeof value !== 'string') {
                 throw new Error(`${label} is missing or not a string`);
@@ -160,17 +155,8 @@ jobs:
             } else if (eventName === 'push') {
               try {
                 strictExactString(context.payload.ref, PUSH_ALLOWED_REF, 'push ref');
-                strictExactString(context.actor, PUSH_REQUIRED_IDENTITY, 'push actor');
-                strictExactString(
-                  context.payload.pusher?.name, PUSH_REQUIRED_IDENTITY, 'push pusher.name');
-                strictExactString(
-                  context.payload.head_commit?.author?.username,
-                  PUSH_REQUIRED_IDENTITY, 'push head_commit.author.username');
-                strictExactString(
-                  context.payload.head_commit?.author?.name,
-                  PUSH_REQUIRED_IDENTITY, 'push head_commit.author.name');
               } catch (error) {
-                core.setFailed(`Push identity gate failed: ${error.message}`);
+                core.setFailed(`Push ref gate failed: ${error.message}`);
                 return;
               }
               const headCommitId = context.payload.head_commit?.id;

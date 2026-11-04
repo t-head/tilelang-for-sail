@@ -1851,115 +1851,26 @@ class TestWorkflowYAML:
         assert self.wf.get("env", {}).get("PPU_IMAGE") == expected
 
     # -------------------------------------------------------------------
-    # Push-trigger specific coverage. The push path must be gated by a
-    # strict four-field identity check (actor + pusher + author.username +
-    # author.name all exactly ``youxin-lcy``), re-validated in the trusted
-    # resolver, and must share no state with the issue_comment slot.
+    # Push-trigger specific coverage. The push path is restricted by event,
+    # repository, and staging branch, and shares no state with issue_comment.
     # -------------------------------------------------------------------
 
     def test_push_trigger_is_restricted_to_curated_staging_branch(self):
         on = self.wf.get("on") or self.wf.get(True)
         assert on["push"] == {"branches": ["feature/ci-testing-dev"]}
         resolve_if = str(self.wf["jobs"]["resolve-pr"]["if"])
-        # The top-level trigger gate names every push identity field so an
-        # unauthorized workflow run cannot even start the resolver job.
         for required in (
             "github.event_name == 'push'",
             "github.repository == 't-head/tilelang-for-sail'",
             "github.ref == 'refs/heads/feature/ci-testing-dev'",
-            "github.actor == 'youxin-lcy'",
-            "github.event.pusher.name == 'youxin-lcy'",
-            "github.event.head_commit.author.username == 'youxin-lcy'",
-            "github.event.head_commit.author.name == 'youxin-lcy'",
         ):
             assert required in resolve_if
 
-    def test_push_identity_gate_is_revalidated_in_the_trusted_resolver(self):
-        """The workflow-level ``if`` is advisory; the resolver re-checks every
-        identity field with strict, case-sensitive equality and fails closed on
-        any missing, mistyped, or mismatched value."""
+    def test_push_resolver_revalidates_ref_and_requires_unique_open_pr_and_matching_head_sha(self):
         resolve_text = str(self.wf["jobs"]["resolve-pr"])
-        # Dedicated helper that rejects non-strings and inequality.
-        assert "strictExactString" in resolve_text
-        assert "'youxin-lcy'" in resolve_text
-        for check in (
-            "strictExactString(context.payload.ref,",
-            "strictExactString(context.actor,",
-            "context.payload.pusher?.name",
-            "context.payload.head_commit?.author?.username",
-            "context.payload.head_commit?.author?.name",
-        ):
-            assert check in resolve_text
-        # Any failure in the helper surfaces as a dedicated gate error that
-        # core.setFailed terminates the job on.
-        assert "Push identity gate failed" in resolve_text
-        # The helper reports missing fields distinctly from mismatched values
-        # so test coverage distinguishes forged vs absent identities.
-        assert "is missing or not a string" in resolve_text
-        assert "gate failed: value=" in resolve_text
-        # ``!==`` strict equality must be used (no case folding, no coercion).
-        assert "value !== expected" in resolve_text
-
-    def test_push_resolver_rejects_wrong_or_missing_identity_combinations(self):
-        """Simulate the resolver's exported ``strictExactString`` + gate chain
-        and confirm every one of the five required scenarios behaves correctly:
-        forged commit author cannot bypass actor; actor OK + author wrong fails;
-        author OK + pusher wrong fails; a missing field fails; and only the
-        full match proceeds."""
-        EXPECTED = "youxin-lcy"
-
-        def gate(payload):
-            # Mirror the resolver JS gate in Python (same strict semantics).
-            def strict(value, expected, label):
-                if not isinstance(value, str):
-                    raise ValueError(f"{label} is missing or not a string")
-                if value != expected:
-                    raise ValueError(f"{label} gate failed: value={value!r}")
-
-            try:
-                strict(payload.get("ref"), "refs/heads/feature/ci-testing-dev", "push ref")
-                strict(payload.get("actor"), EXPECTED, "push actor")
-                strict(payload.get("pusher_name"), EXPECTED, "push pusher.name")
-                strict(payload.get("author_username"), EXPECTED, "push head_commit.author.username")
-                strict(payload.get("author_name"), EXPECTED, "push head_commit.author.name")
-            except ValueError as error:
-                return str(error)
-            return "ok"
-
-        legal = {
-            "ref": "refs/heads/feature/ci-testing-dev",
-            "actor": EXPECTED,
-            "pusher_name": EXPECTED,
-            "author_username": EXPECTED,
-            "author_name": EXPECTED,
-        }
-        assert gate(legal) == "ok"
-
-        # Forged commit author must not bypass actor (actor correct;
-        # author.name forged to EXPECTED but author.username differs).
-        forged_commit_author = dict(legal, author_username="attacker")
-        assert gate(forged_commit_author).startswith("push head_commit.author.username gate failed")
-
-        # Actor correct but head_commit.author wrong.
-        actor_ok_author_wrong = dict(legal, author_name="attacker")
-        assert gate(actor_ok_author_wrong).startswith("push head_commit.author.name gate failed")
-
-        # Author correct but pusher wrong.
-        author_ok_pusher_wrong = dict(legal, pusher_name="attacker")
-        assert gate(author_ok_pusher_wrong).startswith("push pusher.name gate failed")
-
-        # Any single missing field short-circuits with a distinct message.
-        for key in ("actor", "pusher_name", "author_username", "author_name"):
-            missing = dict(legal)
-            missing[key] = None
-            assert "is missing or not a string" in gate(missing)
-
-        # Case-sensitive: ``YouXin-LCY`` is not equal to ``youxin-lcy``.
-        wrong_case = dict(legal, actor="YouXin-LCY")
-        assert gate(wrong_case).startswith("push actor gate failed")
-
-    def test_push_resolver_requires_unique_open_pr_and_matching_head_sha(self):
-        resolve_text = str(self.wf["jobs"]["resolve-pr"])
+        assert "PUSH_ALLOWED_REF = 'refs/heads/feature/ci-testing-dev'" in resolve_text
+        assert "strictExactString(context.payload.ref, PUSH_ALLOWED_REF, 'push ref')" in resolve_text
+        assert "Push ref gate failed" in resolve_text
         # Query is scoped by state=open and head=owner:branch, then verified.
         assert "github.rest.pulls.list" in resolve_text
         assert "state: 'open'" in resolve_text
