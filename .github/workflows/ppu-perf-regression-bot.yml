@@ -364,6 +364,11 @@ jobs:
               core.setFailed(`Invalid request_kind: ${JSON.stringify(requestKind)}`);
               return;
             }
+            if (requestKind === 'push') {
+              core.setOutput('should_run', 'true');
+              core.setOutput('status_comment_id', '');
+              return;
+            }
 
             let prNumber;
             let requestOrder;
@@ -1227,8 +1232,9 @@ jobs:
             try {
               prNumber = positiveSafeInteger(process.env.PR_NUMBER, 'pr_number');
               requestOrder = positiveSafeInteger(process.env.REQUEST_ORDER, 'request_order');
-              statusCommentId = positiveSafeInteger(
-                process.env.STATUS_COMMENT_ID, 'status_comment_id');
+              statusCommentId = process.env.STATUS_COMMENT_ID === ''
+                ? null
+                : positiveSafeInteger(process.env.STATUS_COMMENT_ID, 'status_comment_id');
               runId = positiveSafeInteger(process.env.GITHUB_RUN_ID, 'run_id');
               runAttempt = positiveSafeInteger(process.env.GITHUB_RUN_ATTEMPT, 'run_attempt');
               if (requestKind === 'comment') {
@@ -1747,6 +1753,10 @@ jobs:
             ].join('\n');
             if (Buffer.byteLength(body, 'utf8') > 65536) {
               core.setFailed('Validated comment exceeds GitHub comment size limit');
+              return;
+            }
+            if (requestKind === 'push' || process.env.STATUS_COMMENT_ID === '') {
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${body}\n`);
               return;
             }
 
