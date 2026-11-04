@@ -41,12 +41,7 @@ def _shared_arena_offsets(src):
     The PPU backend materializes the merged allocations as dynamic shared
     memory: ``void* A_shared = ((void*)((char*)buf_dyn_shmem + 0));``.
     """
-    return {
-        name: int(off)
-        for name, off in re.findall(
-            r"void\* (\w+) = \(\(void\*\)\(\(char\*\)buf_dyn_shmem \+ (\d+)\)\)", src
-        )
-    }
+    return {name: int(off) for name, off in re.findall(r"void\* (\w+) = \(\(void\*\)\(\(char\*\)buf_dyn_shmem \+ (\d+)\)\)", src)}
 
 
 @tilelang.testing.requires_ppu
@@ -89,21 +84,15 @@ def test_ppu_gemm_shared_reuse_after_loop():
     src = kernel.get_kernel_source()
     offsets = _shared_arena_offsets(src)
     assert {"A_shared", "B_shared", "C_shared"} <= set(offsets), (
-        f"merged dynamic shared arena (buf_dyn_shmem) not found; "
-        f"buffers seen: {sorted(offsets)}"
+        f"merged dynamic shared arena (buf_dyn_shmem) not found; buffers seen: {sorted(offsets)}"
     )
-    assert offsets["C_shared"] == offsets["A_shared"] == 0, (
-        f"C_shared must reuse the A/B pipeline region; offsets: {offsets}"
-    )
+    assert offsets["C_shared"] == offsets["A_shared"] == 0, f"C_shared must reuse the A/B pipeline region; offsets: {offsets}"
     # A's 3-stage region is 48KB; B follows it, so a reused arena tops out
     # at 49152 + 24KB = 72KB. A non-reused layout would push C (or B) past
     # the 72KB mark (the ~136KB layout).
-    assert offsets["B_shared"] == 49152, (
-        f"expected B_shared right after A's 3-stage region; offsets: {offsets}"
-    )
+    assert offsets["B_shared"] == 49152, f"expected B_shared right after A's 3-stage region; offsets: {offsets}"
     assert max(offsets.values()) < 49152 + 24576, (
-        f"arena grew past the 72KB pipeline footprint (non-reused layout "
-        f"is ~136KB); offsets: {offsets}"
+        f"arena grew past the 72KB pipeline footprint (non-reused layout is ~136KB); offsets: {offsets}"
     )
 
     profiler = kernel.get_profiler()
@@ -138,7 +127,7 @@ def test_ppu_shared_reuse_no_cross_iteration_overwrite():
             T.copy(A[bx * BLOCK_M, 0], A_shared)
             T.copy(B[0, 0], B_shared)
             T.clear(acc_local)
-            for i in T.Pipelined(N_ITER, num_stages=1):
+            for _i in T.Pipelined(N_ITER, num_stages=1):
                 T.gemm(A_shared, B_shared, acc_local)
                 T.copy(acc_local, acc_shared)
             T.copy(acc_shared, C[bx * BLOCK_M, 0])
@@ -156,8 +145,7 @@ def test_ppu_shared_reuse_no_cross_iteration_overwrite():
     src = kernel.get_kernel_source()
     offsets = _shared_arena_offsets(src)
     assert sorted(offsets.values()) == [0, 8192, 16384], (
-        f"expected three disjoint 8KB regions (no reuse across the back "
-        f"edge); got {offsets}"
+        f"expected three disjoint 8KB regions (no reuse across the back edge); got {offsets}"
     )
 
     profiler = kernel.get_profiler()
