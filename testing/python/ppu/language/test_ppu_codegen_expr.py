@@ -155,12 +155,13 @@ def test_ppu_fp4_to_fp8_cast_compiles(lanes, expected):
         compile_ppu(source, target=PPU_TARGET)
 
 
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16"])
 @pytest.mark.parametrize(
     ("operation", "expected"),
     [("add", "add2"), ("sub", "sub2"), ("mul", "mul2"), ("fma", "fma2")],
 )
-def test_ppu_f32x2_binary_ops_compiles(operation, expected):
-    value = tirx.Var("value", "float32x2")
+def test_ppu_f16x2_binary_ops_use_packed_helpers(dtype, operation, expected):
+    value = tirx.Var("value", f"{dtype}x2")
     expr = {
         "add": value + value,
         "sub": value - value,

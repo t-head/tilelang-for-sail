@@ -149,10 +149,6 @@ bool CanEmitPackedX2Math(DataType t) {
     return true;
   }
 
-  if (t.is_float() && t.bits() == 32) {
-    return true;
-  }
-
   return false;
 }
 
