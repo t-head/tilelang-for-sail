@@ -285,6 +285,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      pull-requests: write
     outputs:
       should_run: ${{ steps.claim.outputs.should_run }}
       status_comment_id: ${{ steps.claim.outputs.status_comment_id }}
@@ -1134,6 +1135,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      pull-requests: write
     concurrency:
       group: "ppu-perf-890p-status-pr-${{ needs.resolve-pr.outputs.pr_number }}-${{ needs.resolve-pr.outputs.request_kind }}"
       cancel-in-progress: false
