@@ -54,13 +54,13 @@ TL_DEVICE bool IsRelaxedMemoryOrder(int memory_order) {
   return memory_order == int(hggc::memory_order_relaxed);
 }
 
-TL_DEVICE bool IsReleaseLikeMemoryOrder(int memory_order) {
-  return memory_order == int(hggc::memory_order_release) ||
-         memory_order == int(hggc::memory_order_consume);
+TL_DEVICE bool IsReleaseMemoryOrder(int memory_order) {
+  return memory_order == int(hggc::memory_order_release);
 }
 
-TL_DEVICE bool IsAcquireMemoryOrder(int memory_order) {
-  return memory_order == int(hggc::memory_order_acquire);
+TL_DEVICE bool IsAcquireLikeMemoryOrder(int memory_order) {
+  return memory_order == int(hggc::memory_order_consume) ||
+         memory_order == int(hggc::memory_order_acquire);
 }
 
 TL_DEVICE bool IsAcqRelLikeMemoryOrder(int memory_order) {
@@ -78,12 +78,12 @@ template <typename T> TL_DEVICE T UnpackBits16(unsigned short val) {
 
 TL_DEVICE void tl_atomic_add_f16(unsigned short &ret, unsigned long long addr,
                                  unsigned short val, int memory_order) {
-  if (IsReleaseLikeMemoryOrder(memory_order)) {
+  if (IsReleaseMemoryOrder(memory_order)) {
     asm volatile("ppu.atom.release.gpu.global.add.noftz.f16 %0, [%1], %2;"
                  : "=h"(ret)
                  : "l"(addr), "h"(val)
                  : "memory");
-  } else if (IsAcquireMemoryOrder(memory_order)) {
+  } else if (IsAcquireLikeMemoryOrder(memory_order)) {
     asm volatile("ppu.atom.acquire.gpu.global.add.noftz.f16 %0, [%1], %2;"
                  : "=h"(ret)
                  : "l"(addr), "h"(val)
@@ -98,12 +98,12 @@ TL_DEVICE void tl_atomic_add_f16(unsigned short &ret, unsigned long long addr,
 
 TL_DEVICE void tl_atomic_add_bf16(unsigned short &ret, unsigned long long addr,
                                   unsigned short val, int memory_order) {
-  if (IsReleaseLikeMemoryOrder(memory_order)) {
+  if (IsReleaseMemoryOrder(memory_order)) {
     asm volatile("ppu.atom.release.gpu.global.add.noftz.bf16 %0, [%1], %2;"
                  : "=h"(ret)
                  : "l"(addr), "h"(val)
                  : "memory");
-  } else if (IsAcquireMemoryOrder(memory_order)) {
+  } else if (IsAcquireLikeMemoryOrder(memory_order)) {
     asm volatile("ppu.atom.acquire.gpu.global.add.noftz.bf16 %0, [%1], %2;"
                  : "=h"(ret)
                  : "l"(addr), "h"(val)
@@ -199,9 +199,10 @@ TL_DEVICE void AtomicMax(T1 *ref, T2 val,
     // We simulate this process by atomicCAS loop.
     unsigned short *address_as_ushort =
         reinterpret_cast<unsigned short *>(address);
-    unsigned short val_as_ushort = *reinterpret_cast<unsigned short *>(&val);
+    NT1 val_cast = hggc_cast<NT1>(val);
+    unsigned short val_as_ushort = tl_atomic_detail::PackBits16(val_cast);
     unsigned short old_val_ushort = *address_as_ushort;
-    while (val > *reinterpret_cast<T1 *>(&old_val_ushort)) {
+    while (val_cast > *reinterpret_cast<NT1 *>(&old_val_ushort)) {
       unsigned short assumed_val_ushort = old_val_ushort;
       old_val_ushort =
           atomicCAS(address_as_ushort, assumed_val_ushort, val_as_ushort);
@@ -224,9 +225,10 @@ TL_DEVICE T1 AtomicMaxRet(T1 *ref, T2 val,
                 std::is_same_v<NT1, __ppu_bfloat16>) {
     unsigned short *address_as_ushort =
         reinterpret_cast<unsigned short *>(address);
-    unsigned short val_as_ushort = *reinterpret_cast<unsigned short *>(&val);
+    NT1 val_cast = hggc_cast<NT1>(val);
+    unsigned short val_as_ushort = tl_atomic_detail::PackBits16(val_cast);
     unsigned short old_val_ushort = *address_as_ushort;
-    while (val > *reinterpret_cast<T1 *>(&old_val_ushort)) {
+    while (val_cast > *reinterpret_cast<NT1 *>(&old_val_ushort)) {
       unsigned short assumed_val_ushort = old_val_ushort;
       old_val_ushort =
           atomicCAS(address_as_ushort, assumed_val_ushort, val_as_ushort);
@@ -253,9 +255,10 @@ TL_DEVICE void AtomicMin(T1 *ref, T2 val,
     // We simulate this process by atomicCAS loop.
     unsigned short *address_as_ushort =
         reinterpret_cast<unsigned short *>(address);
-    unsigned short val_as_ushort = *reinterpret_cast<unsigned short *>(&val);
+    NT1 val_cast = hggc_cast<NT1>(val);
+    unsigned short val_as_ushort = tl_atomic_detail::PackBits16(val_cast);
     unsigned short old_val_ushort = *address_as_ushort;
-    while (val < *reinterpret_cast<T1 *>(&old_val_ushort)) {
+    while (val_cast < *reinterpret_cast<NT1 *>(&old_val_ushort)) {
       unsigned short assumed_val_ushort = old_val_ushort;
       old_val_ushort =
           atomicCAS(address_as_ushort, assumed_val_ushort, val_as_ushort);
@@ -278,9 +281,10 @@ TL_DEVICE T1 AtomicMinRet(T1 *ref, T2 val,
                 std::is_same_v<NT1, __ppu_bfloat16>) {
     unsigned short *address_as_ushort =
         reinterpret_cast<unsigned short *>(address);
-    unsigned short val_as_ushort = *reinterpret_cast<unsigned short *>(&val);
+    NT1 val_cast = hggc_cast<NT1>(val);
+    unsigned short val_as_ushort = tl_atomic_detail::PackBits16(val_cast);
     unsigned short old_val_ushort = *address_as_ushort;
-    while (val < *reinterpret_cast<T1 *>(&old_val_ushort)) {
+    while (val_cast < *reinterpret_cast<NT1 *>(&old_val_ushort)) {
       unsigned short assumed_val_ushort = old_val_ushort;
       old_val_ushort =
           atomicCAS(address_as_ushort, assumed_val_ushort, val_as_ushort);
@@ -362,6 +366,18 @@ AtomicAddx2Ret(half_t *ref, ValType val,
   }
 }
 
+template <typename SrcType>
+TL_DEVICE uint2
+AtomicAddx4Ret(half_t *ref, SrcType *val,
+               int memory_order = int(hggc::memory_order_relaxed)) {
+  half2 prev_lo = AtomicAddx2Ret(ref, val, memory_order);
+  half2 prev_hi = AtomicAddx2Ret(ref + 2, val + 2, memory_order);
+  uint2 ret;
+  ret.x = *reinterpret_cast<const unsigned int *>(&prev_lo);
+  ret.y = *reinterpret_cast<const unsigned int *>(&prev_hi);
+  return ret;
+}
+
 template <typename T> TL_DEVICE __ppu_bfloat162 ToBfloat162(T *val) {
   return *reinterpret_cast<const __ppu_bfloat162 *>(val);
 }
@@ -415,6 +431,18 @@ AtomicAddx2Ret(bfloat16_t *ref, src_type *val,
     return tl_atomic_detail::AtomicAddx2ScalarRet(
         reinterpret_cast<__ppu_bfloat16 *>(ref), add_val, memory_order);
   }
+}
+
+template <typename SrcType>
+TL_DEVICE uint2
+AtomicAddx4Ret(bfloat16_t *ref, SrcType *val,
+               int memory_order = int(hggc::memory_order_relaxed)) {
+  __ppu_bfloat162 prev_lo = AtomicAddx2Ret(ref, val, memory_order);
+  __ppu_bfloat162 prev_hi = AtomicAddx2Ret(ref + 2, val + 2, memory_order);
+  uint2 ret;
+  ret.x = *reinterpret_cast<const unsigned int *>(&prev_lo);
+  ret.y = *reinterpret_cast<const unsigned int *>(&prev_hi);
+  return ret;
 }
 
 // PPU has no packed v4 f16/bf16 atomic add instruction; compose from the

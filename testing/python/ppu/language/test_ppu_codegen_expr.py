@@ -3,7 +3,7 @@ import pytest
 import tilelang
 import tilelang.ppu.language as T
 from tilelang import tvm
-from tilelang.contrib.hgcc import have_pdl
+from tilelang.contrib.hgcc import compile_ppu, have_pdl
 from tvm import tirx
 
 
@@ -15,7 +15,7 @@ def _build_expr_source(expr, params):
     if build is None:
         pytest.skip("TileLang was built without the PPU code generator")
     func = tirx.PrimFunc(params, tirx.Evaluate(expr))
-    func = func.with_attr("global_symbol", "main")
+    func = func.with_attr("global_symbol", "ppu_codegen_expr")
     func = func.with_attr("calling_conv", tvm.ir.CallingConv.DEVICE_KERNEL_LAUNCH)
     return build(tvm.IRModule({"main": func}), PPU_TARGET).inspect_source()
 
@@ -96,7 +96,7 @@ def test_ppu_bitwise_not_codegen(dtype, expected, count):
 @pytest.mark.parametrize("dtype", ["int4", "uint4"])
 @pytest.mark.parametrize(
     ("lanes", "carrier"),
-    [(4, "int16_t)"), (8, "int)"), (16, "int2("), (32, "int4(")],
+    [(4, "int16_t)"), (8, "int)"), (16, "int2"), (32, "int4")],
 )
 def test_ppu_nonconstant_int4_broadcast(dtype, lanes, carrier):
     value = tirx.Var("value", "int32")
@@ -104,6 +104,71 @@ def test_ppu_nonconstant_int4_broadcast(dtype, lanes, carrier):
     body = _kernel_body(_build_expr_source(tirx.Broadcast(scalar, lanes), [value]))
     if dtype == "uint4":
         carrier = "u" + carrier
-    assert carrier in body
+    if lanes >= 16:
+        assert f"tl::broadcast<{carrier}>(" in body
+    else:
+        assert carrier in body
     assert "static_cast<unsigned int>" in body
     assert "make_int16_t" not in body
+
+
+@pytest.mark.parametrize(
+    ("dtype", "carrier"),
+    [("int8", "longlong4"), ("uint8", "ulonglong4")],
+)
+def test_ppu_int8x32_broadcast_compiles(dtype, carrier):
+    value = tirx.Var("value", dtype)
+    source = _build_expr_source(tirx.Broadcast(value, 32), [value])
+    assert f"tl::broadcast<{carrier}>(" in source
+    assert f"make_{carrier}(" not in source
+    with PPU_TARGET:
+        compile_ppu(source, target=PPU_TARGET)
+
+
+@pytest.mark.parametrize(
+    ("dtype", "lanes", "expected"),
+    [
+        ("float8_e4m3", 32, "tl::broadcast<fp8_e4_32_t>"),
+        ("float8_e5m2", 32, "tl::broadcast<fp8_e5_32_t>"),
+        ("float8_e8m0fnu", 32, "tl::broadcast<fp8_e8_32_t>"),
+        ("float4_e2m1fn", 64, "tl::broadcast<fp4_e2_64_t>(tl::make_fp4_vec<fp4_e2_2_t>"),
+    ],
+)
+def test_ppu_narrow_broadcast_compiles(dtype, lanes, expected):
+    value = tirx.Var("value", dtype)
+    source = _build_expr_source(tirx.Broadcast(value, lanes), [value])
+    assert expected in source
+    with PPU_TARGET:
+        compile_ppu(source, target=PPU_TARGET)
+
+
+@pytest.mark.parametrize(
+    ("lanes", "expected"),
+    [(1, "__tl_cvt_e2m1_to_e4m3"), (2, "__tl_cvt_e2m1x2_to_e4m3x2"), (4, "__tl_cvt_e2m1x4_to_e4m3x4")],
+)
+def test_ppu_fp4_to_fp8_cast_compiles(lanes, expected):
+    suffix = "" if lanes == 1 else f"x{lanes}"
+    value = tirx.Var("value", f"float4_e2m1fn{suffix}")
+    source = _build_expr_source(tirx.Cast(f"float8_e4m3{suffix}", value), [value])
+    assert f"{expected}(" in source
+    with PPU_TARGET:
+        compile_ppu(source, target=PPU_TARGET)
+
+
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16"])
+@pytest.mark.parametrize(
+    ("operation", "expected"),
+    [("add", "add2"), ("sub", "sub2"), ("mul", "mul2"), ("fma", "fma2")],
+)
+def test_ppu_f16x2_binary_ops_use_packed_helpers(dtype, operation, expected):
+    value = tirx.Var("value", f"{dtype}x2")
+    expr = {
+        "add": value + value,
+        "sub": value - value,
+        "mul": value * value,
+        "fma": value * value + value,
+    }[operation]
+    source = _build_expr_source(expr, [value])
+    assert f"tl::{expected}(" in _kernel_body(source)
+    with PPU_TARGET:
+        compile_ppu(source, target=PPU_TARGET)

@@ -6,6 +6,7 @@
 #include "backend/common/op/reduce.h"
 
 #include "backend/common/target_utils.h"
+#include "ppu/target_utils.h"
 
 #include <sstream>
 
@@ -29,7 +30,9 @@ struct Reduce : backend::ReduceLowerer<Reduce> {
     if (!TargetIsPPU(target)) {
       return 1;
     }
-    return backend::reduce::GetPreferredVectorizedSize(op.dst->dtype);
+    bool supports_fp32x2 = GetPPUArchInt(target) >= 15;
+    return backend::reduce::GetPreferredVectorizedSize(op.dst->dtype,
+                                                       supports_fp32x2);
   }
 
   static std::string MakeBatchAllReduce(std::string reducer,

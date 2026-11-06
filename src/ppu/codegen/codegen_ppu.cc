@@ -149,10 +149,6 @@ bool CanEmitPackedX2Math(DataType t) {
     return true;
   }
 
-  if (t.is_float() && t.bits() == 32) {
-    return true;
-  }
-
   return false;
 }
 
@@ -721,11 +717,14 @@ std::string CodeGenTileLangPPU::Finish() {
   if (need_intrin_h_) {
     decl_stream << "#include <tl_templates/ppu/intrin.h>\n";
   }
-  if (need_barrier_h_) {
-    decl_stream << "#include <tl_templates/ppu/barrier.h>\n";
+  if (need_atomic_h_) {
+    decl_stream << "#include <tl_templates/ppu/atomic.h>\n";
   }
   if (need_math_h_) {
     decl_stream << "#include <tl_templates/ppu/math.h>\n";
+  }
+  if (need_barrier_h_) {
+    decl_stream << "#include <tl_templates/ppu/barrier.h>\n";
   }
   if (enable_fp8_) {
     decl_stream << "#include <tl_templates/ppu/hggc_fp8.h>\n";
@@ -1101,6 +1100,27 @@ void CodeGenTileLangPPU::PrintType(DataType t, std::ostream &os) { // NOLINT(*)
     }
   }
   LOG(FATAL) << "Cannot convert type " << t << " to HGGC type";
+}
+
+void CodeGenTileLangPPU::PrintVecConstructor(DataType t,
+                                             std::ostream &os) { // NOLINT(*)
+  if ((t.is_int() || t.is_uint()) && t.bits() == 4 && t.lanes() == 2) {
+    os << (t.is_uint() ? "tl_pack_uint4x2" : "tl_pack_int4x2");
+    return;
+  }
+  if (t.is_float4_e2m1fn() && t.lanes() >= 2) {
+    os << "tl::make_fp4_vec<";
+    PrintType(t, os);
+    os << ">";
+    return;
+  }
+  if (t.is_float8() && t.lanes() >= 2) {
+    os << "tl::make_vec<";
+    PrintType(t, os);
+    os << ">";
+    return;
+  }
+  CodeGenC::PrintVecConstructor(t, os);
 }
 
 void CodeGenTileLangPPU::PrintVecBinaryOp(const std::string &op, DataType t,
@@ -1656,6 +1676,14 @@ void CodeGenTileLangPPU::VisitExpr_(const CastNode *op, std::ostream &os) {
     return;
   }
 
+  if (from_ty.is_scalar() && cast_round.empty() && from_ty.is_float4_e2m1fn() &&
+      (target_ty.is_float8_e4m3() || target_ty.is_float8_e4m3fn())) {
+    this->PrintType(target_ty, os);
+    os << "::bitcast(__tl_cvt_e2m1_to_e4m3((" << PrintExpr(op->value)
+       << ").__x))";
+    return;
+  }
+
   // Emit simple C-style type conversion for scalar casts without custom
   // rounding.
   if (from_ty.is_scalar() && cast_round.empty())
@@ -1675,8 +1703,8 @@ void CodeGenTileLangPPU::VisitExpr_(const CastNode *op, std::ostream &os) {
       [&](const std::string &cast_func, const std::string &src_type,
           const std::string &dst_type, const std::string &extra_args = "",
           bool src_needs_reinterpret = false,
-          bool dst_needs_reinterpret = false) {
-        int num_chunks = lanes / 2;
+          bool dst_needs_reinterpret = false, int chunk_lanes = 2) {
+        int num_chunks = lanes / chunk_lanes;
         std::string src_cast = src_needs_reinterpret
                                    ? "reinterpret_cast<" + src_type + "*>"
                                    : "(" + src_type + "*)";
@@ -1965,6 +1993,21 @@ void CodeGenTileLangPPU::VisitExpr_(const CastNode *op, std::ostream &os) {
     if (lanes == 2 || lanes == 4 || lanes == 8) {
       PrintVectorizedCast("__tl_cvt_fp4x2_to_bfloat162", "uint8_t",
                           "__ppu_bfloat162", "", true, false);
+      return;
+    }
+  }
+
+  if (from_ty.is_float4_e2m1fn() &&
+      (target_ty.is_float8_e4m3() || target_ty.is_float8_e4m3fn())) {
+    if (lanes == 2) {
+      PrintVectorizedCast("__tl_cvt_e2m1x2_to_e4m3x2", "__hg_fp4x2_storage_t",
+                          "__hg_fp8x2_storage_t", "", true, true);
+      return;
+    }
+    if (lanes == 4 || lanes == 8 || lanes == 16 || lanes == 32) {
+      PrintVectorizedCast("__tl_cvt_e2m1x4_to_e4m3x4", "__hg_fp4x4_storage_t",
+                          "__hg_fp8x4_storage_t", "", true, true,
+                          /*chunk_lanes=*/4);
       return;
     }
   }
@@ -3904,6 +3947,7 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     os << "tl::warp_reduce_bitor(" << PrintExpr(op->args[0]) << ")";
     return true;
   } else if (op->op.same_as(tl::atomic_add_elem_op())) {
+    need_atomic_h_ = true;
     // atomic_add_elem_op(dst_ptr, src_value[, memory_order[, scope]])
     const std::string scope = tl::GetAtomicScope(op);
     const bool system_scope = scope == "system";
@@ -3929,6 +3973,7 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     this->stream << ");\n";
     return true;
   } else if (op->op.same_as(tl::atomic_add_ret_elem_op())) {
+    need_atomic_h_ = true;
     // atomic_add_ret_elem_op(dst_ptr, src_value[, memory_order[, scope]])
     const std::string scope = tl::GetAtomicScope(op);
     const bool block_scope = scope == "block";
@@ -3948,6 +3993,7 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     os << ")";
     return true;
   } else if (op->op.same_as(tl::atomic_addx2_elem_op())) {
+    need_atomic_h_ = true;
     // atomic_addx2_elem_op(dst_ptr, src_ptr[, memory_order])
     std::string dst_ptr = PrintExpr(op->args[0]);
     std::string src_ptr = PrintExpr(op->args[1]);
@@ -3959,6 +4005,7 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     this->stream << ");\n";
     return true;
   } else if (op->op.same_as(tl::atomic_addx4_elem_op())) {
+    need_atomic_h_ = true;
     // atomic_addx4_elem_op(dst_ptr, src_ptr[, memory_order])
     std::string dst_ptr = PrintExpr(op->args[0]);
     std::string src_ptr = PrintExpr(op->args[1]);
@@ -3971,9 +4018,8 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     return true;
   } else if (op->op.same_as(tl::atomic_addx2_ret_elem_op()) ||
              op->op.same_as(tl::atomic_addx4_ret_elem_op())) {
+    need_atomic_h_ = true;
     bool is_x2 = op->op.same_as(tl::atomic_addx2_ret_elem_op());
-    ICHECK(is_x2 || (op->dtype.is_float() && op->dtype.bits() == 32))
-        << "PPU atomic_addx4 return_prev only supports float32";
     bool need_cast =
         is_x2 && (op->dtype.is_float16() || op->dtype.is_bfloat16());
     if (need_cast) {
@@ -3987,6 +4033,7 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     os << (need_cast ? "))" : ")");
     return true;
   } else if (op->op.same_as(tl::atomic_load_elem_op())) {
+    need_atomic_h_ = true;
     // atomic_load_elem_op(src_ptr, memory_order[, scope]) -> returns loaded
     // value
     const std::string scope = tl::GetAtomicScope(op);
@@ -4006,6 +4053,7 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
        << src_ptr << ", " << memory_order << ")";
     return true;
   } else if (op->op.same_as(tl::atomic_store_elem_op())) {
+    need_atomic_h_ = true;
     // atomic_store_elem_op(dst_ptr, value, memory_order[, scope])
     const std::string scope = tl::GetAtomicScope(op);
     const bool system_scope = scope == "system";
@@ -4027,6 +4075,7 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
                  << dst_ptr << ", " << value << ", " << memory_order << ");\n";
     return true;
   } else if (op->op.same_as(tl::atomic_max_elem_op())) {
+    need_atomic_h_ = true;
     // atomic_max_elem_op(dst_ptr, src_value[, memory_order])
     std::string dst_ptr = PrintExpr(op->args[0]);
     std::string src_value = PrintExpr(op->args[1]);
@@ -4038,6 +4087,7 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     this->stream << ");\n";
     return true;
   } else if (op->op.same_as(tl::atomic_max_ret_elem_op())) {
+    need_atomic_h_ = true;
     // atomic_max_ret_elem_op(dst_ptr, src_value[, memory_order]) -> returns
     // prev value
     os << "AtomicMaxRet(" << PrintExpr(op->args[0]) << ", "
@@ -4048,6 +4098,7 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     os << ")";
     return true;
   } else if (op->op.same_as(tl::atomic_or_elem_op())) {
+    need_atomic_h_ = true;
     // atomic_or_elem_op(dst_ptr, src_value[, memory_order])
     std::string dst_ptr = PrintExpr(op->args[0]);
     std::string src_value = PrintExpr(op->args[1]);
@@ -4059,6 +4110,7 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     this->stream << ");\n";
     return true;
   } else if (op->op.same_as(tl::atomic_min_elem_op())) {
+    need_atomic_h_ = true;
     // atomic_min_elem_op(dst_ptr, src_value[, memory_order])
     std::string dst_ptr = PrintExpr(op->args[0]);
     std::string src_value = PrintExpr(op->args[1]);
@@ -4070,6 +4122,7 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     this->stream << ");\n";
     return true;
   } else if (op->op.same_as(tl::atomic_min_ret_elem_op())) {
+    need_atomic_h_ = true;
     // atomic_min_ret_elem_op(dst_ptr, src_value[, memory_order]) -> returns
     // prev value
     os << "AtomicMinRet(" << PrintExpr(op->args[0]) << ", "
@@ -4310,8 +4363,15 @@ void CodeGenTileLangPPU::VisitExpr_(const RampNode *op, std::ostream &os) {
 
   // ICHECK_LE(lanes, 8) << "Translate Ramp Node " << GetRef<Ramp>(op)
   //                    << "error: " << lanes << " exceeds max ramp lanes 8.";
-  os << "(make_";
-  PrintType(op->dtype, os);
+  bool is_packed_int4x2 = (op->dtype.is_int() || op->dtype.is_uint()) &&
+                          op->dtype.bits() == 4 && op->dtype.lanes() == 2;
+  os << "(";
+  if (is_packed_int4x2) {
+    PrintVecConstructor(op->dtype, os);
+  } else {
+    os << "make_";
+    PrintType(op->dtype, os);
+  }
   os << "(";
   for (int i = 0; i < lanes; i++) {
     os << "(" << PrintExpr(op->base) << ")"
@@ -4700,35 +4760,32 @@ void CodeGenTileLangPPU::VisitExpr_(const ShuffleNode *op,
 void CodeGenTileLangPPU::VisitExpr_(const BroadcastNode *op,
                                     std::ostream &os) { // NOLINT(*)
   int lanes = static_cast<int>(Downcast<IntImm>(op->lanes)->value);
+  if ((op->dtype.is_int() || op->dtype.is_uint()) && op->dtype.bits() == 4 &&
+      lanes == 2) {
+    std::string value = PrintExpr(op->value);
+    PrintVecConstructor(op->dtype, os);
+    os << '(' << value << ", " << value << ')';
+    return;
+  }
   if ((op->dtype.is_int() || op->dtype.is_uint()) && op->dtype.bits() == 8) {
     const int64_t *p = as_const_int(op->value);
-    if (p) {
-      if (lanes == 4) {
-        // make_int8x4
-        ICHECK(p);
-        int64_t v = *p & 0xFF;
-        v = (v << 24) | (v << 16) | (v << 8) | v;
-        if (op->dtype.is_uint()) {
-          os << "(uint)" << v;
-        } else {
-          os << "(int)" << v;
-        }
-        return;
-      } else if (lanes == 32) {
-        // make_int8x32
-        const int64_t *p = as_const_int(op->value);
-        ICHECK(p);
-        int64_t v = *p & 0xFF;
-        v = (v << 24) | (v << 16) | (v << 8) | v;
-        if (op->dtype.is_uint()) {
-          os << "make_ulonglong4(" << v << ", " << v << ", " << v << ", " << v
-             << ")";
-        } else {
-          os << "make_longlong4(" << v << ", " << v << ", " << v << ", " << v
-             << ")";
-        }
-        return;
+    if (p && lanes == 4) {
+      int64_t v = *p & 0xFF;
+      v = (v << 24) | (v << 16) | (v << 8) | v;
+      if (op->dtype.is_uint()) {
+        os << "(uint)" << v;
+      } else {
+        os << "(int)" << v;
       }
+      return;
+    }
+    if ((lanes == 4 || lanes == 8 || lanes == 16 || lanes == 32) &&
+        tirx::SideEffect(op->value) <= tirx::CallEffectKind::kReadState) {
+      std::string sval = SSAGetID(PrintExpr(op->value), op->value.dtype());
+      os << "tl::broadcast<";
+      PrintType(op->dtype, os);
+      os << ">(" << sval << ")";
+      return;
     }
   }
 
@@ -4819,6 +4876,28 @@ void CodeGenTileLangPPU::VisitExpr_(const BroadcastNode *op,
     return;
   }
 
+  if (op->dtype.is_float4_e2m1fn() && lanes % 2 == 0 &&
+      tirx::SideEffect(op->value) <= tirx::CallEffectKind::kReadState) {
+    std::string sval = SSAGetID(PrintExpr(op->value), op->value.dtype());
+    if (lanes == 2) {
+      os << "tl::make_fp4_vec<fp4_e2_2_t>(" << sval << ", " << sval << ")";
+    } else {
+      os << "tl::broadcast<";
+      PrintType(op->dtype, os);
+      os << ">(tl::make_fp4_vec<fp4_e2_2_t>(" << sval << ", " << sval << "))";
+    }
+    return;
+  }
+
+  if (op->dtype.is_float8() && lanes >= 2 &&
+      tirx::SideEffect(op->value) <= tirx::CallEffectKind::kReadState) {
+    std::string sval = SSAGetID(PrintExpr(op->value), op->value.dtype());
+    os << "tl::broadcast<";
+    PrintType(op->dtype, os);
+    os << ">(" << sval << ")";
+    return;
+  }
+
   // A packed 4-bit broadcast cannot use the generic make_<Type>(v, ...)
   // fallback: lanes==4 would emit a malformed make_int16_t() call.
   if ((op->dtype.is_int() || op->dtype.is_uint()) && op->dtype.bits() == 4) {
@@ -4858,17 +4937,12 @@ void CodeGenTileLangPPU::VisitExpr_(const BroadcastNode *op,
       os << (op->dtype.is_uint() ? "(uint)" : "(int)");
       emit_packed_field(8);
       return;
-    } else if (lanes == 16 || lanes == 32) {
-      os << "make_";
+    } else if (lanes == 16 || lanes == 32 || lanes == 64) {
+      os << "tl::broadcast<";
       PrintType(op->dtype, os);
-      os << '(';
-      for (int i = 0; i < lanes / 8; ++i) {
-        if (i != 0)
-          os << ", ";
-        os << (op->dtype.is_uint() ? "(uint)" : "(int)");
-        emit_packed_field(8);
-      }
-      os << ')';
+      os << ">(" << (op->dtype.is_uint() ? "(uint)" : "(int)");
+      emit_packed_field(8);
+      os << ")";
       return;
     }
   }
@@ -4927,8 +5001,12 @@ void CodeGenTileLangPPU::VisitExpr_(const BroadcastNode *op,
   }
 
   std::string v = PrintExpr(op->value);
-  os << "make_";
-  PrintType(op->dtype, os);
+  if (op->dtype.is_float4_e2m1fn() || op->dtype.is_float8()) {
+    PrintVecConstructor(op->dtype, os);
+  } else {
+    os << "make_";
+    PrintType(op->dtype, os);
+  }
   os << '(';
   for (int i = 0; i < lanes; ++i) {
     if (i != 0)
@@ -5165,8 +5243,12 @@ void CodeGenTileLangPPU::PrintVecElemLoadExpr(DataType t, int i,
   }
 
   if (i == 0) {
-    os << "make_";
-    PrintType(t, os);
+    if (t.is_float4_e2m1fn() || t.is_float8()) {
+      PrintVecConstructor(t, os);
+    } else {
+      os << "make_";
+      PrintType(t, os);
+    }
     os << "(";
   }
   os << value;

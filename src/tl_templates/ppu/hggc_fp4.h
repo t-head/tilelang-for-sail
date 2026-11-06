@@ -456,14 +456,6 @@ struct __HGGC_ALIGN__(8) fp4_e2_16_t {
 
 struct __HGGC_ALIGN__(16) fp4_e2_32_t {
   fp4_e2_16_t x, y;
-
-  TL_DEVICE fp4_e2_32_t &operator=(const ulonglong4 &src) {
-    x.x = *(fp4_e2_8_t *)&src.x;
-    x.y = *(fp4_e2_8_t *)&src.y;
-    y.x = *(fp4_e2_8_t *)&src.z;
-    y.y = *(fp4_e2_8_t *)&src.w;
-    return *this;
-  }
 };
 
 struct __HGGC_ALIGN__(32) fp4_e2_64_t {
@@ -490,62 +482,39 @@ TL_DEVICE void tl_fp4_packed_store(fp4_e2_2_t *buf, int pos, fp4_e2_t elem) {
   (pos & 1) ? buf[pos >> 1].set_y(elem) : buf[pos >> 1].set_x(elem);
 }
 
-// ---------------------------------------------------------------------------
-// Pack multiple fp4_e2_t values into wider containers
-// ---------------------------------------------------------------------------
+namespace tl {
 
-/// Pack two fp4 values into one byte
-TL_DEVICE fp4_e2_2_t make_fp4_e2_2_t(fp4_e2_t lo, fp4_e2_t hi) {
-  fp4_e2_2_t out;
-  out.__x = (__hg_fp4x2_storage_t)((lo.__x & 0x0F) | ((hi.__x & 0x0F) << 4));
-  return out;
+template <typename V, typename... Ts> TL_DEVICE V make_fp4_vec(Ts... lanes) {
+  constexpr int kN = static_cast<int>(sizeof...(lanes));
+  static_assert(kN % 2 == 0, "fp4 vectors pack two lanes per byte");
+  static_assert(sizeof(V) * 2 == kN,
+                "tl::make_fp4_vec lane count does not match the vector size");
+  const fp4_e2_t vals[] = {lanes...};
+  V result;
+  uint8_t *bytes = reinterpret_cast<uint8_t *>(&result);
+#pragma unroll
+  for (int i = 0; i < kN / 2; ++i) {
+    bytes[i] = static_cast<uint8_t>((vals[2 * i].__x & 0x0F) |
+                                    ((vals[2 * i + 1].__x & 0x0F) << 4));
+  }
+  return result;
 }
 
-/// Pack four fp4 values
-TL_DEVICE fp4_e2_4_t make_fp4_e2_4_t(fp4_e2_t a0, fp4_e2_t a1, fp4_e2_t a2,
-                                     fp4_e2_t a3) {
-  fp4_e2_4_t out;
-  out.x = make_fp4_e2_2_t(a0, a1);
-  out.y = make_fp4_e2_2_t(a2, a3);
-  return out;
+} // namespace tl
+
+TL_DEVICE __hg_fp8x4_storage_t
+__tl_cvt_e2m1x4_to_e4m3x4(const __hg_fp4x4_storage_t src) {
+  uint32_t magnitude = __byte_perm(0x3c383000, 0x4c484440, src & 0x7777);
+  uint32_t signs = (__byte_perm(src, src >> 4, 0x5140) & 0x08080808) << 4;
+  return magnitude | signs;
 }
 
-/// Pack eight fp4 values
-TL_DEVICE fp4_e2_8_t make_fp4_e2_8_t(fp4_e2_t a0, fp4_e2_t a1, fp4_e2_t a2,
-                                     fp4_e2_t a3, fp4_e2_t a4, fp4_e2_t a5,
-                                     fp4_e2_t a6, fp4_e2_t a7) {
-  fp4_e2_8_t out;
-  out.x = make_fp4_e2_4_t(a0, a1, a2, a3);
-  out.y = make_fp4_e2_4_t(a4, a5, a6, a7);
-  return out;
+TL_DEVICE __hg_fp8x2_storage_t
+__tl_cvt_e2m1x2_to_e4m3x2(const __hg_fp4x2_storage_t src) {
+  return static_cast<__hg_fp8x2_storage_t>(__tl_cvt_e2m1x4_to_e4m3x4(src));
 }
 
-/// Pack sixteen fp4 values
-TL_DEVICE fp4_e2_16_t make_fp4_e2_16_t(fp4_e2_t a0, fp4_e2_t a1, fp4_e2_t a2,
-                                       fp4_e2_t a3, fp4_e2_t a4, fp4_e2_t a5,
-                                       fp4_e2_t a6, fp4_e2_t a7, fp4_e2_t b0,
-                                       fp4_e2_t b1, fp4_e2_t b2, fp4_e2_t b3,
-                                       fp4_e2_t b4, fp4_e2_t b5, fp4_e2_t b6,
-                                       fp4_e2_t b7) {
-  fp4_e2_16_t out;
-  out.x = make_fp4_e2_8_t(a0, a1, a2, a3, a4, a5, a6, a7);
-  out.y = make_fp4_e2_8_t(b0, b1, b2, b3, b4, b5, b6, b7);
-  return out;
-}
-
-/// Pack thirty-two fp4 values
-TL_DEVICE fp4_e2_32_t make_fp4_e2_32_t(
-    fp4_e2_t a0, fp4_e2_t a1, fp4_e2_t a2, fp4_e2_t a3, fp4_e2_t a4,
-    fp4_e2_t a5, fp4_e2_t a6, fp4_e2_t a7, fp4_e2_t a8, fp4_e2_t a9,
-    fp4_e2_t a10, fp4_e2_t a11, fp4_e2_t a12, fp4_e2_t a13, fp4_e2_t a14,
-    fp4_e2_t a15, fp4_e2_t b0, fp4_e2_t b1, fp4_e2_t b2, fp4_e2_t b3,
-    fp4_e2_t b4, fp4_e2_t b5, fp4_e2_t b6, fp4_e2_t b7, fp4_e2_t b8,
-    fp4_e2_t b9, fp4_e2_t b10, fp4_e2_t b11, fp4_e2_t b12, fp4_e2_t b13,
-    fp4_e2_t b14, fp4_e2_t b15) {
-  fp4_e2_32_t out;
-  out.x = make_fp4_e2_16_t(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11,
-                           a12, a13, a14, a15);
-  out.y = make_fp4_e2_16_t(b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11,
-                           b12, b13, b14, b15);
-  return out;
+TL_DEVICE __hg_fp8_storage_t
+__tl_cvt_e2m1_to_e4m3(const __hg_fp4_storage_t src) {
+  return static_cast<__hg_fp8_storage_t>(__tl_cvt_e2m1x4_to_e4m3x4(src));
 }

@@ -1,6 +1,11 @@
 #pragma once
 
 #include "common.h"
+
+#ifndef __HGGCCC_RTC__
+#include <type_traits>
+#endif
+
 #include <cutlass/arch/barrier.h>
 
 // Reuse cutlass advanced barrier abstraction
