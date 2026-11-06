@@ -7,6 +7,7 @@ PPU_EXECUTION_BACKENDS = [
         "tvm_ffi",
         enable_host_codegen=True,
         enable_device_compile=True,
+        supports_callee_allocated_outputs=True,
     ),
     ExecutionBackendSpec("cython"),
 ]

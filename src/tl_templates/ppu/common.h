@@ -213,6 +213,119 @@ TL_PATCH TL_DEVICE bfloat16_t hnearbyint(const bfloat16_t x) {
   return bfloat16_t(nearbyintf(float(x)));
 }
 
+TL_PATCH TL_DEVICE half_t hexp(const half_t x) {
+  return half_t(hexp(x.to_half()));
+}
+
+TL_PATCH TL_DEVICE half_t hceil(const half_t x) {
+  return half_t(ceilf(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hceil(const bfloat16_t x) {
+  return bfloat16_t(ceilf(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t hcos(const half_t x) {
+  return half_t(cosf(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hcos(const bfloat16_t x) {
+  return bfloat16_t(cosf(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t hexp2(const half_t x) {
+  return half_t(exp2f(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hexp2(const bfloat16_t x) {
+  return bfloat16_t(exp2f(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t hexp10(const half_t x) {
+  return half_t(exp10f(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hexp10(const bfloat16_t x) {
+  return bfloat16_t(exp10f(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t hfloor(const half_t x) {
+  return half_t(floorf(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hfloor(const bfloat16_t x) {
+  return bfloat16_t(floorf(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t hlog(const half_t x) {
+  return half_t(logf(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hlog(const bfloat16_t x) {
+  return bfloat16_t(logf(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t hlog10(const half_t x) {
+  return half_t(log10f(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hlog10(const bfloat16_t x) {
+  return bfloat16_t(log10f(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t hlog2(const half_t x) {
+  return half_t(log2f(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hlog2(const bfloat16_t x) {
+  return bfloat16_t(log2f(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t hrint(const half_t x) {
+  return half_t(rintf(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hrint(const bfloat16_t x) {
+  return bfloat16_t(rintf(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t hsin(const half_t x) {
+  return half_t(sinf(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hsin(const bfloat16_t x) {
+  return bfloat16_t(sinf(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t htan(const half_t x) {
+  return half_t(tanf(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t htan(const bfloat16_t x) {
+  return bfloat16_t(tanf(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t htrunc(const half_t x) {
+  return half_t(truncf(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t htrunc(const bfloat16_t x) {
+  return bfloat16_t(truncf(float(x)));
+}
+
+// The PPU SDK has no __ldg overloads for CUTLASS's 16-bit wrappers. Forward
+// through the bit-compatible native 16-bit integer type and rebuild the
+// wrapper from the loaded bits.
+TL_PATCH TL_DEVICE half_t __ldg(const half_t *ptr) {
+  unsigned short raw = __ldg(reinterpret_cast<const unsigned short *>(ptr));
+  return half_t(*reinterpret_cast<const half *>(&raw));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t __ldg(const bfloat16_t *ptr) {
+  unsigned short raw = __ldg(reinterpret_cast<const unsigned short *>(ptr));
+  return bfloat16_t(*reinterpret_cast<const __ppu_bfloat16 *>(&raw));
+}
+
 TL_PATCH TL_DEVICE half_t hpow(const half_t x, const half_t y) {
   return half_t(powf(float(x), float(y)));
 }
@@ -392,6 +505,42 @@ TL_DEVICE longlong4 make_longlong4(int x0, int x1, int y0, int y1, int z0,
   *((int2 *)&result.y) = make_int2(y0, y1);
   *((int2 *)&result.z) = make_int2(z0, z1);
   *((int2 *)&result.w) = make_int2(w0, w1);
+  return result;
+}
+
+// Pack thirty-two char values.
+TL_DEVICE longlong4
+make_longlong4(signed char x0, signed char x1, signed char x2, signed char x3,
+               signed char x4, signed char x5, signed char x6, signed char x7,
+               signed char y0, signed char y1, signed char y2, signed char y3,
+               signed char y4, signed char y5, signed char y6, signed char y7,
+               signed char z0, signed char z1, signed char z2, signed char z3,
+               signed char z4, signed char z5, signed char z6, signed char z7,
+               signed char w0, signed char w1, signed char w2, signed char w3,
+               signed char w4, signed char w5, signed char w6, signed char w7) {
+  longlong4 result;
+  *((int2 *)&result.x) = make_int2(x0, x1, x2, x3, x4, x5, x6, x7);
+  *((int2 *)&result.y) = make_int2(y0, y1, y2, y3, y4, y5, y6, y7);
+  *((int2 *)&result.z) = make_int2(z0, z1, z2, z3, z4, z5, z6, z7);
+  *((int2 *)&result.w) = make_int2(w0, w1, w2, w3, w4, w5, w6, w7);
+  return result;
+}
+
+// Pack thirty-two unsigned char values.
+TL_DEVICE ulonglong4 make_ulonglong4(
+    unsigned char x0, unsigned char x1, unsigned char x2, unsigned char x3,
+    unsigned char x4, unsigned char x5, unsigned char x6, unsigned char x7,
+    unsigned char y0, unsigned char y1, unsigned char y2, unsigned char y3,
+    unsigned char y4, unsigned char y5, unsigned char y6, unsigned char y7,
+    unsigned char z0, unsigned char z1, unsigned char z2, unsigned char z3,
+    unsigned char z4, unsigned char z5, unsigned char z6, unsigned char z7,
+    unsigned char w0, unsigned char w1, unsigned char w2, unsigned char w3,
+    unsigned char w4, unsigned char w5, unsigned char w6, unsigned char w7) {
+  ulonglong4 result;
+  *((uint2 *)&result.x) = make_uint2(x0, x1, x2, x3, x4, x5, x6, x7);
+  *((uint2 *)&result.y) = make_uint2(y0, y1, y2, y3, y4, y5, y6, y7);
+  *((uint2 *)&result.z) = make_uint2(z0, z1, z2, z3, z4, z5, z6, z7);
+  *((uint2 *)&result.w) = make_uint2(w0, w1, w2, w3, w4, w5, w6, w7);
   return result;
 }
 
@@ -713,6 +862,26 @@ template <typename T> TL_DEVICE T fast_min(T a, T b) { return b < a ? b : a; }
 
 template <> TL_DEVICE float fast_min(float a, float b) { return fminf(a, b); }
 
+TL_DEVICE float_e4m3_t max(float_e4m3_t lhs, float_e4m3_t rhs) {
+  return float_e4m3_t(
+      ::fmaxf(static_cast<float>(lhs), static_cast<float>(rhs)));
+}
+
+TL_DEVICE float_e4m3_t min(float_e4m3_t lhs, float_e4m3_t rhs) {
+  return float_e4m3_t(
+      ::fminf(static_cast<float>(lhs), static_cast<float>(rhs)));
+}
+
+TL_DEVICE float_e5m2_t max(float_e5m2_t lhs, float_e5m2_t rhs) {
+  return float_e5m2_t(
+      ::fmaxf(static_cast<float>(lhs), static_cast<float>(rhs)));
+}
+
+TL_DEVICE float_e5m2_t min(float_e5m2_t lhs, float_e5m2_t rhs) {
+  return float_e5m2_t(
+      ::fminf(static_cast<float>(lhs), static_cast<float>(rhs)));
+}
+
 // --- max2 ----------------------------------------------------------------
 
 TL_DEVICE float2 max2(float2 a, float2 b) {
@@ -761,9 +930,71 @@ TL_DEVICE __ppu_bfloat162 abs2(__ppu_bfloat162 a) { return __habs2(a); }
 
 TL_DEVICE __half2 abs2(__half2 a) { return __habs2(a); }
 
+TL_DEVICE half_t RoundTiesAwayFromZero(half_t x) {
+  return half_t(roundf(float(x)));
+}
+
+TL_DEVICE float RoundTiesAwayFromZero(float x) { return roundf(x); }
+
+TL_DEVICE double RoundTiesAwayFromZero(double x) { return round(x); }
+
+TL_DEVICE bfloat16_t RoundTiesAwayFromZero(bfloat16_t x) {
+  return bfloat16_t(roundf(float(x)));
+}
+
+TL_DEVICE float_e4m3_t RoundTiesAwayFromZero(float_e4m3_t x) {
+  return float_e4m3_t(cutlass::float_e4m3_t(roundf(float(x))));
+}
+
+TL_DEVICE float_e5m2_t RoundTiesAwayFromZero(float_e5m2_t x) {
+  return float_e5m2_t(cutlass::float_e5m2_t(roundf(float(x))));
+}
+
 } // namespace tl
 
 using tl::tfloat32_t;
+
+// The PPU SDK declares __shfl_*_sync only for its native arithmetic types, so
+// shuffling a CUTLASS sub-32-bit float wrapper binds to the `float` overload
+// and fails to compile when assigned back to the wrapper type. Carry the raw
+// bits through the native 32-bit unsigned overload instead (same approach as
+// the tl::shfl_*_sync helpers below).
+#define TL_DEFINE_SHFL_SYNC_OVERLOADS(TYPE, RAW)                               \
+  TL_PATCH TL_DEVICE TYPE __shfl_sync(unsigned mask, TYPE val, int src_lane,   \
+                                      int width) {                             \
+    RAW raw = reinterpret_cast<RAW &>(val);                                    \
+    RAW ret = static_cast<RAW>(                                                \
+        __shfl_sync(mask, static_cast<uint32_t>(raw), src_lane, width));       \
+    return reinterpret_cast<TYPE &>(ret);                                      \
+  }                                                                            \
+  TL_PATCH TL_DEVICE TYPE __shfl_xor_sync(unsigned mask, TYPE val,             \
+                                          int lane_mask, int width) {          \
+    RAW raw = reinterpret_cast<RAW &>(val);                                    \
+    RAW ret = static_cast<RAW>(                                                \
+        __shfl_xor_sync(mask, static_cast<uint32_t>(raw), lane_mask, width));  \
+    return reinterpret_cast<TYPE &>(ret);                                      \
+  }                                                                            \
+  TL_PATCH TL_DEVICE TYPE __shfl_down_sync(unsigned mask, TYPE val, int delta, \
+                                           int width) {                        \
+    RAW raw = reinterpret_cast<RAW &>(val);                                    \
+    RAW ret = static_cast<RAW>(                                                \
+        __shfl_down_sync(mask, static_cast<uint32_t>(raw), delta, width));     \
+    return reinterpret_cast<TYPE &>(ret);                                      \
+  }                                                                            \
+  TL_PATCH TL_DEVICE TYPE __shfl_up_sync(unsigned mask, TYPE val, int delta,   \
+                                         int width) {                          \
+    RAW raw = reinterpret_cast<RAW &>(val);                                    \
+    RAW ret = static_cast<RAW>(                                                \
+        __shfl_up_sync(mask, static_cast<uint32_t>(raw), delta, width));       \
+    return reinterpret_cast<TYPE &>(ret);                                      \
+  }
+
+TL_DEFINE_SHFL_SYNC_OVERLOADS(half_t, uint16_t)
+TL_DEFINE_SHFL_SYNC_OVERLOADS(bfloat16_t, uint16_t)
+TL_DEFINE_SHFL_SYNC_OVERLOADS(tl::float_e4m3_t, uint8_t)
+TL_DEFINE_SHFL_SYNC_OVERLOADS(tl::float_e5m2_t, uint8_t)
+
+#undef TL_DEFINE_SHFL_SYNC_OVERLOADS
 
 //
 // Optimized type-punned warp shuffle helpers for 16-bit types
@@ -771,6 +1002,22 @@ using tl::tfloat32_t;
 // costly fp32 conversions and instruction overhead.
 //
 namespace tl {
+
+// Replicate a small repeating unit across a wider vector type, e.g. one
+// byte across longlong4. Works for any (V, U) with sizeof(V) % sizeof(U) == 0,
+// so codegen does not need a make_<type> constructor for every lane count.
+template <typename V, typename U> TL_DEVICE V broadcast(const U unit) {
+  static_assert(sizeof(V) % sizeof(U) == 0,
+                "tl::broadcast requires the vector size to be a multiple of "
+                "the unit size");
+  V result;
+  U *parts = reinterpret_cast<U *>(&result);
+#pragma unroll
+  for (int i = 0; i < static_cast<int>(sizeof(V) / sizeof(U)); ++i) {
+    parts[i] = unit;
+  }
+  return result;
+}
 
 // Generic passthroughs
 template <typename T>

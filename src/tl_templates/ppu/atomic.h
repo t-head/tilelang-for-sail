@@ -199,7 +199,8 @@ TL_DEVICE void AtomicMax(T1 *ref, T2 val,
     // We simulate this process by atomicCAS loop.
     unsigned short *address_as_ushort =
         reinterpret_cast<unsigned short *>(address);
-    unsigned short val_as_ushort = *reinterpret_cast<unsigned short *>(&val);
+    unsigned short val_as_ushort =
+        tl_atomic_detail::PackBits16(hggc_cast<NT1>(val));
     unsigned short old_val_ushort = *address_as_ushort;
     while (val > *reinterpret_cast<T1 *>(&old_val_ushort)) {
       unsigned short assumed_val_ushort = old_val_ushort;
@@ -224,7 +225,8 @@ TL_DEVICE T1 AtomicMaxRet(T1 *ref, T2 val,
                 std::is_same_v<NT1, __ppu_bfloat16>) {
     unsigned short *address_as_ushort =
         reinterpret_cast<unsigned short *>(address);
-    unsigned short val_as_ushort = *reinterpret_cast<unsigned short *>(&val);
+    unsigned short val_as_ushort =
+        tl_atomic_detail::PackBits16(hggc_cast<NT1>(val));
     unsigned short old_val_ushort = *address_as_ushort;
     while (val > *reinterpret_cast<T1 *>(&old_val_ushort)) {
       unsigned short assumed_val_ushort = old_val_ushort;
@@ -253,7 +255,8 @@ TL_DEVICE void AtomicMin(T1 *ref, T2 val,
     // We simulate this process by atomicCAS loop.
     unsigned short *address_as_ushort =
         reinterpret_cast<unsigned short *>(address);
-    unsigned short val_as_ushort = *reinterpret_cast<unsigned short *>(&val);
+    unsigned short val_as_ushort =
+        tl_atomic_detail::PackBits16(hggc_cast<NT1>(val));
     unsigned short old_val_ushort = *address_as_ushort;
     while (val < *reinterpret_cast<T1 *>(&old_val_ushort)) {
       unsigned short assumed_val_ushort = old_val_ushort;
@@ -278,7 +281,8 @@ TL_DEVICE T1 AtomicMinRet(T1 *ref, T2 val,
                 std::is_same_v<NT1, __ppu_bfloat16>) {
     unsigned short *address_as_ushort =
         reinterpret_cast<unsigned short *>(address);
-    unsigned short val_as_ushort = *reinterpret_cast<unsigned short *>(&val);
+    unsigned short val_as_ushort =
+        tl_atomic_detail::PackBits16(hggc_cast<NT1>(val));
     unsigned short old_val_ushort = *address_as_ushort;
     while (val < *reinterpret_cast<T1 *>(&old_val_ushort)) {
       unsigned short assumed_val_ushort = old_val_ushort;
