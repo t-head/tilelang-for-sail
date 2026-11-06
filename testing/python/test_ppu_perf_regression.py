@@ -1059,11 +1059,13 @@ class TestWorkflowYAML:
         assert self.wf["permissions"] == {}
         jobs = self.wf["jobs"]
         assert jobs["resolve-pr"]["permissions"] == {"contents": "read"}
-        assert jobs["claim-request"]["permissions"] == {"issues": "write"}
+        assert jobs["claim-request"]["permissions"] == {"issues": "write", "pull-requests": "write"}
         assert jobs["pre-commit-lint"]["permissions"] == {"contents": "read"}
         assert jobs["ppu-perf"]["permissions"] == {"contents": "read"}
-        assert jobs["publish-result"]["permissions"] == {"issues": "write"}
-        assert "pull-requests" not in str(self.wf)
+        assert jobs["publish-result"]["permissions"] == {"issues": "write", "pull-requests": "write"}
+        # Execution jobs must NOT have pull-requests write
+        for ro_job in ("resolve-pr", "pre-commit-lint", "ppu-perf"):
+            assert jobs[ro_job]["permissions"].get("pull-requests") != "write"
 
     def test_no_workflow_level_concurrency(self):
         """Unauthorized comments cannot cancel authorized work."""
