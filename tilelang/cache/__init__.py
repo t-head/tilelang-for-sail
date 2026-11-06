@@ -11,6 +11,7 @@ from tilelang import env
 from tilelang.jit.adapter.cutedsl.kernel_cache import CuTeDSLKernelCache
 from tilelang.jit.adapter.cython.kernel_cache import CythonKernelCache
 from tilelang.jit.adapter.nvrtc.kernel_cache import NVRTCKernelCache
+from tilelang.jit.adapter.hgrtc.kernel_cache import HGRTCKernelCache
 from tilelang.jit.adapter.torch.kernel_cache import TorchKernelCache
 from tilelang.jit.adapter.kernel_cache import TVMFFIKernelCache
 from tilelang.ascend.kernel_cache import AscendCythonKernelCache, AscendTVMFFIKernelCache
@@ -25,6 +26,7 @@ _dispatch_map: dict[str, KernelCache] = {
     "tvm_ffi": TVMFFIKernelCache(),
     "cython": CythonKernelCache(),
     "nvrtc": NVRTCKernelCache(),
+    "hgrtc": HGRTCKernelCache(),
     "cutedsl": CuTeDSLKernelCache(),
     "torch": TorchKernelCache(),
 }
@@ -38,7 +40,7 @@ _ascend_dispatch_map: dict[str, KernelCache] = {
 def _resolve_cache_dispatch(
     target: TargetLike | None,
     target_host: TargetLike | None,
-    execution_backend: Literal["auto", "tvm_ffi", "cython", "nvrtc", "torch", "cutedsl"] | None,
+    execution_backend: Literal["auto", "tvm_ffi", "cython", "nvrtc", "hgrtc", "torch", "cutedsl"] | None,
     verbose: bool | None,
 ):
     if target is None:
@@ -78,7 +80,7 @@ def cached(
     *args,
     target: TargetLike | None = None,
     target_host: TargetLike | None = None,
-    execution_backend: Literal["auto", "tvm_ffi", "cython", "nvrtc", "torch", "cutedsl"] | None = None,
+    execution_backend: Literal["auto", "tvm_ffi", "cython", "nvrtc", "hgrtc", "torch", "cutedsl"] | None = None,
     verbose: bool | None = None,
     pass_configs: dict | None = None,
     compile_flags: list[str] | str | None = None,
