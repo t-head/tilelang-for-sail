@@ -17,6 +17,7 @@ using namespace tirx;
 
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableAIULower, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableLdmatSwzl, Bool);
+TVM_REGISTER_PASS_CONFIG_OPTION(kDisableLdmatSwzlCostModel, Bool);
 
 TVM_REGISTER_OP("tl.clamp")
     .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", LowerClamp);
