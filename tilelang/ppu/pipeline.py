@@ -41,6 +41,46 @@ def _module_has_shared_barrier(mod: IRModule) -> bool:
     return found
 
 
+def _lower_tile_op_with_swzl_cost_model(mod: IRModule) -> IRModule:
+    """Apply one function-wide FP8 SWZL decision before LowerTileOp."""
+    pass_ctx = tilelang.transform.get_pass_context()
+    config = pass_ctx.config
+    cost_model_disabled = bool(config.get(tilelang.PassConfigKey.TL_DISABLE_LDMAT_SWZL_COST_MODEL, False))
+    explicitly_disabled = bool(config.get(tilelang.PassConfigKey.TL_DISABLE_LDMAT_SWZL, False))
+    lower_tile_op = tilelang.ppu.transform.LowerTileOp()
+    if cost_model_disabled or explicitly_disabled:
+        return lower_tile_op(mod)
+
+    functions = [func for func in mod.functions.values() if isinstance(func, PrimFunc)]
+    if len(functions) != 1:
+        return lower_tile_op(mod)
+
+    from tilelang.ppu.swzl_cost import decide, extract
+
+    try:
+        record = extract(functions[0])
+        decision = decide(record)
+    except (AssertionError, KeyError, TypeError, ValueError):
+        # The selector is an optimization only.  A new or unsupported IR shape
+        # must preserve the existing lowering policy instead of failing build.
+        return lower_tile_op(mod)
+    if decision["choice"] != "ordinary":
+        return lower_tile_op(mod)
+
+    nested_config = dict(config)
+    nested_config[tilelang.PassConfigKey.TL_DISABLE_LDMAT_SWZL.value] = True
+    context_args = {
+        "opt_level": pass_ctx.opt_level,
+        "config": nested_config,
+        "required_pass": list(pass_ctx.required_pass),
+        "disabled_pass": list(pass_ctx.disabled_pass),
+    }
+    if hasattr(pass_ctx, "instruments"):
+        context_args["instruments"] = list(pass_ctx.instruments)
+    with tilelang.transform.PassContext(**context_args):
+        return lower_tile_op(mod)
+
+
 @tirx.transform.prim_func_pass(opt_level=0)
 def _AlignAIUSharedMemory(func, mod, ctx):
     """Use uniform 128-byte shared alignment in kernels that issue AIU loads."""
@@ -111,7 +151,7 @@ def PPUPassPipelineBodyPrologue(mod: IRModule, target: Target) -> IRModule:
     # Visualize the layout
     LayoutVisual(mod)
     # Lower high-level tile operations to low-level operations
-    mod = tilelang.ppu.transform.LowerTileOp()(mod)
+    mod = _lower_tile_op_with_swzl_cost_model(mod)
     mod = tilelang.transform.VerifyReducerConsumed()(mod)
 
     # @PPU specific

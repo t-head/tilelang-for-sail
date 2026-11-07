@@ -187,6 +187,16 @@ class PassConfigKey(str, Enum):
     TL_DISABLE_LDMAT_SWZL = "tl.disable_ldmat_swzl"
     """Disable PPU1.5 ldmatrix swizzled bulk tensor load lowering. Default: False"""
 
+    TL_DISABLE_LDMAT_SWZL_COST_MODEL = "tl.disable_ldmat_swzl_cost_model"
+    """Disable the PPU1.5 FP8 ldmatrix SWZL cost model. Default: False
+
+    By default, TileLang analyzes each eligible function once immediately
+    before ``LowerTileOp`` and selects either the existing SWZL path or the
+    ordinary ldmatrix path. Other data types and unsupported functions keep
+    the existing lowering. Set this option to restore the previous SWZL
+    policy. An explicit ``tl.disable_ldmat_swzl=True`` always takes precedence.
+    """
+
     TL_ENABLE_LOWER_LDGSTG = "tl.enable_lower_ldgstg"
     """Enable non-predicated LDG/STG lowering for global memory access.
     When enabled, converts Ramp-based global buffer load/store to ldg/stg intrinsics.

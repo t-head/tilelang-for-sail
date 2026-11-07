@@ -17,6 +17,7 @@ using namespace tirx;
 
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableAIULower, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableLdmatSwzl, Bool);
+TVM_REGISTER_PASS_CONFIG_OPTION(kDisableLdmatSwzlCostModel, Bool);
 
 // tl.clamp intentionally keeps no ppu.FLowerIntrinsic registration: like the
 // CUDA backend, the op survives lowering and is emitted by the PPU codegen's
