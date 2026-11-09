@@ -158,6 +158,24 @@ struct MinOpNan_fp16x2 {
   }
 };
 
+struct SumOp_f32x2 {
+  TL_DEVICE float2 operator()(float2 const &x, float2 const &y) {
+    return tl::add2(x, y);
+  }
+};
+
+struct MaxOp_f32x2 {
+  TL_DEVICE float2 operator()(float2 const &x, float2 const &y) {
+    return tl::max2(x, y);
+  }
+};
+
+struct MinOp_f32x2 {
+  TL_DEVICE float2 operator()(float2 const &x, float2 const &y) {
+    return tl::min2(x, y);
+  }
+};
+
 struct BitAndOp {
   template <typename T> TL_DEVICE T operator()(T const &x, T const &y) {
     return x & y;
@@ -221,7 +239,16 @@ template <class Reducer, int threads, int scale, int thread_offset = 0,
           class Barrier = SyncThreadsBarrier, int batch_size = 1,
           int workspace_stride = 0>
 struct AllReduce {
-  static_assert(threads % scale == 0);
+  static_assert(threads > 0, "tl::AllReduce threads must be positive");
+  static_assert(scale > 0, "tl::AllReduce scale must be positive");
+  static_assert(threads % scale == 0,
+                "tl::AllReduce threads must be divisible by scale");
+  static_assert(((threads / scale) & (threads / scale - 1)) == 0,
+                "AllReduce reduce width (threads / scale) must be a power of "
+                "two");
+  static_assert((scale & (scale - 1)) == 0,
+                "AllReduce scale (thread stride between reduce participants) "
+                "must be a power of two");
 
   // Scalar interface (backward-compatible).
   template <typename T> static TL_DEVICE T run(T x, T *red_buf = nullptr) {
@@ -298,7 +325,7 @@ private:
 template <typename T, typename ReduceOp>
 TL_DEVICE T warp_reduce(T value, ReduceOp op) {
   constexpr uint32_t mask = 0xffffffff;
-  auto run_reduce_sync = [&]<typename T_cast>(T_cast val) {
+  auto run_reduce_sync = [&](auto val) {
     if constexpr (std::is_same_v<ReduceOp, SumOp>) {
       return __reduce_add_sync(mask, val);
     } else if constexpr (std::is_same_v<ReduceOp, MaxOp>) {

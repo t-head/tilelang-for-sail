@@ -8,9 +8,11 @@ original case stays skip-listed on PPU boards.
 """
 
 import pytest
+import torch
 
 import tilelang
 import tilelang.ppu.language as T
+import tilelang.testing
 from tilelang.backend.device_codegen import DeviceCodegen
 from tilelang.backend.pass_pipeline.pipeline import PassPipeline
 from tvm import IRModule, tirx
@@ -310,3 +312,50 @@ def test_block_atomic_load_store_preserves_type_acceptance(operation, dtype):
     assert call.args[-1].value == "block"
     if operation == "load":
         assert str(call.dtype) == dtype
+
+
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16"])
+@pytest.mark.parametrize("operation", ["max", "min"])
+@pytest.mark.parametrize("return_prev", [False, True])
+def test_device_atomic_min_max_fp32_literal(dtype, operation, return_prev):
+    atom = getattr(T, f"atomic_{operation}")
+
+    @T.prim_func
+    def kernel(dst: T.Tensor((1,), dtype), previous: T.Tensor((1,), dtype)):
+        with T.Kernel(1, threads=1):
+            if return_prev:
+                previous[0] = atom(dst[0], 42.0, return_prev=True)
+            else:
+                atom(dst[0], 42.0)
+
+    compiled = tilelang.compile(kernel, target="ppu", execution_backend="tvm_ffi")
+    initial = -1e4 if operation == "max" else 1e4
+    dst = torch.full((1,), initial, dtype=getattr(torch, dtype), device="cuda")
+    expected_previous = dst.clone()
+    previous = torch.empty_like(dst)
+    compiled(dst, previous)
+    torch.cuda.synchronize()
+    torch.testing.assert_close(dst, torch.full((1,), 42.0, dtype=dst.dtype, device="cuda"))
+    if return_prev:
+        torch.testing.assert_close(previous, expected_previous)
+
+
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16"])
+def test_device_atomic_addx4_return_prev_16bit(dtype):
+    @T.prim_func
+    def kernel(dst: T.Tensor((4,), dtype), val: T.Tensor((4,), dtype), previous: T.Tensor((4,), dtype)):
+        with T.Kernel(1, threads=1):
+            previous[0:4] = T.atomic_addx4(dst[0:4], val[0:4], return_prev=True)
+
+    compiled = tilelang.compile(kernel, target="ppu", execution_backend="tvm_ffi")
+    assert "AtomicAddx4Ret" in compiled.get_kernel_source()
+    dst = torch.tensor([1.0, 2.0, 3.0, 4.0], dtype=getattr(torch, dtype), device="cuda")
+    val = torch.tensor([10.0, 20.0, 30.0, 40.0], dtype=dst.dtype, device="cuda")
+    expected_previous = dst.clone()
+    previous = torch.empty_like(dst)
+    compiled(dst, val, previous)
+    torch.cuda.synchronize()
+    torch.testing.assert_close(previous, expected_previous)
+    torch.testing.assert_close(dst, expected_previous + val)
