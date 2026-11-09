@@ -83,7 +83,7 @@ class PassConfigKey(str, Enum):
     TL_ENABLE_FAST_MATH = "tl.enable_fast_math"
     """
         Enable fast math optimization. Default: False
-        if enabled, --use_fast_math will be passed to nvcc
+        if enabled, --use_fast_math will be passed to nvcc or hgcc
     """
 
     TL_PTXAS_REGISTER_USAGE_LEVEL = "tl.ptxas_register_usage_level"

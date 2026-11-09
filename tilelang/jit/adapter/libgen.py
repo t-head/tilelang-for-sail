@@ -123,6 +123,8 @@ class LibraryGenerator:
             from tilelang.contrib.hgcc import get_target_arch, get_target_compute_version
             from tilelang.env import ACTLIZE_INCLUDE_DIR
 
+            enable_fast_math = self.pass_configs.get(PassConfigKey.TL_ENABLE_FAST_MATH, False)
+
             # PPU: compile device source and host wrapper into one shared
             # library with hgcc (same model as the HIP hipcc path).
             src = tempfile.NamedTemporaryFile(mode="w", suffix=".hg", delete=False)  # noqa: SIM115
@@ -149,6 +151,8 @@ class LibraryGenerator:
                 f"-arch={ppu_arch}",
                 src.name,
             ]
+            if enable_fast_math:
+                command += ["--use_fast_math"]
             ppu_sdk_inc = os.path.join(ppu_sdk, "include")
             if os.path.isdir(ppu_sdk_inc):
                 command += ["-I" + ppu_sdk_inc]
