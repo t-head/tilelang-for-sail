@@ -1,11 +1,18 @@
 """Tests for per-config pass_configs auto-tuning support."""
 
+import importlib
 import itertools
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from types import SimpleNamespace
 
+import pytest
 import tilelang.testing
 import tilelang
 import tilelang.language as T
 from tilelang.autotuner import AutoTuner, autotune
+from tilelang.autotuner.tuner import AutoTuneImpl, _PASS_CONFIGS_KEY
 from tilelang.transform import PassConfigKey
 
 
@@ -224,6 +231,177 @@ def test_autotune_decorator_pass_configs_override_jit_global():
 
     kernel = matmul_kernel(M, N, K, __return_kernel=True)
     assert kernel is not None
+
+
+@pytest.fixture
+def compile_only_jit():
+    @tilelang.jit(pass_configs={PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True})
+    def kernel(size, block=16):
+        @T.prim_func
+        def main(A: T.Tensor((size,), T.float32)):
+            T.evaluate(block)
+
+        return main
+
+    kernel.initialize_jit_mode(128, block=16)
+    return kernel
+
+
+@pytest.mark.parametrize("mode", ["lazy", "eager"])
+@pytest.mark.parametrize("override", [False, True])
+def test_autotune_independent_phase1_keys_overlap(monkeypatch, compile_only_jit, mode, override):
+    jit = compile_only_jit
+    jit.mode = mode
+    jit.func.set_mode(mode)
+    original = jit.pass_configs
+    rendezvous = threading.Barrier(2)
+
+    def compile_stub(self, *args, **kwargs):
+        assert args == (128,)
+        block = kwargs["block"]
+        expected = dict(original)
+        if override:
+            expected[PassConfigKey.TL_ENABLE_FAST_MATH] = block == 16
+        assert (self is jit) is (not override)
+        assert self.pass_configs == expected
+        rendezvous.wait(timeout=10)
+        assert jit.pass_configs is original
+        assert self.pass_configs == expected
+        return block
+
+    jit_module = importlib.import_module("tilelang.jit")
+    monkeypatch.setattr(jit_module.JITImpl, "compile", compile_stub)
+    compile_config = AutoTuneImpl(jit)._make_jit_compile_func(mode, (128,), {"block": 8})
+    configs = [{"block": block} for block in (16, 32)]
+    if override:
+        for config in configs:
+            config[_PASS_CONFIGS_KEY] = {PassConfigKey.TL_ENABLE_FAST_MATH: config["block"] == 16}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(compile_config, **config) for config in configs]
+        assert [future.result(timeout=15) for future in futures] == [16, 32]
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_autotune_equivalent_phase1_keys_serialize_and_reuse_kernel(monkeypatch, compile_only_jit, override):
+    jit = compile_only_jit
+    entered = threading.Event()
+    contended = threading.Event()
+    compiled = []
+    kernel = object()
+
+    class ObservedLock:
+        def __init__(self):
+            self.lock = threading.Lock()
+
+        def __enter__(self):
+            if not self.lock.acquire(blocking=False):
+                contended.set()
+                assert self.lock.acquire(timeout=10), "phase1 lock was not released"
+            return self
+
+        def __exit__(self, *exc):
+            self.lock.release()
+
+    def compile_stub(self, *args, **kwargs):
+        assert (self is jit) is (not override)
+        assert kwargs == {"block": 16}
+        compiled.append(self.pass_configs)
+        entered.set()
+        assert contended.wait(10), "equivalent configuration did not wait for the cold compile"
+        return kernel
+
+    tuner_module = importlib.import_module("tilelang.autotuner.tuner")
+    jit_module = importlib.import_module("tilelang.jit")
+    # Replace only the tuner's lock factory, not threading.Lock process-wide.
+    monkeypatch.setattr(tuner_module, "threading", SimpleNamespace(Lock=ObservedLock))
+    monkeypatch.setattr(jit_module.JITImpl, "compile", compile_stub)
+    compile_config = AutoTuneImpl(jit)._make_jit_compile_func("lazy", (128,), {"block": 16})
+    fast_math = PassConfigKey.TL_ENABLE_FAST_MATH
+    first_config = {_PASS_CONFIGS_KEY: {fast_math: True}} if override else {}
+    second_config = {_PASS_CONFIGS_KEY: {fast_math: False}} if override else {}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(compile_config, **first_config)
+        assert entered.wait(10)
+        # Different raw configs (and pass configs), but the same phase1 key.
+        second = pool.submit(compile_config, block=16, **second_config)
+        assert first.result(timeout=15) is kernel
+        assert second.result(timeout=15) is kernel
+    if override:
+        assert compiled == [{**jit.pass_configs, fast_math: True}, {**jit.pass_configs, fast_math: False}]
+        assert not jit._kernel_cache
+    else:
+        assert compiled == [jit.pass_configs]
+        assert compile_config(block=16) is kernel
+        assert len(compiled) == len(jit._kernel_cache) == 1
+
+
+@pytest.mark.parametrize(
+    "global_configs", [None, {PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True, PassConfigKey.TL_ENABLE_FAST_MATH: False}]
+)
+def test_autotune_pass_config_copies_survive_compile_exception(monkeypatch, compile_only_jit, global_configs):
+    jit = replace(compile_only_jit, pass_configs=global_configs)
+    sibling = replace(jit)
+    original = dict(global_configs or {})
+    copies = []
+    fast_math = PassConfigKey.TL_ENABLE_FAST_MATH
+
+    def compile_stub(self, *args, **kwargs):
+        # Check during compilation as well as afterwards: temporary mutation is unsafe.
+        assert jit.pass_configs is global_configs
+        assert sibling.pass_configs is global_configs
+        assert dict(jit.pass_configs or {}) == original
+        assert self is not jit and self is not sibling
+        assert self.pass_configs is not global_configs
+        assert self.func is jit.func
+        copies.append(self)
+        if len(copies) == 2:
+            assert kwargs["block"] == 32
+            raise RuntimeError("injected compile failure")
+        return self
+
+    jit_module = importlib.import_module("tilelang.jit")
+    monkeypatch.setattr(jit_module.JITImpl, "compile", compile_stub)
+    compile_config = AutoTuneImpl(jit)._make_jit_compile_func("lazy", (128,), {})
+    override = {fast_math: True}
+    first = compile_config(block=16, **{_PASS_CONFIGS_KEY: override})
+    with pytest.raises(RuntimeError, match="injected compile failure"):
+        compile_config(block=32, **{_PASS_CONFIGS_KEY: {fast_math: False}})
+    # An empty override still copies the JIT; retrying also checks exception unlock.
+    retry = compile_config(block=32, **{_PASS_CONFIGS_KEY: {}})
+    assert first.pass_configs == {**original, fast_math: True}
+    assert copies[1].pass_configs == {**original, fast_math: False}
+    assert retry.pass_configs == original
+    assert len({id(copy) for copy in copies}) == 3
+    assert override == {fast_math: True}
+    assert jit.pass_configs is sibling.pass_configs is global_configs
+    assert dict(jit.pass_configs or {}) == original
+
+
+@pytest.mark.parametrize("override", [None, {}])
+def test_autotune_eager_dispatch_only_compiles(monkeypatch, compile_only_jit, override):
+    jit = compile_only_jit
+    jit.mode = "eager"
+    jit.func.set_mode("eager")
+    kernel = object()
+    calls = []
+
+    def forbidden_call(*args, **kwargs):
+        pytest.fail("eager autotuning must not invoke JITImpl.__call__ or execute a kernel")
+
+    def compile_stub(self, *args, **kwargs):
+        assert (self is jit) is (override is None)
+        calls.append((args, kwargs))
+        return kernel
+
+    jit_module = importlib.import_module("tilelang.jit")
+    monkeypatch.setattr(jit_module.JITImpl, "__call__", forbidden_call)
+    monkeypatch.setattr(jit_module.JITImpl, "compile", compile_stub)
+    compile_config = AutoTuneImpl(jit)._make_jit_compile_func("eager", (128,), {"block": 8})
+    config = {"block": 32}
+    if override is not None:
+        config[_PASS_CONFIGS_KEY] = override
+    assert compile_config(**config) is kernel
+    assert calls == [((128,), {"block": 32})]
 
 
 if __name__ == "__main__":
