@@ -629,7 +629,7 @@ jobs:
 
       - name: Run perf benchmarks on PPU pod
         id: ppu-bench
-        uses: t-head/ppu-scheduler-action@aac83e464f2a3fcbddddc60c8016021c996092a6
+        uses: t-head/ci-infra/cluster-run@40165c945cba33ac7b16b41c4485fe53b68f581f
         with:
           image: ${{ env.PPU_IMAGE }}
           nnodes: 0
