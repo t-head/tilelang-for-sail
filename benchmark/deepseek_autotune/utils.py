@@ -165,7 +165,7 @@ def bench_ref(fn, warmup=5, rep=20):
 
     Returns 0.0 when skipped so callers should guard against division by zero.
     """
-    if os.environ.get("TILELANG_SKIP_REF"):
+    if os.environ.get("TILELANG_SKIP_REF", "0") == "1":
         return 0.0
     from tilelang.profiler import do_bench
 
@@ -304,20 +304,28 @@ def read_cycle_from_nculog(filename, framework="tilelang", kernel_filters=None, 
     kernel_pattern = r",\s*Device\s+\d+"
     cycles_pattern = "__cycles_active.max"
     tc_pattern = "pct_of_peak_sustained_active"
-    kernel_list = []
-    cycles_list = []
-    tc_list = []
+    # Per-kernel records (kernel line, cycles, [tc per TC metric]).  The
+    # parser keeps the max of all requested TC metrics per kernel, so it works
+    # both for the dtype-agnostic metric (single entry) and, should the need
+    # arise again, for several per-dtype tensor-pipe counters at once.
+    records = []
     with open(filename, newline="") as log_file:
         for line in log_file.read().split("\n"):
             if re.search(kernel_pattern, line):
-                kernel_list.append(line.strip())
-            if re.search(cycles_pattern, line):
-                cycles_list.append(int(line.strip().split()[-1]))
-            if re.search(tc_pattern, line):
-                tc_list.append(float(line.strip().split()[-1]))
+                records.append([line.strip(), None, []])
+            elif records and re.search(cycles_pattern, line):
+                records[-1][1] = int(line.strip().split()[-1])
+            elif records and re.search(tc_pattern, line):
+                records[-1][2].append(float(line.strip().split()[-1]))
 
-    assert len(kernel_list) == len(cycles_list), f"kernel/cycle mismatch: {len(kernel_list)} vs {len(cycles_list)}"
-    assert len(kernel_list) == len(tc_list), f"kernel/tc mismatch: {len(kernel_list)} vs {len(tc_list)}"
+    missing = [rec[0][:80] for rec in records if rec[1] is None]
+    assert not missing, f"kernels without a cycles metric: {missing}"
+    no_tc = [rec[0][:80] for rec in records if not rec[2]]
+    assert not no_tc, f"kernels without a TC metric: {no_tc}"
+
+    kernel_list = [rec[0] for rec in records]
+    cycles_list = [rec[1] for rec in records]
+    tc_list = [max(rec[2]) for rec in records]
 
     if kernel_filters is None and framework == "tilelang":
         kernel_filters = ["main_kernel", "main"]
@@ -369,11 +377,18 @@ def get_device_type() -> str:
 
 
 def get_metrics_string(dev: str = "gpu") -> str:
-    """Return the profiler metrics string for the given device type."""
+    """Return the profiler metrics string for the given device type.
+
+    On PPU the tensor-pipe *instruction* counters are split per dtype
+    (bf16/fp16/fp8/...), so instead of guessing the kernel's gemm dtype we
+    request the dtype-agnostic ``cu__we_pipe_tensor_cycles_active`` counter —
+    the PPU analog of NVIDIA's ``sm__pipe_tensor_cycles_active`` (cycles
+    where the tensor core is active, any dtype).
+    """
     if dev == "gpu":
         return "sm__cycles_active.max,sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active"
     else:
-        return "ce__cycles_active.max,cu__inst_executed_pipe_tensor_fp16.avg.pct_of_peak_sustained_active"
+        return "ce__cycles_active.max,cu__we_pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active"
 
 
 def setup_ppu_env():

@@ -16,6 +16,10 @@ Usage:
     # Run reference benchmarks too (default: skip reference)
     TILELANG_SKIP_REF=0 pytest test_deepseek_bench.py -v
 
+    # Additionally tune the PPU LDMAT swizzle pass config (doubles the
+    # PPU1.5 config space; no effect on non-PPU targets)
+    TILELANG_TUNE_LDMAT_SWZL=1 pytest test_deepseek_bench.py -v
+
     # Standalone
     python test_deepseek_bench.py
 """
@@ -127,6 +131,27 @@ _KERNEL_META = {
         "config_keys": ["block_I", "num_stages", "threads"],
         "ref_filters": ["flash"],
     },
+    "v32_bwd": {
+        "name": "V32 Sparse MLA Bwd",
+        "script": "benchmark_v32_bwd.py",
+        "ref_name": "Reference",
+        "config_keys": ["block_size", "num_stages", "threads"],
+        "ref_filters": None,
+    },
+    "dsa_bwd": {
+        "name": "DSA Sparse MLA Bwd",
+        "script": "benchmark_dsa_bwd.py",
+        "ref_name": "Reference",
+        "config_keys": ["block_size", "num_stages", "threads"],
+        "ref_filters": None,
+    },
+    "dsa_fwd": {
+        "name": "DSA Sparse MLA Fwd",
+        "script": "benchmark_dsa_fwd.py",
+        "ref_name": "Reference",
+        "config_keys": ["block_I", "num_stages", "threads"],
+        "ref_filters": None,
+    },
 }
 
 
@@ -194,7 +219,16 @@ def generate_configs(config_dict: dict):
     """Expand a config dict (key -> list[values]) into pytest.param instances.
 
     Returns a list of pytest.param(...) with ids built from param values.
+
+    A "__cases__" key holding a list of full case dicts switches to explicit
+    paired expansion, for configs whose parameters are correlated and cannot
+    be expressed as a Cartesian product (e.g. DSA_BWD_DAILY_CONFIG).
     """
+    cases = config_dict.get("__cases__")
+    if cases is not None:
+        keys = list(cases[0].keys())
+        return [pytest.param(*[case[k] for k in keys], id="-".join(f"{k}={case[k]}" for k in keys)) for case in cases]
+
     keys = list(config_dict.keys())
     value_lists = [config_dict[k] for k in keys]
     params = []
@@ -311,12 +345,13 @@ def test_bench_mla_paged(batch, h_q, h_kv, cache_seqlen, d, dv):
 _deepgemm_config = get_bench_config("deepgemm", _TIER)
 _deepgemm_keys = list(_deepgemm_config.keys())
 
-from tilelang.contrib import hgcc
-
 try:
+    from tilelang.contrib import hgcc
+
     arch = hgcc.get_target_compute_version()
     compute_version = hgcc.parse_compute_version(arch)
 except Exception:
+    # Non-PPU builds (e.g. CUDA-only tilelang on H200) have no usable hgcc.
     arch = "unknown"
     compute_version = (0, 0)
 
@@ -659,6 +694,188 @@ def test_bench_v32(batch, seq_len, seq_len_kv, heads, kv_group, topk, dim, tail_
         ref_latency,
         ref_tflops,
         "FlashMLA",
+        best_config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
+    )
+
+
+# ---------------------------------------------------------------------------
+# V32 Sparse MLA Bwd
+# ---------------------------------------------------------------------------
+
+_v32_bwd_config = get_bench_config("v32_bwd", _TIER)
+_v32_bwd_keys = list(_v32_bwd_config.keys())
+
+
+@pytest.mark.parametrize(",".join(_v32_bwd_keys), generate_configs(_v32_bwd_config))
+def test_bench_v32_bwd(batch, seq_len, seq_len_kv, heads, kv_group, topk, dim, tail_dim):
+    from benchmark_v32_bwd import main
+
+    latency, tflops, best_config, ref_latency = main(
+        batch=batch,
+        seq_len=seq_len,
+        seq_len_kv=seq_len_kv,
+        heads=heads,
+        kv_group=kv_group,
+        topk=topk,
+        dim=dim,
+        tail_dim=tail_dim,
+    )
+    assert latency > 0, f"Invalid latency: {latency}"
+    assert tflops > 0, f"Invalid TFlops: {tflops}"
+
+    config_str = (
+        f"batch={batch}, seq_len={seq_len}, seq_len_kv={seq_len_kv}, heads={heads}, "
+        f"kv_group={kv_group}, topk={topk}, dim={dim}, tail_dim={tail_dim}"
+    )
+    ref_tflops = tflops * latency / ref_latency if ref_latency > 0 else 0
+    problem_args = [
+        "--batch",
+        str(batch),
+        "--seq_len",
+        str(seq_len),
+        "--seq_len_kv",
+        str(seq_len_kv),
+        "--heads",
+        str(heads),
+        "--kv_group",
+        str(kv_group),
+        "--topk",
+        str(topk),
+        "--dim",
+        str(dim),
+        "--tail_dim",
+        str(tail_dim),
+    ]
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile("v32_bwd", problem_args, best_config)
+
+    print_benchmark_summary(
+        "V32 Sparse MLA Bwd",
+        config_str,
+        latency,
+        tflops,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
+    )
+
+
+# ---------------------------------------------------------------------------
+# DSA Sparse MLA Bwd
+# ---------------------------------------------------------------------------
+
+_dsa_bwd_config = get_bench_config("dsa_bwd", _TIER)
+# CUSTOM tier stores correlated (seq_len, heads, topk) cases under "__cases__"
+# instead of a Cartesian product of independent value lists.
+_dsa_bwd_keys = list(_dsa_bwd_config["__cases__"][0].keys()) if "__cases__" in _dsa_bwd_config else list(_dsa_bwd_config.keys())
+
+
+@pytest.mark.parametrize(",".join(_dsa_bwd_keys), generate_configs(_dsa_bwd_config))
+def test_bench_dsa_bwd(batch, seq_len, heads, kv_group, topk, dim, tail_dim):
+    from benchmark_dsa_bwd import main
+
+    latency, tflops, best_config, ref_latency = main(
+        batch=batch, seq_len=seq_len, heads=heads, kv_group=kv_group, topk=topk, dim=dim, tail_dim=tail_dim
+    )
+    assert latency > 0, f"Invalid latency: {latency}"
+    assert tflops > 0, f"Invalid TFlops: {tflops}"
+
+    config_str = (
+        f"batch={batch}, seq_len={seq_len}, heads={heads}, "
+        f"kv_group={kv_group}, topk={topk}, dim={dim}, tail_dim={tail_dim}"
+    )
+    ref_tflops = tflops * latency / ref_latency if ref_latency > 0 else 0
+    problem_args = [
+        "--batch",
+        str(batch),
+        "--seq_len",
+        str(seq_len),
+        "--heads",
+        str(heads),
+        "--kv_group",
+        str(kv_group),
+        "--topk",
+        str(topk),
+        "--dim",
+        str(dim),
+        "--tail_dim",
+        str(tail_dim),
+    ]
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile("dsa_bwd", problem_args, best_config)
+
+    print_benchmark_summary(
+        "DSA Sparse MLA Bwd",
+        config_str,
+        latency,
+        tflops,
+        ref_latency,
+        ref_tflops,
+        "Reference",
+        best_config,
+        tilelang_cycles=tl_cycles,
+        tilelang_tc=tl_tc,
+        ref_cycles=ref_cycles,
+        ref_tc=ref_tc,
+    )
+
+
+# ---------------------------------------------------------------------------
+# DSA Sparse MLA Fwd
+# ---------------------------------------------------------------------------
+
+_dsa_fwd_config = get_bench_config("dsa_fwd", _TIER)
+_dsa_fwd_keys = list(_dsa_fwd_config["__cases__"][0].keys()) if "__cases__" in _dsa_fwd_config else list(_dsa_fwd_config.keys())
+
+
+@pytest.mark.parametrize(",".join(_dsa_fwd_keys), generate_configs(_dsa_fwd_config))
+def test_bench_dsa_fwd(batch, seq_len, heads, kv_group, topk, dim, tail_dim):
+    from benchmark_dsa_fwd import main
+
+    latency, tflops, best_config, ref_latency = main(
+        batch=batch, seq_len=seq_len, heads=heads, kv_group=kv_group, topk=topk, dim=dim, tail_dim=tail_dim
+    )
+    assert latency > 0, f"Invalid latency: {latency}"
+    assert tflops > 0, f"Invalid TFlops: {tflops}"
+
+    config_str = (
+        f"batch={batch}, seq_len={seq_len}, heads={heads}, "
+        f"kv_group={kv_group}, topk={topk}, dim={dim}, tail_dim={tail_dim}"
+    )
+    ref_tflops = tflops * latency / ref_latency if ref_latency > 0 else 0
+    problem_args = [
+        "--batch",
+        str(batch),
+        "--seq_len",
+        str(seq_len),
+        "--heads",
+        str(heads),
+        "--kv_group",
+        str(kv_group),
+        "--topk",
+        str(topk),
+        "--dim",
+        str(dim),
+        "--tail_dim",
+        str(tail_dim),
+    ]
+    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile("dsa_fwd", problem_args, best_config)
+
+    print_benchmark_summary(
+        "DSA Sparse MLA Fwd",
+        config_str,
+        latency,
+        tflops,
+        ref_latency,
+        ref_tflops,
+        "Reference",
         best_config,
         tilelang_cycles=tl_cycles,
         tilelang_tc=tl_tc,
