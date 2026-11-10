@@ -13,6 +13,8 @@
 
 #include <tvm/tirx/transform.h>
 
+#include <algorithm>
+#include <climits>
 #include <optional>
 #include <sstream>
 #include <utility>
@@ -161,6 +163,46 @@ const char *CopyInstToString(CopyInst inst) {
 }
 
 bool CopyInstIsCPAsync(CopyInst inst) { return inst == CopyInst::kCPAsync; }
+
+std::optional<AIUWarpPartition> FindAIUWarpPartition(int swizzle_bytes,
+                                                     int64_t height,
+                                                     int64_t width_bytes,
+                                                     int num_warps) {
+  if (num_warps < 1) {
+    return std::nullopt;
+  }
+  int64_t num_blocks = width_bytes / swizzle_bytes;
+  if (num_warps == 1) {
+    if (height % 8 != 0) {
+      return std::nullopt;
+    }
+    return AIUWarpPartition{1, 1, static_cast<int>(num_blocks),
+                            static_cast<int>(height)};
+  }
+  const int max_col_splits =
+      static_cast<int>(std::min<int64_t>(num_warps, num_blocks));
+  for (int col_splits = max_col_splits; col_splits >= 1; --col_splits) {
+    if (num_blocks % col_splits != 0) {
+      continue;
+    }
+    const int max_row_splits =
+        std::min(num_warps / col_splits,
+                 static_cast<int>(std::min<int64_t>(height, INT_MAX)));
+    for (int row_splits = max_row_splits; row_splits >= 1; --row_splits) {
+      if (height % row_splits != 0) {
+        continue;
+      }
+      int rows_per_warp = static_cast<int>(height / row_splits);
+      if (rows_per_warp % 8 != 0) {
+        continue;
+      }
+      int blocks_per_warp = static_cast<int>(num_blocks / col_splits);
+      return AIUWarpPartition{row_splits, col_splits, blocks_per_warp,
+                              rows_per_warp};
+    }
+  }
+  return std::nullopt;
+}
 
 namespace {
 

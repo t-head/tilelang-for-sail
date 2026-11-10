@@ -20,6 +20,7 @@
 #include "transform/loop_partition.h"
 #include "transform/loop_vectorize.h"
 
+#include <tvm/s_tir/stmt.h>
 #include <tvm/tirx/analysis.h>
 #include <tvm/tirx/builtin.h>
 #include <tvm/tirx/op.h>
@@ -1167,24 +1168,6 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
     return fallback_to_normal("global tensor rank is outside [2, 5]");
   }
 
-  Array<PrimExpr> shared_indices;
-  for (auto r : shared_range) {
-    shared_indices.push_back(r->min);
-  }
-  std::vector<PrimExpr> shared_strides;
-  PrimExpr shared_stride = 1;
-  for (size_t i = 0; i < shared_tensor->shape.size(); i++) {
-    auto s = shared_tensor->shape[shared_tensor->shape.size() - i - 1];
-    shared_strides.insert(shared_strides.begin(), shared_stride);
-    shared_stride *= s;
-  }
-  ICHECK_EQ(shared_strides.size(), shared_indices.size())
-      << "shared_strides.size() != shared_indices.size()";
-  PrimExpr shared_offset = 0;
-  for (size_t i = 0; i < shared_indices.size(); i++) {
-    shared_offset += shared_indices[i] * shared_strides[i];
-  }
-
   auto global_addr = global_tensor->data;
   auto global_shape = ReverseArray(global_tensor->shape);
   Array<PrimExpr> global_stride;
@@ -1351,42 +1334,48 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
     return fallback_to_normal("AIU inner box exceeds swizzle byte width");
   }
 
-  int inner_splits = inner_box_dim_value / instruction_dim_elems;
-  int num_warps = std::max(1, thread_extent_value / 32);
-  int target_outer_splits = std::max(1, num_warps / inner_splits);
-  int outer_splits = 1;
-  for (int factor = 1;
-       factor <= std::min(outer_box_dim_value, target_outer_splits); ++factor) {
-    if (outer_box_dim_value % factor == 0) {
-      outer_splits = factor;
+  const size_t shared_rank = shared_range.size();
+  if (shared_rank < 2 || shared_rank != shared_tensor_unmapped->shape.size()) {
+    return fallback_to_normal("AIU requires a two-dimensional shared tile");
+  }
+  const size_t shared_row_axis = shared_rank - 2;
+  const size_t shared_col_axis = shared_rank - 1;
+  for (size_t axis = 0; axis < shared_rank; ++axis) {
+    const Range &range = shared_range[axis];
+    if ((axis < shared_row_axis &&
+         !analyzer->CanProveEqual(range->extent, 1)) ||
+        !analyzer->CanProve(range->min >= 0) ||
+        !analyzer->CanProve(range->min + range->extent <=
+                            shared_tensor_unmapped->shape[axis])) {
+      return fallback_to_normal(
+          "shared region is not a bounded two-dimensional tile");
     }
   }
-  int outer_per_warp = outer_box_dim_value / outer_splits;
-  int participating_warps = inner_splits * outer_splits;
+  if (!analyzer->CanProveEqual(shared_range[shared_row_axis]->extent,
+                               outer_box_dim_value) ||
+      !analyzer->CanProveEqual(shared_range[shared_col_axis]->extent,
+                               inner_box_dim_value) ||
+      !analyzer->CanProveEqual(FloorMod(shared_range[shared_row_axis]->min, 8),
+                               0) ||
+      !analyzer->CanProveEqual(
+          FloorMod(shared_range[shared_col_axis]->min, instruction_dim_elems),
+          0) ||
+      !analyzer->CanProveEqual(shared_tensor->elem_offset, 0)) {
+    return fallback_to_normal(
+        "shared region does not align with the AIU swizzle tile");
+  }
 
-  // Ensure outer_per_warp >= swizzle row period (8 for both 128B and 64B
-  // layouts). If the warp split is too fine, reduce outer_splits to meet the
-  // constraint.
-  constexpr int kSwizzleRowPeriod = 8;
-  if (outer_per_warp < kSwizzleRowPeriod) {
-    if (outer_box_dim_value < kSwizzleRowPeriod) {
-      return LowerNormal(op, lower_args, analyzer);
-    }
-    // Find the largest factor of outer_box_dim_value that yields outer_per_warp
-    // >= kSwizzleRowPeriod
-    int max_outer_splits = outer_box_dim_value / kSwizzleRowPeriod;
-    for (int s = max_outer_splits; s >= 1; s--) {
-      if (outer_box_dim_value % s == 0) {
-        outer_splits = s;
-        break;
-      }
-    }
-    outer_per_warp = outer_box_dim_value / outer_splits;
-    participating_warps = inner_splits * outer_splits;
+  int num_warps = std::max(1, thread_extent_value / 32);
+  auto partition = FindAIUWarpPartition(
+      max_swizzle_bytes, outer_box_dim_value,
+      AiuBytesFromElements(inner_box_dim_value, global_tensor->dtype),
+      num_warps);
+  if (!partition.has_value()) {
+    return fallback_to_normal("no legal even AIU warp partition exists");
   }
 
   smem_box.Set(0, PrimExpr(instruction_dim_elems));
-  smem_box.Set(cube_layout_pos[1], PrimExpr(outer_per_warp));
+  smem_box.Set(cube_layout_pos[1], PrimExpr(partition->rows_per_warp));
 
   // Compute shape_0 (inner dim, in elements) and shape_1 (outer dim, in rows).
   PrimExpr shape_0_elements;
@@ -1409,67 +1398,92 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
     total_elements *= e;
   }
 
-  // Warp partitioning (unchanged).
   PrimExpr warp_id =
-      FloorDiv(lower_args.thread_var, IntImm(DataType::Int(32), 32));
-  PrimExpr warp_inner_idx =
-      FloorMod(warp_id, IntImm(DataType::Int(32), inner_splits));
-  PrimExpr warp_outer_idx =
-      FloorDiv(warp_id, IntImm(DataType::Int(32), inner_splits));
-  PrimExpr shared_addr = shared_tensor.access_ptr(
-      2, DataType::Handle(), 1,
-      shared_offset +
-          warp_inner_idx * (instruction_dim_elems * outer_box_dim_value) +
-          warp_outer_idx * (instruction_dim_elems * outer_per_warp),
-      total_elements);
+      FloorDiv(lower_args.thread_var - lower_args.thread_bounds->min,
+               IntImm(DataType::Int(32), 32));
+  PrimExpr row_split =
+      FloorDiv(warp_id, IntImm(DataType::Int(32), partition->col_splits));
+  PrimExpr col_group =
+      FloorMod(warp_id, IntImm(DataType::Int(32), partition->col_splits)) *
+      partition->blocks_per_warp;
 
-  // Coordinate computation (in elements).
-  global_coords.Set(0,
-                    global_coords[0] + instruction_dim_elems * warp_inner_idx);
-  global_coords.Set(cube_layout_pos[1], global_coords[cube_layout_pos[1]] +
-                                            outer_per_warp * warp_outer_idx);
-  auto compute_coord = [&](size_t begin, size_t end) {
-    PrimExpr result = 0;
-    PrimExpr stride = 1;
-    for (size_t i = begin; i <= end; ++i) {
-      result += global_coords[i] * stride;
-      stride *= global_shape[i];
-    }
-    return result;
-  };
-  PrimExpr coord_0_elements = compute_coord(0, cube_layout_pos[1] - 1);
-  PrimExpr coord_1_rows = compute_coord(cube_layout_pos[1], rank - 1);
-
-  // Build 10-parameter byte-mode args for ppu_aiu_load.
-  // C-dimension params (dim_c, cube_c, start_c) are in bytes;
-  // W-dimension params (dim_w, cube_w, start_w) are in rows.
-  DataType dtype = global_tensor->dtype;
-  Array<PrimExpr> args;
-  args.reserve(10);
-  args.push_back(shared_addr); // [0] smem_ptr
-  args.push_back(global_addr); // [1] gmem_ptr
-  args.push_back(
-      AiuBytesFromElements(shape_0_elements, dtype)); // [2] dim_c (bytes)
-  args.push_back(shape_1_rows);                       // [3] dim_w (rows)
-  args.push_back(AiuBytesFromElements(PrimExpr(instruction_dim_elems),
-                                      dtype));       // [4] cube_c (bytes)
-  args.push_back(smem_box[cube_layout_pos[1]]);      // [5] cube_w (rows)
-  args.push_back(global_stride[cube_layout_pos[1]]); // [6] stride_w_bytes
-  args.push_back(
-      AiuBytesFromElements(coord_0_elements, dtype)); // [7] start_c (bytes)
-  args.push_back(coord_1_rows);                       // [8] start_w (rows)
-  args.push_back(swizzle);                            // [9] swzl_mode
-
-  // Preserve pipeline ownership after the copy becomes a predicated AIU load.
+  bool no_implicit_commit_wait = GetNoImplicitAsyncCommitWait(op);
   Map<String, ObjectRef> annotations;
-  if (GetNoImplicitAsyncCommitWait(op)) {
+  if (no_implicit_commit_wait) {
     annotations.Set(attr::kAsyncCopyNoImplicitCommitWait,
                     IntImm(DataType::Int(32), 1));
   }
-  Stmt aiu_copy =
-      Evaluate(Call(DataType::Handle(), ppu_aiu_load(), args, annotations));
-  return IfThenElse(LT(warp_id, IntImm(DataType::Int(32), participating_warps)),
-                    aiu_copy);
+
+  std::vector<Stmt> load_stmts;
+  load_stmts.reserve(partition->blocks_per_warp);
+  for (int block = 0; block < partition->blocks_per_warp; ++block) {
+    PrimExpr col_block = col_group + block;
+    Array<PrimExpr> shared_coords =
+        shared_range.Map([](Range range) { return range->min; });
+    shared_coords.Set(shared_row_axis,
+                      shared_coords[shared_row_axis] +
+                          row_split * partition->rows_per_warp);
+    shared_coords.Set(shared_col_axis, shared_coords[shared_col_axis] +
+                                           col_block * instruction_dim_elems);
+    auto shared_offset =
+        LinearOffsetOfIndices(shared_tensor_unmapped, shared_coords,
+                              lower_args.buffer_remap, lower_args.layout_map);
+    if (!shared_offset.has_value()) {
+      return fallback_to_normal(
+          "cannot determine the shared region's physical address");
+    }
+    PrimExpr shared_addr = shared_tensor.access_ptr(
+        2, DataType::Handle(), 1, analyzer->Simplify(shared_offset.value()),
+        total_elements);
+
+    Array<PrimExpr> local_global_coords = global_coords;
+    local_global_coords.Set(0, local_global_coords[0] +
+                                   instruction_dim_elems * col_block);
+    local_global_coords.Set(cube_layout_pos[1],
+                            local_global_coords[cube_layout_pos[1]] +
+                                row_split * partition->rows_per_warp);
+    auto compute_local_coord = [&](size_t begin, size_t end) {
+      PrimExpr result = 0;
+      PrimExpr stride = 1;
+      for (size_t i = begin; i <= end; ++i) {
+        result += local_global_coords[i] * stride;
+        stride *= global_shape[i];
+      }
+      return result;
+    };
+    PrimExpr coord_0_elements = compute_local_coord(0, cube_layout_pos[1] - 1);
+    PrimExpr coord_1_rows = compute_local_coord(cube_layout_pos[1], rank - 1);
+    DataType dtype = global_tensor->dtype;
+    Array<PrimExpr> args;
+    args.reserve(10);
+    args.push_back(shared_addr);
+    args.push_back(global_addr);
+    args.push_back(AiuBytesFromElements(shape_0_elements, dtype));
+    args.push_back(shape_1_rows);
+    args.push_back(
+        AiuBytesFromElements(PrimExpr(instruction_dim_elems), dtype));
+    args.push_back(smem_box[cube_layout_pos[1]]);
+    args.push_back(global_stride[cube_layout_pos[1]]);
+    args.push_back(AiuBytesFromElements(coord_0_elements, dtype));
+    args.push_back(coord_1_rows);
+    args.push_back(swizzle);
+    load_stmts.push_back(
+        Evaluate(Call(DataType::Handle(), ppu_aiu_load(), args, annotations)));
+  }
+
+  Stmt aiu_result =
+      load_stmts.size() == 1
+          ? load_stmts[0]
+          : SeqStmt(Array<Stmt>(load_stmts.begin(), load_stmts.end()));
+  if (!no_implicit_commit_wait && load_stmts.size() > 1) {
+    aiu_result = AttrStmt(make_zero(DataType::Int(32)),
+                          s_tir::attr::async_commit_queue_scope,
+                          IntImm(DataType::Int(32), 0), aiu_result);
+  }
+  return IfThenElse(
+      LT(warp_id, IntImm(DataType::Int(32),
+                         partition->row_splits * partition->col_splits)),
+      aiu_result);
 }
 
 } // namespace ppu
