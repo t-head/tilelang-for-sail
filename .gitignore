@@ -134,3 +134,6 @@ uv.lock
 .ai
 
 .qoder
+
+# Per-developer dev-env connection configs (contain internal IPs, never commit)
+.dev-env-*.local.sh
