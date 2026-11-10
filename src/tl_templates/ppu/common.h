@@ -534,6 +534,7 @@ TL_DEVICE longlong4 make_longlong4(int x0, int x1, int y0, int y1, int z0,
   return result;
 }
 
+// Pack thirty-two char values.
 TL_DEVICE longlong4
 make_longlong4(signed char x0, signed char x1, signed char x2, signed char x3,
                signed char x4, signed char x5, signed char x6, signed char x7,
@@ -551,6 +552,7 @@ make_longlong4(signed char x0, signed char x1, signed char x2, signed char x3,
   return result;
 }
 
+// Pack thirty-two unsigned char values.
 TL_DEVICE ulonglong4 make_ulonglong4(
     unsigned char x0, unsigned char x1, unsigned char x2, unsigned char x3,
     unsigned char x4, unsigned char x5, unsigned char x6, unsigned char x7,
@@ -962,6 +964,11 @@ TL_DEVICE __half2 abs2(__half2 a) { return __habs2(a); }
 
 using tl::tfloat32_t;
 
+// The PPU SDK declares __shfl_*_sync only for its native arithmetic types, so
+// shuffling a CUTLASS sub-32-bit float wrapper binds to the `float` overload
+// and fails to compile when assigned back to the wrapper type. Carry the raw
+// bits through the native 32-bit unsigned overload instead (same approach as
+// the tl::shfl_*_sync helpers below).
 #define TL_DEFINE_SHFL_SYNC_OVERLOADS(TYPE, RAW)                               \
   TL_PATCH TL_DEVICE TYPE __shfl_sync(unsigned mask, TYPE val, int src_lane,   \
                                       int width = warpSize) {                  \

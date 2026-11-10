@@ -18,8 +18,9 @@ using namespace tirx;
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableAIULower, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableLdmatSwzl, Bool);
 
-TVM_REGISTER_OP("tl.clamp")
-    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", LowerClamp);
+// tl.clamp intentionally keeps no ppu.FLowerIntrinsic registration: like the
+// CUDA backend, the op survives lowering and is emitted by the PPU codegen's
+// NaN-propagating tl::clamp / tl::clamp2 branch.
 
 TIR_DEFINE_TL_BUILTIN(ppu_aiu_load)
     .set_num_inputs(-1)

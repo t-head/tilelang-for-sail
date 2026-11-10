@@ -328,7 +328,8 @@ def test_mathops_generate_no_fastmath(name, func):
     ("rounding_mode", "func", "cuda_mathop_name"),
     [
         ("ties-to-even", lambda x: T.round(x), "nearbyint"),
-        ("ties-away-from-zero", lambda x: T.round(x, "ties-away-from-zero"), "round"),
+        # PPU shares the cuda/hip lowering: tl::RoundTiesAwayFromZero.
+        ("ties-away-from-zero", lambda x: T.round(x, "ties-away-from-zero"), "RoundTiesAwayFromZero"),
     ],
     ids=["ties-to-even", "ties-away-from-zero"],
 )

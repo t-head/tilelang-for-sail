@@ -200,7 +200,8 @@ TL_DEVICE void AtomicMax(T1 *ref, T2 val,
     unsigned short *address_as_ushort =
         reinterpret_cast<unsigned short *>(address);
     NT1 val_cast = hggc_cast<NT1>(val);
-    unsigned short val_as_ushort = tl_atomic_detail::PackBits16(val_cast);
+    unsigned short val_as_ushort =
+        tl_atomic_detail::PackBits16(hggc_cast<NT1>(val_cast));
     unsigned short old_val_ushort = *address_as_ushort;
     while (val_cast > *reinterpret_cast<NT1 *>(&old_val_ushort)) {
       unsigned short assumed_val_ushort = old_val_ushort;
@@ -226,7 +227,8 @@ TL_DEVICE T1 AtomicMaxRet(T1 *ref, T2 val,
     unsigned short *address_as_ushort =
         reinterpret_cast<unsigned short *>(address);
     NT1 val_cast = hggc_cast<NT1>(val);
-    unsigned short val_as_ushort = tl_atomic_detail::PackBits16(val_cast);
+    unsigned short val_as_ushort =
+        tl_atomic_detail::PackBits16(hggc_cast<NT1>(val_cast));
     unsigned short old_val_ushort = *address_as_ushort;
     while (val_cast > *reinterpret_cast<NT1 *>(&old_val_ushort)) {
       unsigned short assumed_val_ushort = old_val_ushort;
@@ -256,7 +258,8 @@ TL_DEVICE void AtomicMin(T1 *ref, T2 val,
     unsigned short *address_as_ushort =
         reinterpret_cast<unsigned short *>(address);
     NT1 val_cast = hggc_cast<NT1>(val);
-    unsigned short val_as_ushort = tl_atomic_detail::PackBits16(val_cast);
+    unsigned short val_as_ushort =
+        tl_atomic_detail::PackBits16(hggc_cast<NT1>(val_cast));
     unsigned short old_val_ushort = *address_as_ushort;
     while (val_cast < *reinterpret_cast<NT1 *>(&old_val_ushort)) {
       unsigned short assumed_val_ushort = old_val_ushort;
@@ -282,7 +285,8 @@ TL_DEVICE T1 AtomicMinRet(T1 *ref, T2 val,
     unsigned short *address_as_ushort =
         reinterpret_cast<unsigned short *>(address);
     NT1 val_cast = hggc_cast<NT1>(val);
-    unsigned short val_as_ushort = tl_atomic_detail::PackBits16(val_cast);
+    unsigned short val_as_ushort =
+        tl_atomic_detail::PackBits16(hggc_cast<NT1>(val_cast));
     unsigned short old_val_ushort = *address_as_ushort;
     while (val_cast < *reinterpret_cast<NT1 *>(&old_val_ushort)) {
       unsigned short assumed_val_ushort = old_val_ushort;
