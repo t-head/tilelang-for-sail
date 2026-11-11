@@ -185,7 +185,16 @@ class PassConfigKey(str, Enum):
     """
 
     TL_DISABLE_LDMAT_SWZL = "tl.disable_ldmat_swzl"
-    """Disable PPU1.5 ldmatrix swizzled bulk tensor load lowering. Default: False"""
+    """Control PPU1.5 ldmatrix swizzled bulk tensor load lowering.
+
+    ``True`` bypasses the FP8 cost model and disables SWZL. ``False`` or an
+    unset option allows the model to keep the existing lowering or to select
+    ordinary ldmatrix for an eligible function. When ordinary ldmatrix is
+    selected, lowering observes a temporary nested value of ``True``; the
+    caller's outer PassContext is not modified.
+
+    Default: False
+    """
 
     TL_DISABLE_LDMAT_SWZL_COST_MODEL = "tl.disable_ldmat_swzl_cost_model"
     """Disable the PPU1.5 FP8 ldmatrix SWZL cost model. Default: False
@@ -194,7 +203,8 @@ class PassConfigKey(str, Enum):
     before ``LowerTileOp`` and selects either the existing SWZL path or the
     ordinary ldmatrix path. Other data types and unsupported functions keep
     the existing lowering. Set this option to restore the previous SWZL
-    policy. An explicit ``tl.disable_ldmat_swzl=True`` always takes precedence.
+    policy. An explicit ``tl.disable_ldmat_swzl=True`` always takes precedence;
+    setting it to ``False`` does not disable the model.
     """
 
     TL_ENABLE_LOWER_LDGSTG = "tl.enable_lower_ldgstg"

@@ -7,7 +7,7 @@ import tilelang.ppu.pipeline as ppu_pipeline
 import tilelang.ppu.swzl_cost as swzl_cost
 from tilelang import tvm
 from tilelang.ppu.swzl_cost.live_range import _match_phase_keys
-from tilelang.ppu.swzl_cost.model import dynamic_four_warp_packet_reuse_choice
+from tilelang.ppu.swzl_cost.model import calibrated_decide, dynamic_four_warp_packet_reuse_choice
 
 
 def _module(functions=1):
@@ -61,7 +61,7 @@ def test_swzl_cost_model_can_be_disabled(monkeypatch):
 
 @pytest.mark.parametrize(
     "choice,expected_disable",
-    [("swzl", False), ("ordinary", True)],
+    [("keep_existing", False), ("swzl", False), ("ordinary", True)],
 )
 def test_swzl_cost_model_makes_one_function_wide_decision(monkeypatch, choice, expected_disable):
     observed_disable = []
@@ -105,6 +105,24 @@ def test_explicit_swzl_disable_precedes_cost_model(monkeypatch):
     assert observed_disable == [True]
 
 
+def test_explicit_false_allows_nested_ordinary_without_mutating_outer_context(monkeypatch):
+    observed_disable = []
+    _install_fake_lower(monkeypatch, observed_disable)
+    monkeypatch.setattr(swzl_cost, "extract", lambda _func: {"supported": True})
+    monkeypatch.setattr(swzl_cost, "decide", lambda _record: {"choice": "ordinary"})
+    config = {
+        tilelang.PassConfigKey.TL_DISABLE_LDMAT_SWZL: False,
+    }
+
+    with tvm.transform.PassContext(config=config):
+        ppu_pipeline._lower_tile_op_with_swzl_cost_model(_module())
+        outer_config = tvm.transform.PassContext.current().config
+        assert tilelang.PassConfigKey.TL_DISABLE_LDMAT_SWZL in outer_config
+        assert not bool(outer_config[tilelang.PassConfigKey.TL_DISABLE_LDMAT_SWZL])
+
+    assert observed_disable == [True]
+
+
 def test_multiple_functions_keep_existing_swzl_policy(monkeypatch):
     observed_disable = []
     _install_fake_lower(monkeypatch, observed_disable)
@@ -132,8 +150,27 @@ def test_analysis_failure_keeps_existing_swzl_policy(monkeypatch):
 
 def test_unsupported_record_keeps_existing_swzl_policy():
     assert swzl_cost.decide({"supported": False, "reason": "dtype_keep_existing"}) == {
-        "choice": "swzl",
-        "reason": "dtype_keep_existing_keep_existing",
+        "choice": "keep_existing",
+        "reason": "dtype_keep_existing",
+    }
+
+
+def test_missing_model_keeps_existing_swzl_policy():
+    assert calibrated_decide(None, {"supported": True}) == {
+        "choice": "keep_existing",
+        "reason": "missing_model_keep_existing",
+    }
+
+
+def test_no_rebinding_cost_keeps_existing_swzl_policy():
+    record = {
+        "supported": True,
+        "phases": [{"reorder_words": 0}],
+    }
+
+    assert swzl_cost.decide(record) == {
+        "choice": "keep_existing",
+        "reason": "no_rebinding_cost_keep_existing",
     }
 
 
@@ -146,7 +183,7 @@ def test_unknown_analysis_keeps_existing_swzl_policy(audit_name):
     }
 
     assert swzl_cost.decide(record) == {
-        "choice": "swzl",
+        "choice": "keep_existing",
         "reason": f"{audit_name}_unknown_keep_existing",
     }
 

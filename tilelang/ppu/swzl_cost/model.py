@@ -77,11 +77,15 @@ def features(record):
 
 
 def calibrated_decide(model, record, feature_fn=features):
-    if not record.get("supported") or model is None:
-        reason = record.get("reason", "capture_only") + "_keep_existing"
-        return {"choice": "swzl", "reason": reason}
+    if not record.get("supported"):
+        return {
+            "choice": "keep_existing",
+            "reason": record.get("reason", "unsupported_keep_existing"),
+        }
+    if model is None:
+        return {"choice": "keep_existing", "reason": "missing_model_keep_existing"}
     if not any(phase["reorder_words"] for phase in record["phases"]):
-        return {"choice": "swzl", "reason": "no_rebinding_cost_keep_existing"}
+        return {"choice": "keep_existing", "reason": "no_rebinding_cost_keep_existing"}
     values = feature_fn(record)
     score = model["bias"] + model["rate"] * sum(_tree_value(tree, values) for tree in model["trees"])
     return {
@@ -885,11 +889,11 @@ def decide(record, model=None):
         audit = record.get(audit_name)
         if audit is not None and not audit.get("known", False):
             return {
-                "choice": "swzl",
+                "choice": "keep_existing",
                 "reason": f"{audit_name}_unknown_keep_existing",
             }
     if not any(phase["reorder_words"] for phase in record["phases"]):
-        return {"choice": "swzl", "reason": "no_rebinding_cost_keep_existing"}
+        return {"choice": "keep_existing", "reason": "no_rebinding_cost_keep_existing"}
     if serial_copy_retention_frontier(record):
         return {"choice": "swzl", "reason": "fp8_serial_full_retention_frontier"}
     if pipelined_scalar_address_frontier(record):
