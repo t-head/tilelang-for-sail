@@ -1278,7 +1278,7 @@ class TestWorkflowYAML:
         """Only the gated PPU job can start the hardware scheduler action."""
         scheduler_jobs = []
         for job_name, job in self.wf["jobs"].items():
-            if any("ppu-scheduler-action" in step.get("uses", "") for step in job.get("steps", [])):
+            if any("t-head/ci-infra/cluster-run@" in step.get("uses", "") for step in job.get("steps", [])):
                 scheduler_jobs.append(job_name)
         assert scheduler_jobs == ["ppu-perf"]
 
@@ -1288,15 +1288,15 @@ class TestWorkflowYAML:
 
     def test_ppu_scheduler_action_is_reviewed_commit_pin(self):
         steps = self.wf["jobs"]["ppu-perf"]["steps"]
-        scheduler = next(step for step in steps if step.get("uses", "").startswith("t-head/ppu-scheduler-action"))
-        assert scheduler["uses"] == "t-head/ppu-scheduler-action@aac83e464f2a3fcbddddc60c8016021c996092a6"
+        scheduler = next(step for step in steps if step.get("uses", "").startswith("t-head/ci-infra/cluster-run"))
+        assert scheduler["uses"] == "t-head/ci-infra/cluster-run@40165c945cba33ac7b16b41c4485fe53b68f581f"
         assert "ZW-M890P" in scheduler["with"]["node_selector"]
         assert scheduler["with"]["timeout_minutes"] == 300
         assert scheduler["with"]["image"] == "${{ env.PPU_IMAGE }}"
 
     def test_scheduler_receives_and_revalidates_frozen_snapshot(self):
         steps = self.wf["jobs"]["ppu-perf"]["steps"]
-        scheduler = next(step for step in steps if "ppu-scheduler-action" in step.get("uses", ""))
+        scheduler = next(step for step in steps if "t-head/ci-infra/cluster-run@" in step.get("uses", ""))
         extra_env = scheduler["with"]["extra_env"]
         assert "\n" not in extra_env and ", " not in extra_env
         for name in (
@@ -1320,7 +1320,7 @@ class TestWorkflowYAML:
 
     def test_retry_isolation_and_exact_artifact_name(self):
         perf = self.wf["jobs"]["ppu-perf"]
-        scheduler = next(step for step in perf["steps"] if "ppu-scheduler-action" in step.get("uses", ""))
+        scheduler = next(step for step in perf["steps"] if "t-head/ci-infra/cluster-run@" in step.get("uses", ""))
         assert "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" in scheduler["with"]["command"]
         upload = next(step for step in perf["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
         expected = "ppu-perf-regression-890p-${{ github.run_id }}-${{ github.run_attempt }}"
@@ -1349,7 +1349,7 @@ class TestWorkflowYAML:
         assert "cancelled" in publish["with"]["script"]
         assert "required benchmark artifact is unavailable or invalid" in publish["with"]["script"]
         job_text = str(job)
-        for forbidden in ("actions/checkout", "actions/setup-python", "ppu-scheduler-action", "secrets."):
+        for forbidden in ("actions/checkout", "actions/setup-python", "ppu-scheduler-action", "t-head/ci-infra/cluster-run@", "secrets."):
             assert forbidden not in job_text
         for key, output in (
             ("PR_NUMBER", "pr_number"),
@@ -1814,7 +1814,7 @@ class TestWorkflowYAML:
 
     def test_runner_exit_codes_are_captured_not_discarded(self):
         steps = self.wf["jobs"]["ppu-perf"]["steps"]
-        scheduler = next(step for step in steps if "ppu-scheduler-action" in step.get("uses", ""))
+        scheduler = next(step for step in steps if "t-head/ci-infra/cluster-run@" in step.get("uses", ""))
         command = scheduler["with"]["command"]
         assert "|| OLD_RC=$?" in command
         assert "|| NEW_RC=$?" in command
@@ -1830,7 +1830,7 @@ class TestWorkflowYAML:
 
     def test_both_venvs_and_manifest_contract_are_preserved(self):
         steps = self.wf["jobs"]["ppu-perf"]["steps"]
-        scheduler = next(step for step in steps if "ppu-scheduler-action" in step.get("uses", ""))
+        scheduler = next(step for step in steps if "t-head/ci-infra/cluster-run@" in step.get("uses", ""))
         command = scheduler["with"]["command"]
         assert command.count("python -m venv --system-site-packages") == 2
         assert '"$WORKSPACE/venv_new"' in command
@@ -2025,11 +2025,11 @@ class TestFunctionalCIYAML:
         assert "inputs.board_matrix" in board_expr
 
     def test_scheduler_step_only_in_ppu_tests(self):
-        """ppu-scheduler-action is still only reachable through ppu-tests."""
+        """The shared cluster action is still only reachable through ppu-tests."""
         scheduler_jobs = []
         for job_name, job in self.ci["jobs"].items():
             steps = job.get("steps", []) or []
-            if any("ppu-scheduler-action" in step.get("uses", "") for step in steps):
+            if any("t-head/ci-infra/cluster-run@" in step.get("uses", "") for step in steps):
                 scheduler_jobs.append(job_name)
         assert scheduler_jobs == ["ppu-tests"]
 
