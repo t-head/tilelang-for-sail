@@ -255,6 +255,9 @@ class PPUGemmMMA(GemmBase):
 
         assert is_full_region(C_region), "Fragment output C must be a full region"
 
+        # Mark candidates; the pass validates whether loads can move safely.
+        pipeline_annotations = {"register_pipeline_stage": 2}
+
         sfa_local_size = (warp_rows + 3) // 4
         sfb_local_size = (warp_cols + 3) // 4
         use_scale_fragments = (
@@ -283,7 +286,7 @@ class PPUGemmMMA(GemmBase):
                     SFB_local = T.alloc_local((sfb_local_size,), T.uint32)
                 if clear_accum:
                     T.clear(C_buf)
-                for ki in T.serial(0, (block_K // micro_size_k)):
+                for ki in T.serial(0, (block_K // micro_size_k), annotations=pipeline_annotations):
                     if use_scale_fragments:
                         mma_emitter.load_scale(SFA_local, scale_A_region, ki, operand="A")
                         mma_emitter.load_scale(SFB_local, scale_B_region, ki, operand="B")
@@ -335,7 +338,7 @@ class PPUGemmMMA(GemmBase):
 
                 if clear_accum:
                     T.clear(C_buf)
-                for ki in T.serial(0, (block_K // micro_size_k)):
+                for ki in T.serial(0, (block_K // micro_size_k), annotations=pipeline_annotations):
                     if use_scale_fragments:
                         mma_emitter.load_scale(SFA_local, scale_A_region, ki, operand="A")
                         mma_emitter.load_scale(SFB_local, scale_B_region, ki, operand="B")
@@ -385,7 +388,7 @@ class PPUGemmMMA(GemmBase):
                     SFB_local = T.alloc_local((sfb_local_size,), T.uint32)
                 if clear_accum:
                     T.clear(C_buf)
-                for ki in T.serial(0, (block_K // micro_size_k)):
+                for ki in T.serial(0, (block_K // micro_size_k), annotations=pipeline_annotations):
                     if use_scale_fragments:
                         mma_emitter.load_scale(SFA_local, scale_A_region, ki, operand="A")
                         mma_emitter.load_scale(SFB_local, scale_B_region, ki, operand="B")
@@ -431,7 +434,7 @@ class PPUGemmMMA(GemmBase):
                     SFB_local = T.alloc_local((sfb_local_size,), T.uint32)
                 if clear_accum:
                     T.clear(C_buf)
-                for ki in T.serial(0, (block_K // micro_size_k)):
+                for ki in T.serial(0, (block_K // micro_size_k), annotations=pipeline_annotations):
                     if use_scale_fragments:
                         mma_emitter.load_scale(SFA_local, scale_A_region, ki, operand="A")
                         mma_emitter.load_scale(SFB_local, scale_B_region, ki, operand="B")
