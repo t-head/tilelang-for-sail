@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 from collections.abc import Callable
+from contextlib import nullcontext
 
 from tilelang import tvm
 from tvm.tirx import PrimFunc
@@ -15,6 +16,7 @@ from tvm.tirx import PrimFunc
 from tilelang.autotuner.param import CompileArgs
 from tilelang.engine.lower import lower_to_host_device_ir, device_codegen, host_codegen
 from tilelang.engine.param import CompiledArtifact
+from tilelang.jit import _DEBUG_COMPILE_LOCK, _dumps_debug_artifacts
 from tilelang.jit.adapter import TVMFFIKernelAdapter
 from tilelang.jit.kernel import JITKernel
 from tilelang.transform import PassConfigKey
@@ -38,6 +40,18 @@ def compile_grouped_unit_tvm_ffi(
     """
 
     pass_configs = dict(compile_args.pass_configs) if compile_args.pass_configs else {}
+    # Each grouped unit builds its own DumpIR with a per-instance counter, so units
+    # running concurrently must not share the dump directory.
+    with _DEBUG_COMPILE_LOCK if _dumps_debug_artifacts(pass_configs) else nullcontext():
+        return _compile_grouped_unit(unit_items, compile_args, elaborate_func, pass_configs)
+
+
+def _compile_grouped_unit(
+    unit_items: list[tuple[int, dict[str, Any]]],
+    compile_args: CompileArgs,
+    elaborate_func: Callable[..., PrimFunc],
+    pass_configs: dict[str, Any],
+) -> list[CompileUnitResult]:
     pass_instruments = []
     if pass_configs.get(PassConfigKey.TL_ENABLE_DUMP_IR):
         dump_ir_path = pass_configs.get(PassConfigKey.TL_DUMP_IR_DIR, "./dump_ir")
