@@ -89,6 +89,7 @@ class _CallFormCache:
         self.entries[call_form_key] = kernel
         self._remember(call_form_key, kernel)
 
+
 _DEBUG_COMPILE_LOCK = threading.RLock()
 
 
