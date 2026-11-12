@@ -2,6 +2,7 @@
 
 import importlib
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
@@ -269,6 +270,96 @@ def test_jit_debug_lock_uses_effective_pass_configs(monkeypatch, debug_compile_j
     monkeypatch.setattr(jit_module, "cached", cached_stub)
     assert jit.compile() is kernel
     assert events == (["enter", "exit"] if locked else [])
+
+
+@pytest.mark.parametrize(
+    "debug_key",
+    [
+        "tl.enable_dump_ir",
+        PassConfigKey.TL_ENABLE_DUMP_IR,
+        "tl.layout_visualization_enable",
+        PassConfigKey.TL_LAYOUT_VISUALIZATION_ENABLE,
+    ],
+    ids=["dump-string", "dump-enum", "layout-string", "layout-enum"],
+)
+@pytest.mark.parametrize(
+    "attr_value,external_value,locked",
+    [(True, None, True), (None, True, True), (True, False, False), (False, True, True), (None, None, False), (False, None, False)],
+    ids=["attr-enables", "external-enables", "external-disables", "external-overrides", "no-debug", "attr-disabled"],
+)
+def test_compile_entry_serializes_effective_debug_configs(monkeypatch, debug_compile_jit, debug_key, attr_value, external_value, locked):
+    jit_module = importlib.import_module("tilelang.jit")
+    prim_func = debug_compile_jit.get_tir()
+    if attr_value is not None:
+        prim_func = prim_func.with_attr("tilelang_pass_configs", {debug_key: attr_value})
+    external_pass_configs = None
+    if external_value is not None:
+        external_key = debug_key.value if isinstance(debug_key, PassConfigKey) else PassConfigKey(debug_key)
+        external_pass_configs = {external_key: external_value}
+    events = []
+
+    @contextmanager
+    def recording_lock():
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    def cached_stub(**kwargs):
+        assert events == (["enter"] if locked else [])
+        return object()
+
+    monkeypatch.setattr(jit_module, "_DEBUG_COMPILE_LOCK", recording_lock())
+    monkeypatch.setattr(jit_module, "cached", cached_stub)
+    jit_module.compile(prim_func, pass_configs=external_pass_configs)
+    assert events == (["enter", "exit"] if locked else [])
+
+
+@pytest.mark.parametrize("dump_enabled", [True, False], ids=["dump-on", "dump-off"])
+def test_par_compile_serializes_debug_dumps(monkeypatch, debug_compile_jit, dump_enabled):
+    jit_module = importlib.import_module("tilelang.jit")
+    prim_func = debug_compile_jit.get_tir()
+
+    class RecordingLock:
+        """Reentrant lock that tallies how many holders overlap."""
+
+        def __init__(self):
+            self._lock = threading.RLock()
+            self._guard = threading.Lock()
+            self.state = {"active": 0, "peak": 0, "entries": 0}
+
+        def __enter__(self):
+            self._lock.acquire()
+            with self._guard:
+                self.state["entries"] += 1
+                self.state["active"] += 1
+                self.state["peak"] = max(self.state["peak"], self.state["active"])
+            return self
+
+        def __exit__(self, *exc_info):
+            with self._guard:
+                self.state["active"] -= 1
+            self._lock.release()
+            return False
+
+    def cached_stub(**kwargs):
+        # Long enough that unserialized workers would overlap and raise the peak.
+        time.sleep(0.05)
+        return object()
+
+    lock = RecordingLock()
+    state = lock.state
+    monkeypatch.setattr(jit_module, "_DEBUG_COMPILE_LOCK", lock)
+    monkeypatch.setattr(jit_module, "cached", cached_stub)
+    pass_configs = {"tl.enable_dump_ir": dump_enabled}
+    results = jit_module.par_compile([prim_func] * 4, pass_configs=pass_configs, num_workers=4)
+    assert len(results) == 4
+    if dump_enabled:
+        assert state["entries"] == 4
+        assert state["peak"] == 1
+    else:
+        assert state["entries"] == 0
 
 
 def test_jit_debug_root_writes_under_shared_lock_across_copies(monkeypatch, tmp_path, debug_compile_jit):

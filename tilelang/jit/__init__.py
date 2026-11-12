@@ -93,6 +93,13 @@ class _CallFormCache:
 _DEBUG_COMPILE_LOCK = threading.RLock()
 
 
+def _dumps_debug_artifacts(pass_configs: dict[str, Any] | None) -> bool:
+    """Whether these pass configs make compilation write shared debug artifacts."""
+    if not pass_configs:
+        return False
+    return bool(pass_configs.get("tl.enable_dump_ir", False)) or bool(pass_configs.get("tl.layout_visualization_enable", False))
+
+
 def compile(
     func: PrimFunc[_KP, _T] = None,
     out_idx: list[int] | int | None = None,
@@ -163,16 +170,19 @@ def compile(
                 func_cf.extend(compile_flags)
         compile_flags = func_cf
 
-    return cached(
-        func=func,
-        out_idx=out_idx,
-        execution_backend=execution_backend,
-        target=target,
-        target_host=target_host,
-        verbose=verbose,
-        pass_configs=pass_configs,
-        compile_flags=compile_flags,
-    )
+    # DumpIR and layout visualization reuse the same file names for every compile,
+    # so all entry points reaching this function must serialize their debug output.
+    with _DEBUG_COMPILE_LOCK if _dumps_debug_artifacts(pass_configs) else nullcontext():
+        return cached(
+            func=func,
+            out_idx=out_idx,
+            execution_backend=execution_backend,
+            target=target,
+            target_host=target_host,
+            verbose=verbose,
+            pass_configs=pass_configs,
+            compile_flags=compile_flags,
+        )
 
 
 def par_compile(
@@ -446,15 +456,9 @@ class JITImpl(Generic[_P, _KP, _T, _Ret]):
 
     def compile(self, *args: _P.args, **kwargs: _P.kwargs) -> _Ret:
         prim_func = self.get_tir(*args, **kwargs)
-        func_pass_configs = prim_func.attrs.get("tilelang_pass_configs", {}) if prim_func.attrs else {}
-        effective_pass_configs = {**func_pass_configs, **(self.pass_configs or {})}
-        writes_debug_output = (
-            self.debug_root_path
-            or effective_pass_configs.get("tl.enable_dump_ir", False)
-            or effective_pass_configs.get("tl.layout_visualization_enable", False)
-        )
-        # Debug compilations write shared filenames, including across JIT copies.
-        with _DEBUG_COMPILE_LOCK if writes_debug_output else nullcontext():
+        # compile() serializes pass-config driven dumps itself; this guard only covers
+        # the debug_root_path files written below.
+        with _DEBUG_COMPILE_LOCK if self.debug_root_path else nullcontext():
             kernel_result = compile(
                 prim_func,
                 out_idx=self.out_idx,
