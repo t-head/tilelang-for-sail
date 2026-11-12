@@ -5,6 +5,7 @@ import pytest
 import tilelang
 import tilelang.ppu.pipeline as ppu_pipeline
 import tilelang.ppu.swzl_cost as swzl_cost
+import tilelang.ppu.swzl_cost.model as swzl_model
 from tilelang import tvm
 from tilelang.ppu.swzl_cost.live_range import _match_phase_keys
 from tilelang.ppu.swzl_cost.model import calibrated_decide, dynamic_four_warp_packet_reuse_choice
@@ -162,6 +163,17 @@ def test_missing_model_keeps_existing_swzl_policy():
     }
 
 
+@pytest.mark.parametrize("tree_value,choice", [(1.0, "ordinary"), (0.0, "swzl"), (-1.0, "swzl")])
+def test_calibrated_score_sign_has_one_clear_path_mapping(tree_value, choice):
+    model = {"bias": 0.0, "rate": 1.0, "trees": [{"value": tree_value}]}
+    record = {"supported": True, "phases": [{"reorder_words": 1}]}
+
+    result = calibrated_decide(model, record, feature_fn=lambda _record: {})
+
+    assert result["choice"] == choice
+    assert result["net_log_risk"] == tree_value
+
+
 def test_no_rebinding_cost_keeps_existing_swzl_policy():
     record = {
         "supported": True,
@@ -238,6 +250,123 @@ def _packet_reuse_record(packets_per_warp, reorder_operands, reuse):
             }
         ],
     }
+
+
+def _hard_rule_phase(**updates):
+    phase = {
+        "reorder_words": 32,
+        "static_trip_count": 0,
+        "feeds_gemm": 0,
+        "warps": 2,
+        "stages": 0,
+        "copy_guard": 0,
+        "copy_min_width": 16,
+        "copy_lane_guard": 0,
+        "other_live_words": 0,
+        "live_through_buffers": 0,
+        "address_dag_working_set": 32,
+        "address_dag_expressions": 8,
+        "swzl_binding_peak_words": 32,
+        "copy_value_words": 32,
+        "copy_iterations": 8,
+        "mma_atoms": 32,
+        "live_words": 32,
+        "matrix_operand_words": 32,
+        "ordinary_address_operands": 1,
+    }
+    phase.update(updates)
+    return phase
+
+
+def _hard_rule_cases():
+    scalar = {
+        "aiu": 0,
+        "phases": [
+            _hard_rule_phase(
+                reorder_words=8,
+                warps=2,
+                stages=1,
+                copy_guard=1,
+                copy_min_width=8,
+                copy_lane_guard=1,
+                live_through_buffers=3,
+                other_live_words=8,
+                address_dag_working_set=8,
+                swzl_binding_peak_words=8,
+                copy_value_words=16,
+                copy_iterations=8,
+                mma_atoms=4,
+            )
+        ],
+    }
+    mixed = {
+        "aiu": 0,
+        "phases": [
+            _hard_rule_phase(feeds_gemm=0, stages=1, copy_guard=1, swzl_binding_peak_words=16),
+            _hard_rule_phase(feeds_gemm=1, stages=1, copy_guard=1, swzl_binding_peak_words=16),
+        ],
+    }
+    allocator = {
+        "aiu": 0,
+        "launch_known": 1,
+        "launch_blocks": 52,
+        "phases": [
+            _hard_rule_phase(
+                reorder_words=60,
+                warps=4,
+                copy_guard=1,
+                swzl_binding_peak_words=60,
+                copy_value_words=1,
+                copy_iterations=1,
+                mma_atoms=60,
+                live_words=128,
+                matrix_operand_words=60,
+                address_dag_working_set=20,
+            )
+        ],
+    }
+    repeated = {
+        "aiu": 0,
+        "phases": [
+            _hard_rule_phase(
+                reorder_words=20,
+                warps=1,
+                swzl_binding_peak_words=20,
+                address_dag_working_set=24,
+            ),
+            _hard_rule_phase(
+                reorder_words=20,
+                warps=1,
+                swzl_binding_peak_words=20,
+                address_dag_working_set=24,
+            ),
+        ],
+    }
+    compact = {
+        "aiu": 0,
+        "phases": [
+            _hard_rule_phase(
+                static_trip_count=1,
+                warps=8,
+                copy_min_width=8,
+                swzl_binding_peak_words=32,
+                mma_atoms=32,
+            )
+        ],
+    }
+    return [
+        (scalar, "swzl", "fp8_scalar_nonfeed_reuse_frontier"),
+        (mixed, "swzl", "fp8_mixed_feed_binding_balance_frontier"),
+        (_packet_reuse_record(20, 1, 1), "ordinary", "fp8_dynamic_four_warp_packet_reuse_cost"),
+        (allocator, "swzl", "fp8_dynamic_four_warp_allocator_cliff_frontier"),
+        (repeated, "swzl", "fp8_repeated_phase_full_fragment_reuse_frontier"),
+        (compact, "swzl", "fp8_static_one_step_compact_fragment_frontier"),
+    ]
+
+
+@pytest.mark.parametrize("record,choice,reason", _hard_rule_cases())
+def test_each_hard_rule_has_an_explicit_choice_and_reason(record, choice, reason):
+    assert swzl_model._hard_rule_decide(record) == {"choice": choice, "reason": reason}
 
 
 @pytest.mark.parametrize(

@@ -19,6 +19,16 @@ def _tree_value(tree, values):
     return tree["value"]
 
 
+def calibrated_score(model, values):
+    """Return the calibrated ordinary-vs-SWZL risk margin.
+
+    Positive scores select the ordinary ldmatrix path.  Zero and negative
+    scores select SWZL.  The magnitude is a calibrated log-risk margin, not a
+    latency estimate.
+    """
+    return model["bias"] + model["rate"] * sum(_tree_value(tree, values) for tree in model["trees"])
+
+
 def features(record):
     out = {"aiu": record["aiu"]}
     for phase in record["phases"]:
@@ -77,6 +87,7 @@ def features(record):
 
 
 def calibrated_decide(model, record, feature_fn=features):
+    """Choose from the numerical model after legality and hard rules."""
     if not record.get("supported"):
         return {
             "choice": "keep_existing",
@@ -87,7 +98,7 @@ def calibrated_decide(model, record, feature_fn=features):
     if not any(phase["reorder_words"] for phase in record["phases"]):
         return {"choice": "keep_existing", "reason": "no_rebinding_cost_keep_existing"}
     values = feature_fn(record)
-    score = model["bias"] + model["rate"] * sum(_tree_value(tree, values) for tree in model["trees"])
+    score = calibrated_score(model, values)
     return {
         "choice": "ordinary" if score > 0 else "swzl",
         "reason": "fp8_net_fixed_regret",
@@ -110,47 +121,7 @@ def _reordered_phases(record):
     return [phase for phase in record["phases"] if phase["reorder_words"]]
 
 
-def serial_copy_retention_frontier(record):
-    """Return true only for a strict full-retention path separation."""
-    for phase in _reordered_phases(record):
-        if phase["stages"] != 0 or phase.get("copy_min_width", 16) >= 16:
-            continue
-        demand = phase.get("copy_value_words", 0)
-        if demand <= 0:
-            continue
-        frame = 24 + phase["live_words"] + phase["matrix_operand_words"]
-        swzl_free = max(0, REGISTER_WINDOW_WORDS - frame - phase["swzl_binding_peak_words"])
-        ordinary_free = max(0, REGISTER_WINDOW_WORDS - frame - phase["address_dag_working_set"])
-        if demand <= swzl_free and demand > ordinary_free:
-            return True
-    return False
-
-
-def pipelined_scalar_address_frontier(record):
-    """Return true when a feed pipeline can hide ordinary scalar addresses.
-
-    A lane-guarded scalar copy is not sufficient by itself.  The ordinary
-    address DAG is hidden only when the reordered fragment feeds the next GEMM
-    and the copy loop provides at least one independent address iteration per
-    MMA atom.  Non-feed high-reuse dataflows have no following GEMM with which
-    to overlap this work and are evaluated by the complementary frontier
-    below.
-    """
-    phases = _reordered_phases(record)
-    if record["aiu"] or len(phases) != 1:
-        return False
-    phase = phases[0]
-    return bool(
-        phase["stages"] > 0
-        and phase["feeds_gemm"]
-        and phase.get("copy_lane_guard", 0)
-        and phase.get("copy_min_width", 16) < 16
-        and phase["swzl_binding_peak_words"] >= phase["address_dag_working_set"]
-        and phase.get("copy_iterations", 0) >= phase["mma_atoms"]
-    )
-
-
-def scalar_nonfeed_reuse_frontier(record):
+def _scalar_nonfeed_reuse_choice(record):
     """SWZL wins when repeated scalar addresses cannot hide behind a GEMM.
 
     This is the complementary one-phase pipeline topology.  The reordered
@@ -163,9 +134,9 @@ def scalar_nonfeed_reuse_frontier(record):
     """
     phases = _reordered_phases(record)
     if record["aiu"] or len(phases) != 1:
-        return False
+        return None
     phase = phases[0]
-    return bool(
+    eligible = bool(
         not phase["static_trip_count"]
         and not phase["feeds_gemm"]
         and phase["warps"] > 1
@@ -179,56 +150,10 @@ def scalar_nonfeed_reuse_frontier(record):
         and phase.get("copy_value_words", 0) > phase["swzl_binding_peak_words"]
         and phase["swzl_binding_peak_words"] <= phase["address_dag_working_set"] + ALLOCATOR_QUANTUM_WORDS
     )
+    return "swzl" if eligible else None
 
 
-def single_warp_pipeline_binding_dominance(record):
-    """Ordinary dominates when one warp cannot hide a large SWZL binding."""
-    phases = _reordered_phases(record)
-    return bool(
-        phases
-        and all(
-            not phase["feeds_gemm"]
-            and phase["warps"] == 1
-            and phase["stages"] > 0
-            and phase.get("copy_min_width", 16) == 16
-            and phase["swzl_binding_peak_words"] - phase["address_dag_working_set"] >= 8
-            for phase in phases
-        )
-    )
-
-
-def two_warp_moderate_binding_dominance(record):
-    """Ordinary dominates before the second high-pressure binding cliff."""
-    phases = _reordered_phases(record)
-    return bool(
-        len(phases) >= 2
-        and all(
-            not phase["feeds_gemm"]
-            and phase["warps"] == 2
-            and phase["stages"] <= 1
-            and phase.get("copy_min_width", 16) == 16
-            and 0 < phase["swzl_binding_peak_words"] - phase["address_dag_working_set"] <= 24
-            for phase in phases
-        )
-    )
-
-
-def single_warp_feed_balance_frontier(record):
-    """SWZL dominates one feed phase when both path working sets are tied."""
-    phases = _reordered_phases(record)
-    if len(phases) != 1:
-        return False
-    phase = phases[0]
-    return bool(
-        phase["feeds_gemm"]
-        and phase["warps"] == 1
-        and phase["stages"] <= 1
-        and phase.get("copy_min_width", 16) == 16
-        and abs(phase["swzl_binding_peak_words"] - phase["address_dag_working_set"]) <= 2
-    )
-
-
-def mixed_feed_binding_balance_frontier(record):
+def _mixed_feed_binding_balance_choice(record):
     """SWZL wins when both sides of a mixed-feed pipeline reduce pressure.
 
     A two-GEMM pipeline keeps one phase's fragment alive to feed the second
@@ -240,7 +165,7 @@ def mixed_feed_binding_balance_frontier(record):
     topology; other pipelines remain with the calibrated fallback.
     """
     phases = _reordered_phases(record)
-    return bool(
+    eligible = bool(
         not record["aiu"]
         and len(phases) == 2
         and sorted(bool(phase["feeds_gemm"]) for phase in phases) == [False, True]
@@ -256,33 +181,7 @@ def mixed_feed_binding_balance_frontier(record):
             for phase in phases
         )
     )
-
-
-def single_phase_high_reuse_frontier(record):
-    """SWZL wins one high-reuse phase only with a binding advantage.
-
-    Three or more live-through fragments make the same matrix load feed a
-    dense register-resident dataflow after GEMM.  That reuse alone is not
-    sufficient: SWZL is admitted only when its binding working set is
-    strictly smaller than the ordinary address DAG.  This joint test rejects
-    both ordinary GEMMs with no live-through dataflow and the high-reuse
-    control whose SWZL binding is larger than the address DAG.
-    """
-    phases = _reordered_phases(record)
-    if record["aiu"] or len(phases) != 1:
-        return False
-    phase = phases[0]
-    return bool(
-        not phase["static_trip_count"]
-        and not phase["feeds_gemm"]
-        and phase["warps"] == 2
-        and phase["stages"] == 1
-        and phase.get("copy_guard", 0)
-        and phase.get("copy_min_width", 16) == 16
-        and not phase.get("copy_lane_guard", 0)
-        and phase.get("live_through_buffers", 0) >= 3
-        and phase["swzl_binding_peak_words"] < phase["address_dag_working_set"]
-    )
+    return "swzl" if eligible else None
 
 
 def dynamic_four_warp_packet_reuse_choice(record):
@@ -567,7 +466,7 @@ def dynamic_four_warp_packet_reuse_choice(record):
     return None
 
 
-def dynamic_four_warp_allocator_cliff_frontier(record):
+def _dynamic_four_warp_allocator_cliff_choice(record):
     """SWZL wins when ordinary address state exhausts allocator headroom.
 
     This estimates the ordinary path's simultaneously live frame before
@@ -593,7 +492,7 @@ def dynamic_four_warp_allocator_cliff_frontier(record):
     """
     phases = _reordered_phases(record)
     if record["aiu"] or len(phases) != 1:
-        return False
+        return None
     phase = phases[0]
     ordinary_pressure = FIXED_CONTROL_WORDS + phase["live_words"] + phase["matrix_operand_words"] + phase["address_dag_working_set"]
     packets_per_warp = phase["swzl_binding_peak_words"] / phase["warps"]
@@ -613,7 +512,7 @@ def dynamic_four_warp_allocator_cliff_frontier(record):
         launch_ready = launch_blocks > 0
     else:
         launch_ready = False
-    return bool(
+    eligible = bool(
         not phase["static_trip_count"]
         and not phase["feeds_gemm"]
         and phase["warps"] == 4
@@ -646,70 +545,10 @@ def dynamic_four_warp_allocator_cliff_frontier(record):
         and record.get("launch_known", 0)
         and launch_ready
     )
+    return "swzl" if eligible else None
 
 
-def dynamic_four_warp_first_overflow_accumulator_dominance(record):
-    """Ordinary wins when p17 row reuse crosses two accumulator windows.
-
-    The 17-packet overflow favors SWZL while one copied binding is reused by
-    up to the live accumulator capacity.  Once the accumulator alone exceeds
-    two register windows, retaining the SWZL binding competes with the fourth
-    row fragment and the ordinary schedule becomes cheaper.  This is scoped
-    to the p17 allocation bucket; p18 has a different measured schedule and
-    remains with the calibrated fallback.
-    """
-    phases = _reordered_phases(record)
-    if record["aiu"] or len(phases) != 1:
-        return False
-    phase = phases[0]
-    binding = phase["swzl_binding_peak_words"]
-    packets_per_warp = binding / phase["warps"]
-    one_binding_copy = bool(phase.get("copy_value_words", 0) == binding and phase.get("copy_iterations", 0) * phase["warps"] == binding)
-    integral_mma_reuse = bool(phase["mma_atoms"] >= binding and phase["mma_atoms"] % binding == 0)
-    return bool(
-        not phase["static_trip_count"]
-        and not phase["feeds_gemm"]
-        and phase["warps"] == 4
-        and phase["stages"] == 0
-        and phase.get("copy_guard", 0)
-        and phase.get("copy_min_width", 16) == 16
-        and not phase.get("copy_lane_guard", 0)
-        and phase.get("other_live_words", 0) == 0
-        and packets_per_warp == ORDINARY_PACKET_BUCKET + 1
-        and one_binding_copy
-        and integral_mma_reuse
-        and phase["live_words"] > 2 * REGISTER_WINDOW_WORDS
-        and record.get("launch_known", 0)
-        and record.get("launch_blocks", 0) > 0
-    )
-
-
-def repeated_phase_register_frontier(record):
-    """SWZL dominates repeated phases only at a strict register-window split."""
-    phases = _reordered_phases(record)
-    if record["aiu"] or len(phases) < 2:
-        return False
-    for phase in phases:
-        if (
-            phase["feeds_gemm"]
-            or phase["warps"] > 2
-            or phase["stages"] > 1
-            or phase.get("copy_min_width", 16) < 16
-            or phase.get("copy_lane_guard", 0)
-            or phase["address_dag_total_ops"] / max(1, phase["mma_atoms"]) < 8
-        ):
-            return False
-        common = 24 + phase["live_words"] + phase["matrix_operand_words"]
-        swzl_pressure = common + phase["swzl_binding_peak_words"]
-        # The ordinary path retains lane/ki DAG values while evaluating the
-        # current address, hence the second DAG working-set term.
-        ordinary_pressure = common + 2 * phase["address_dag_working_set"]
-        if not 208 <= swzl_pressure <= 224 < ordinary_pressure:
-            return False
-    return True
-
-
-def repeated_phase_full_fragment_reuse_frontier(record):
+def _repeated_phase_full_fragment_reuse_choice(record):
     """SWZL wins when a repeated one-warp phase reuses one full fragment.
 
     A single fragment-sized copy is the balance point where ordinary address
@@ -721,7 +560,7 @@ def repeated_phase_full_fragment_reuse_frontier(record):
     """
     phases = _reordered_phases(record)
     if record["aiu"] or len(phases) < 2:
-        return False
+        return None
     for phase in phases:
         binding = phase["swzl_binding_peak_words"]
         address_dag = phase["address_dag_working_set"]
@@ -736,11 +575,11 @@ def repeated_phase_full_fragment_reuse_frontier(record):
             or binding > address_dag
             or 3 * binding < 2 * address_dag
         ):
-            return False
-    return True
+            return None
+    return "swzl"
 
 
-def static_one_step_compact_fragment_frontier(record):
+def _static_one_step_compact_fragment_choice(record):
     """SWZL wins a one-step eight-warp phase that fits one register window.
 
     The binding is replicated across the warp group.  Requiring
@@ -753,10 +592,10 @@ def static_one_step_compact_fragment_frontier(record):
     """
     phases = _reordered_phases(record)
     if record["aiu"] or len(phases) != 1:
-        return False
+        return None
     phase = phases[0]
     binding = phase["swzl_binding_peak_words"]
-    return bool(
+    eligible = bool(
         phase["stages"] == 0
         and phase["static_trip_count"] == 1
         and not phase["feeds_gemm"]
@@ -769,118 +608,32 @@ def static_one_step_compact_fragment_frontier(record):
         and binding * phase["warps"] <= REGISTER_WINDOW_WORDS
         and phase["mma_atoms"] <= 4 * phase["warps"]
     )
+    return "swzl" if eligible else None
 
 
-def static_single_packet_warp_group_frontier(record):
-    """SWZL wins a static one-packet phase in one eight-warp group.
-
-    This is a resource topology test: one address packet is reused by the
-    complete eight-warp group, while the ordinary path must materialize a
-    deeper address DAG.  A guarded copy adds a select/zero dependency to each
-    loop iteration, so that path is admitted only when SWZL binding is much
-    smaller than the address DAG and there is enough MMA work to amortize it.
-    It deliberately excludes six/ten-warp controls.
-    """
-    phases = _reordered_phases(record)
-    if record["aiu"] or len(phases) != 1:
-        return False
-    phase = phases[0]
-    guard_free_copy = not phase.get("copy_guard", 0)
-    guarded_low_binding = bool(
-        phase.get("copy_guard", 0)
-        and 3 * phase["swzl_binding_peak_words"] <= phase["address_dag_working_set"]
-        and phase["mma_atoms"] >= 2 * phase["warps"]
-    )
-    return bool(
-        phase["stages"] == 0
-        and phase["static_trip_count"] > 0
-        and not phase["feeds_gemm"]
-        and phase["warps"] == 8
-        and phase["copy_iterations"] == 1
-        and phase.get("copy_min_width", 16) == 16
-        and not phase.get("copy_lane_guard", 0)
-        and phase.get("other_live_words", 0) == 0
-        and phase["swzl_binding_peak_words"] < phase["address_dag_working_set"]
-        and (guard_free_copy or guarded_low_binding)
-    )
+# Ordered hard overrides for measured backend scheduling boundaries.  These
+# rules return a path or None; they intentionally do not manufacture a numeric
+# latency score.  Only the calibrated fallback below emits net_log_risk.
+_HARD_RULES = (
+    ("fp8_scalar_nonfeed_reuse_frontier", _scalar_nonfeed_reuse_choice),
+    ("fp8_mixed_feed_binding_balance_frontier", _mixed_feed_binding_balance_choice),
+    ("fp8_dynamic_four_warp_packet_reuse_cost", dynamic_four_warp_packet_reuse_choice),
+    ("fp8_dynamic_four_warp_allocator_cliff_frontier", _dynamic_four_warp_allocator_cliff_choice),
+    ("fp8_repeated_phase_full_fragment_reuse_frontier", _repeated_phase_full_fragment_reuse_choice),
+    ("fp8_static_one_step_compact_fragment_frontier", _static_one_step_compact_fragment_choice),
+)
 
 
-def guarded_static_single_packet_dominance(record):
-    """Ordinary dominates guarded one-packet cases outside the SWZL window."""
-    phases = _reordered_phases(record)
-    if record["aiu"] or len(phases) != 1:
-        return False
-    phase = phases[0]
-    low_binding_work = bool(
-        3 * phase["swzl_binding_peak_words"] <= phase["address_dag_working_set"] and phase["mma_atoms"] >= 2 * phase["warps"]
-    )
-    return bool(
-        phase["stages"] == 0
-        and phase["static_trip_count"] > 0
-        and not phase["feeds_gemm"]
-        and phase["warps"] == 8
-        and phase["copy_iterations"] == 1
-        and phase.get("copy_guard", 0)
-        and phase.get("copy_min_width", 16) == 16
-        and not phase.get("copy_lane_guard", 0)
-        and phase.get("other_live_words", 0) == 0
-        and not low_binding_work
-    )
-
-
-def static_two_warp_binding_balance_frontier(record):
-    """SWZL wins a dense static phase when two-warp binding stays balanced.
-
-    The static loop repeats the same per-iteration binding topology, but its
-    scheduling cost grows with the fragment.  Compact fragments admit SWZL
-    directly.  A guarded global copy adds dependency pressure and extends the
-    frontier only through a bounded middle band; wider fragments fall back.
-    """
-    phases = _reordered_phases(record)
-    if record["aiu"] or len(phases) != 1:
-        return False
-    phase = phases[0]
-    return bool(
-        phase["stages"] == 0
-        and phase["static_trip_count"] > 0
-        and not phase["feeds_gemm"]
-        and phase["warps"] == 2
-        and phase["mma_atoms"] >= 96
-        and (phase["mma_atoms"] <= 160 or (phase["mma_atoms"] <= 224 and phase.get("copy_guard", 0)))
-        and phase.get("copy_min_width", 16) == 16
-        and not phase.get("copy_lane_guard", 0)
-        and phase.get("other_live_words", 0) == 0
-        and abs(phase["swzl_binding_peak_words"] - phase["address_dag_working_set"]) <= 4
-    )
-
-
-def static_two_warp_wide_fragment_dominance(record):
-    """Ordinary dominates balanced two-warp fragments beyond the safe band.
-
-    Without a guarded-copy dependency, the compact band ends at 160 atoms.
-    A guard extends it through 224 atoms; fragments beyond that are ordinary
-    regardless.  This mirrors the positive frontier instead of delegating its
-    complement to a fallback that cannot see this sharp scheduling boundary.
-    """
-    phases = _reordered_phases(record)
-    if record["aiu"] or len(phases) != 1:
-        return False
-    phase = phases[0]
-    return bool(
-        phase["stages"] == 0
-        and phase["static_trip_count"] > 0
-        and not phase["feeds_gemm"]
-        and phase["warps"] == 2
-        and phase["mma_atoms"] > 160
-        and (not phase.get("copy_guard", 0) or phase["mma_atoms"] > 224)
-        and phase.get("copy_min_width", 16) == 16
-        and not phase.get("copy_lane_guard", 0)
-        and phase.get("other_live_words", 0) == 0
-        and abs(phase["swzl_binding_peak_words"] - phase["address_dag_working_set"]) <= 4
-    )
+def _hard_rule_decide(record):
+    for reason, rule in _HARD_RULES:
+        choice = rule(record)
+        if choice is not None:
+            return {"choice": choice, "reason": reason}
+    return None
 
 
 def decide(record, model=None):
+    """Select the lowering path through eligibility, hard rules, then score."""
     if model is None:
         model = _MODEL
     if not record.get("supported") or model is None:
@@ -894,49 +647,9 @@ def decide(record, model=None):
             }
     if not any(phase["reorder_words"] for phase in record["phases"]):
         return {"choice": "keep_existing", "reason": "no_rebinding_cost_keep_existing"}
-    if serial_copy_retention_frontier(record):
-        return {"choice": "swzl", "reason": "fp8_serial_full_retention_frontier"}
-    if pipelined_scalar_address_frontier(record):
-        return {"choice": "ordinary", "reason": "fp8_pipelined_scalar_address_frontier"}
-    if scalar_nonfeed_reuse_frontier(record):
-        return {"choice": "swzl", "reason": "fp8_scalar_nonfeed_reuse_frontier"}
-    if single_warp_pipeline_binding_dominance(record):
-        return {"choice": "ordinary", "reason": "fp8_single_warp_pipeline_binding_dominance"}
-    if two_warp_moderate_binding_dominance(record):
-        return {"choice": "ordinary", "reason": "fp8_two_warp_moderate_binding_dominance"}
-    if single_warp_feed_balance_frontier(record):
-        return {"choice": "swzl", "reason": "fp8_single_warp_feed_balance_frontier"}
-    if mixed_feed_binding_balance_frontier(record):
-        return {"choice": "swzl", "reason": "fp8_mixed_feed_binding_balance_frontier"}
-    if single_phase_high_reuse_frontier(record):
-        return {"choice": "swzl", "reason": "fp8_single_phase_high_reuse_frontier"}
-    packet_reuse_choice = dynamic_four_warp_packet_reuse_choice(record)
-    if packet_reuse_choice is not None:
-        return {
-            "choice": packet_reuse_choice,
-            "reason": "fp8_dynamic_four_warp_packet_reuse_cost",
-        }
-    if dynamic_four_warp_allocator_cliff_frontier(record):
-        return {"choice": "swzl", "reason": "fp8_dynamic_four_warp_allocator_cliff_frontier"}
-    if dynamic_four_warp_first_overflow_accumulator_dominance(record):
-        return {
-            "choice": "ordinary",
-            "reason": "fp8_dynamic_four_warp_first_overflow_accumulator_dominance",
-        }
-    if repeated_phase_register_frontier(record):
-        return {"choice": "swzl", "reason": "fp8_repeated_phase_register_frontier"}
-    if repeated_phase_full_fragment_reuse_frontier(record):
-        return {"choice": "swzl", "reason": "fp8_repeated_phase_full_fragment_reuse_frontier"}
-    if static_one_step_compact_fragment_frontier(record):
-        return {"choice": "swzl", "reason": "fp8_static_one_step_compact_fragment_frontier"}
-    if static_single_packet_warp_group_frontier(record):
-        return {"choice": "swzl", "reason": "fp8_static_single_packet_warp_group_frontier"}
-    if static_two_warp_binding_balance_frontier(record):
-        return {"choice": "swzl", "reason": "fp8_static_two_warp_binding_balance_frontier"}
-    if guarded_static_single_packet_dominance(record):
-        return {"choice": "ordinary", "reason": "fp8_guarded_static_single_packet_dominance"}
-    if static_two_warp_wide_fragment_dominance(record):
-        return {"choice": "ordinary", "reason": "fp8_static_two_warp_wide_fragment_dominance"}
+    hard_decision = _hard_rule_decide(record)
+    if hard_decision is not None:
+        return hard_decision
     result = calibrated_decide(model, record, feature_fn=features)
     if "net_log_risk" in result:
         result["reason"] = "fp8_calibrated_live_range_cost"
