@@ -7,9 +7,46 @@ selector inputs.
 """
 
 import json
+import math
 from pathlib import Path
 
-_MODEL = json.loads(Path(__file__).with_name("model.json").read_text())
+
+def _finite_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _valid_tree(tree):
+    if not isinstance(tree, dict):
+        return False
+    if "feature" not in tree:
+        return _finite_number(tree.get("value"))
+    return bool(
+        isinstance(tree.get("feature"), str)
+        and _finite_number(tree.get("threshold"))
+        and _valid_tree(tree.get("left"))
+        and _valid_tree(tree.get("right"))
+    )
+
+
+def _load_model(path=None):
+    """Load the optional calibrated model without making compilation fail."""
+    path = Path(path) if path is not None else Path(__file__).with_name("model.json")
+    try:
+        model = json.loads(path.read_text())
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not (
+        isinstance(model, dict)
+        and _finite_number(model.get("bias"))
+        and _finite_number(model.get("rate"))
+        and isinstance(model.get("trees"), list)
+        and all(_valid_tree(tree) for tree in model["trees"])
+    ):
+        return None
+    return model
+
+
+_MODEL = _load_model()
 
 
 def _tree_value(tree, values):

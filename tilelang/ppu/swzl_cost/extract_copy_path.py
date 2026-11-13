@@ -86,6 +86,16 @@ def _extract(func):
     T.stmt_functor.ir_transform(func.body, before, after)
     if not gemms:
         return dict(supported=False, reason="no_gemm")
+    # The selected policy is function-wide.  Keep the existing policy when a
+    # non-FP8 shared-to-fragment copy is present, otherwise an FP8 GEMM could
+    # accidentally change the lowering of an unrelated BF16/INT8 fragment.
+    if any(
+        a[0].scope().startswith("shared")
+        and b[0].scope() == "local.fragment"
+        and (str(a[0].dtype) != "float8_e4m3fn" or str(b[0].dtype) != "float8_e4m3fn")
+        for a, b, _, _, _ in copies
+    ):
+        return dict(supported=False, reason="mixed_fragment_dtype_keep_existing")
     # A mixed function must be untouched too: the decision is function-wide.
     if any(str(_region(g.args[i])[0].dtype) != "float8_e4m3fn" for g, _, _ in gemms for i in (0, 1)):
         return dict(supported=False, reason="dtype_keep_existing")

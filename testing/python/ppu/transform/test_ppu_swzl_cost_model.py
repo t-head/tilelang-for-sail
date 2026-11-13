@@ -3,10 +3,12 @@
 import pytest
 
 import tilelang
+import tilelang.ppu.language as T
 import tilelang.ppu.pipeline as ppu_pipeline
 import tilelang.ppu.swzl_cost as swzl_cost
 import tilelang.ppu.swzl_cost.model as swzl_model
 from tilelang import tvm
+from tilelang.layout import make_full_bank_swizzled_layout
 from tilelang.ppu.swzl_cost.live_range import _match_phase_keys
 from tilelang.ppu.swzl_cost.model import calibrated_decide, dynamic_four_warp_packet_reuse_choice
 
@@ -29,6 +31,68 @@ def _install_fake_lower(monkeypatch, observed_disable):
         return run
 
     monkeypatch.setattr(tilelang.ppu.transform, "LowerTileOp", factory)
+
+
+def _real_fp8_module(with_bf16_fragment_copy=False):
+    @T.prim_func
+    def main(
+        a: T.Tensor((128, 128), T.float8_e4m3fn),
+        b: T.Tensor((128, 128), T.float8_e4m3fn),
+        c: T.Tensor((128, 128), T.float32),
+    ):
+        with T.Kernel(1, threads=128):
+            a_shared = T.alloc_shared((128, 128), T.float8_e4m3fn)
+            b_shared = T.alloc_shared((128, 128), T.float8_e4m3fn)
+            c_local = T.alloc_fragment((128, 128), T.float32)
+            T.copy(a, a_shared)
+            T.copy(b, b_shared)
+            T.clear(c_local)
+            T.gemm(
+                a_shared,
+                b_shared,
+                c_local,
+                transpose_B=True,
+                policy=T.GemmWarpPolicy.FullRow,
+            )
+            T.copy(c_local, c)
+            if with_bf16_fragment_copy:
+                extra_shared = T.alloc_shared((32, 64), T.bfloat16)
+                extra_fragment = T.alloc_fragment((16, 16), T.bfloat16)
+                base = T.Fragment(
+                    (16, 16),
+                    forward_fn=lambda i, j: (
+                        4 * (i % 8) + j % 8 // 2,
+                        4 * (i // 8) + 2 * (j // 8) + j % 2,
+                    ),
+                )
+                T.annotate_layout(
+                    {
+                        extra_shared: make_full_bank_swizzled_layout(extra_shared),
+                        extra_fragment: base.replicate(4),
+                    }
+                )
+                T.copy(extra_shared[:16, :16], extra_fragment)
+
+    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+    mod = tvm.IRModule.from_expr(main)
+    with target, tvm.transform.PassContext(opt_level=3):
+        mod = tvm.tirx.transform.BindTarget(target)(mod)
+        mod = tilelang.transform.MaterializeKernelLaunch()(mod)
+        mod = tilelang.ppu.transform.LayoutInference()(mod)
+    return target, mod
+
+
+def _lowered_ops(mod, target):
+    with target, tvm.transform.PassContext(opt_level=3):
+        mod = ppu_pipeline._lower_tile_op_with_swzl_cost_model(mod)
+    ops = []
+
+    def visit(node):
+        if isinstance(node, tvm.tirx.Call) and isinstance(node.op, tvm.ir.Op):
+            ops.append(node.op.name)
+
+    tvm.tirx.stmt_functor.post_order_visit(mod["main"].body, visit)
+    return ops
 
 
 def test_swzl_cost_model_runs_by_default(monkeypatch):
@@ -161,6 +225,67 @@ def test_missing_model_keeps_existing_swzl_policy():
         "choice": "keep_existing",
         "reason": "missing_model_keep_existing",
     }
+
+
+@pytest.mark.parametrize("contents", [None, "{", "{}", '{"bias": 0, "rate": 1, "trees": [{"value": "bad"}]}'])
+def test_model_load_failure_returns_none(tmp_path, contents):
+    path = tmp_path / "model.json"
+    if contents is not None:
+        path.write_text(contents)
+
+    assert swzl_model._load_model(path) is None
+
+
+def test_valid_model_loads(tmp_path):
+    path = tmp_path / "model.json"
+    path.write_text('{"bias": 0, "rate": 1, "trees": [{"value": -1}]}')
+
+    assert swzl_model._load_model(path) == {
+        "bias": 0,
+        "rate": 1,
+        "trees": [{"value": -1}],
+    }
+
+
+def test_real_fp8_tir_selects_and_lowers_ordinary_path(monkeypatch):
+    target, mod = _real_fp8_module()
+    record = swzl_cost.extract(mod["main"])
+    monkeypatch.setattr(
+        swzl_model,
+        "_MODEL",
+        {"bias": 1.0, "rate": 0.0, "trees": [{"value": 0.0}]},
+    )
+
+    assert record["supported"]
+    assert any(phase["reorder_words"] for phase in record["phases"])
+    assert swzl_cost.decide(record)["choice"] == "ordinary"
+    ops = _lowered_ops(mod, target)
+    matrix_loads = [op for op in ops if op in ("tl.ptx_ldmatrix", "tl.tix_ldmatrix_swzl")]
+    assert matrix_loads
+    assert set(matrix_loads) == {"tl.ptx_ldmatrix"}
+
+
+def test_real_mixed_dtype_tir_keeps_existing_swzl_path(monkeypatch):
+    target, mod = _real_fp8_module(with_bf16_fragment_copy=True)
+    record = swzl_cost.extract(mod["main"])
+    monkeypatch.setattr(
+        swzl_model,
+        "_MODEL",
+        {"bias": 1.0, "rate": 0.0, "trees": [{"value": 0.0}]},
+    )
+
+    assert record == {
+        "supported": False,
+        "reason": "mixed_fragment_dtype_keep_existing",
+    }
+    assert swzl_cost.decide(record) == {
+        "choice": "keep_existing",
+        "reason": "mixed_fragment_dtype_keep_existing",
+    }
+    ops = _lowered_ops(mod, target)
+    matrix_loads = [op for op in ops if op in ("tl.ptx_ldmatrix", "tl.tix_ldmatrix_swzl")]
+    assert matrix_loads
+    assert set(matrix_loads) == {"tl.tix_ldmatrix_swzl"}
 
 
 @pytest.mark.parametrize("tree_value,choice", [(1.0, "ordinary"), (0.0, "swzl"), (-1.0, "swzl")])
