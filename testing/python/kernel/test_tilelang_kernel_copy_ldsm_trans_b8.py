@@ -221,5 +221,86 @@ def test_ldsm_trans_b8_gemm_rr():
     _check_gemm_rr("float8_e4m3fn", "A")
 
 
+def _make_gemm_ss_nn_kernel(dtype, M, N, K, threads, policy=T.GemmWarpPolicy.Square):
+    """Shared-shared NN GEMM: B should use the transposed b8 matrix load."""
+    accum_dtype = "int32" if dtype == "int8" else "float32"
+
+    @T.prim_func
+    def main(
+        A: T.Tensor((M, K), dtype),
+        B: T.Tensor((K, N), dtype),
+        C: T.Tensor((M, N), accum_dtype),
+    ):
+        with T.Kernel(1, threads=threads):
+            A_shared = T.alloc_shared((M, K), dtype)
+            B_shared = T.alloc_shared((K, N), dtype)
+            C_fragment = T.alloc_fragment((M, N), accum_dtype)
+            T.copy(A, A_shared)
+            T.copy(B, B_shared)
+            T.clear(C_fragment)
+            T.gemm(A_shared, B_shared, C_fragment, policy=policy)
+            T.copy(C_fragment, C)
+
+    return main
+
+
+def _check_gemm_ss_nn(dtype, M, N, K, threads, policy=T.GemmWarpPolicy.Square):
+    kernel = tilelang.compile(_make_gemm_ss_nn_kernel(dtype, M, N, K, threads, policy), out_idx=[2])
+    source = kernel.get_kernel_source()
+    calls = re.findall(re.escape(HELPER) + r"\([^;]+\)", source)
+    assert calls, f"Expected {HELPER} in generated CUDA source"
+    assert all(call.rstrip().endswith(", true)") for call in calls), f"Expected B-operand register order, got: {calls}"
+
+    torch_dtype = TORCH_DTYPES[dtype]
+    generator = torch.Generator().manual_seed(0)
+    a = torch.randint(-4, 5, (M, K), generator=generator).to(torch_dtype)
+    b = torch.randint(-4, 5, (K, N), generator=generator).to(torch_dtype)
+    reference = a.float() @ b.float()
+    result = kernel(a.cuda(), b.cuda())
+    torch.testing.assert_close(result.float().cpu(), reference, rtol=0, atol=0)
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+def test_ldsm_trans_b8_gemm_ss_nn():
+    for dtype in ["float8_e4m3fn", "float8_e5m2"]:
+        _check_gemm_ss_nn(dtype, 128, 128, 64, 128)
+    _check_gemm_ss_nn("float8_e4m3fn", 256, 128, 32, 512, T.GemmWarpPolicy.FullRow)
+
+
+def _make_gemm_ss_nn_unaligned_kernel():
+    """A non-16B B stride must retain the scalar fallback."""
+
+    @T.prim_func
+    def main(
+        A: T.Tensor((128, 64), "float8_e4m3fn"),
+        B: T.Tensor((64, 129), "float8_e4m3fn"),
+        C: T.Tensor((128, 128), "float32"),
+    ):
+        with T.Kernel(1, threads=128):
+            A_shared = T.alloc_shared((128, 64), "float8_e4m3fn")
+            B_shared = T.alloc_shared((64, 129), "float8_e4m3fn")
+            C_fragment = T.alloc_fragment((128, 128), "float32")
+            T.copy(A, A_shared)
+            T.copy(B, B_shared)
+            T.clear(C_fragment)
+            T.gemm(A_shared, B_shared[:, 1:129], C_fragment)
+            T.copy(C_fragment, C)
+
+    return main
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+def test_ldsm_trans_b8_gemm_ss_nn_unaligned_fallback():
+    kernel = tilelang.compile(_make_gemm_ss_nn_unaligned_kernel(), out_idx=[2])
+    source = kernel.get_kernel_source()
+    assert HELPER not in source
+
+    generator = torch.Generator().manual_seed(0)
+    a = torch.randint(-4, 5, (128, 64), generator=generator).to(torch.float8_e4m3fn)
+    b = torch.randint(-4, 5, (64, 129), generator=generator).to(torch.float8_e4m3fn)
+    result = kernel(a.cuda(), b.cuda())
+    torch.testing.assert_close(result.float().cpu(), a.float() @ b[:, 1:].float(), rtol=0, atol=0)
+
+
 if __name__ == "__main__":
     tilelang.testing.main()

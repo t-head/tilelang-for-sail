@@ -3,6 +3,7 @@ import tilelang.ppu.language as T
 from typing import Literal
 from collections.abc import Callable
 from tilelang.transform import PassConfigKey, get_pass_context
+from tilelang.layout import make_linear_layout
 from tvm import DataType
 from tvm import tirx
 from tvm.ir import Range
@@ -1196,7 +1197,9 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         b_bits = DataType(self.b_dtype).bits
         if b_bits not in (4, 8, 16):
             return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
-        if b_bits in (4, 8) and not self.b_transposed:
+        if b_bits == 4 and not self.b_transposed:
+            return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
+        if b_bits == 8 and not self.b_transposed and self.ppu_arch < 15:
             return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
 
         warp_col_tiles = self.warp_col_tiles
@@ -1216,7 +1219,25 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         B_other = [r.min for r in B_region.region[:-2]]
         replicate_b = self.n_dim == 16
 
+        # PPU1.5 can load the natural [K, N] b8 B operand directly into the
+        # MMA register order.  Keep the fast path conservative: a custom
+        # shared layout may permute bytes inside the 16-byte instruction row,
+        # which cannot be repaired by remapping only the row pointer.
+        B_layout = self.layout_map.get(B_buf) if self.layout_map is not None else None
         swzl_mode, swzl_supported = self._ldmat_swzl_mode(B_region)
+        layout_supported = B_layout is None or B_layout.is_equal(make_linear_layout(B_buf)) or swzl_supported
+        analyzer = tvm.arith.Analyzer()
+        use_trans_b8 = (
+            self.ppu_arch >= 15
+            and b_bits == 8
+            and not self.b_transposed
+            and layout_supported
+            and analyzer.can_prove_equal(FloorMod(B_buf.shape[-1], 16), 0)
+            and analyzer.can_prove_equal(FloorMod(B_base1, 16), 0)
+        )
+        if b_bits == 8 and not self.b_transposed and not use_trans_b8:
+            return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
+
         disable_ldmat_swzl = self._disable_ldmat_swzl() or not swzl_supported
 
         @T.macro
@@ -1236,6 +1257,22 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
                     warp_n * warp_col_tiles + i * micro_size_y,
                     rk * chunk + ki * micro_size_k,
                 )
+
+                if use_trans_b8:
+                    # x2 m16n16.b8 consumes one 16-byte row from each lane and
+                    # produces the complete m16n16k32 B fragment.  matrix_type
+                    # 1 selects the B-operand register order.
+                    src_indices = tuple(B_other) + (
+                        B_base0 + wk + tx,
+                        B_base1 + wi,
+                    )
+                    T.tix_ldmatrix_b8(
+                        1,
+                        2,
+                        T.access_ptr(B_buf[src_indices], "r", extent=16),
+                        T.access_ptr(B_local_buf[i * local_size_b], "w", extent=16),
+                    )
+                    continue
 
                 num = 4 if replicate_b else 2
                 access_extent = (2 * num) * (16 // b_bits)
