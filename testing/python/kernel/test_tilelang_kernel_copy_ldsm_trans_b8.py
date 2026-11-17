@@ -26,6 +26,7 @@ import tilelang
 import tilelang.language as T
 import tilelang.testing
 from tilelang.layout import make_linear_layout, make_swizzled_layout
+from tilelang.ppu.intrinsics.macro.mma_macro_generator import PPUTensorCoreIntrinEmitter
 
 DTYPES = ["int8", "float8_e4m3fn", "float8_e5m2"]
 TORCH_DTYPES = {
@@ -250,6 +251,7 @@ def _check_gemm_ss_nn(dtype, M, N, K, threads, policy=T.GemmWarpPolicy.Square):
     calls = re.findall(re.escape(HELPER) + r"\([^;]+\)", source)
     assert calls, f"Expected {HELPER} in generated CUDA source"
     assert all(call.rstrip().endswith(", true)") for call in calls), f"Expected B-operand register order, got: {calls}"
+    assert "tix_ldmatrix_x4_trans_ppu" not in source, "FP8 NN B load emitted both the b8 fast path and the fallback"
 
     torch_dtype = TORCH_DTYPES[dtype]
     generator = torch.Generator().manual_seed(0)
@@ -264,7 +266,44 @@ def _check_gemm_ss_nn(dtype, M, N, K, threads, policy=T.GemmWarpPolicy.Square):
 def test_ldsm_trans_b8_gemm_ss_nn():
     for dtype in ["float8_e4m3fn", "float8_e5m2"]:
         _check_gemm_ss_nn(dtype, 128, 128, 64, 128)
-    _check_gemm_ss_nn("float8_e4m3fn", 256, 128, 32, 512, T.GemmWarpPolicy.FullRow)
+    _check_gemm_ss_nn("float8_e4m3fn", 256, 256, 32, 512, T.GemmWarpPolicy.FullRow)
+    _check_gemm_ss_nn("float8_e4m3fn", 128, 64, 32, 128, T.GemmWarpPolicy.FullCol)
+
+
+def _trans_b8_region_is_eligible(*, strides=None, elem_offset=0, include_layout=True):
+    buffer_kwargs = {"elem_offset": elem_offset, "data_alignment": 16}
+    if strides is not None:
+        buffer_kwargs["strides"] = strides
+    buffer = tilelang.tvm.tirx.decl_buffer((32, 128), "float8_e4m3fn", scope="shared", **buffer_kwargs)
+    region = tilelang.tvm.tirx.BufferRegion(
+        buffer,
+        [tilelang.tvm.ir.Range(0, 32), tilelang.tvm.ir.Range(0, 128)],
+    )
+    layout_map = {buffer: make_linear_layout(buffer)} if include_layout else None
+    emitter = PPUTensorCoreIntrinEmitter(
+        a_dtype="float8_e4m3fn",
+        b_dtype="float8_e4m3fn",
+        accum_dtype="float32",
+        a_transposed=False,
+        b_transposed=False,
+        block_row_warps=1,
+        block_col_warps=1,
+        warp_row_tiles=16,
+        warp_col_tiles=16,
+        chunk=32,
+        ppu_arch=15,
+        layout_map=layout_map,
+    )
+    return emitter._can_use_trans_b8(region)
+
+
+def test_ldsm_trans_b8_gemm_ss_nn_eligibility():
+    assert _trans_b8_region_is_eligible()
+    assert _trans_b8_region_is_eligible(strides=(128, 1))
+    assert not _trans_b8_region_is_eligible(include_layout=False)
+    assert not _trans_b8_region_is_eligible(elem_offset=1)
+    assert not _trans_b8_region_is_eligible(strides=(129, 1))
+    assert not _trans_b8_region_is_eligible(strides=(256, 2))
 
 
 def _make_gemm_ss_nn_unaligned_kernel():

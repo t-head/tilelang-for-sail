@@ -1021,6 +1021,36 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
             return 0, True
         return 0, False
 
+    def _can_use_trans_b8(self, region: BufferRegion) -> bool:
+        """Whether a natural-layout b8 B region is legal for m16n16 ldmatrix."""
+        if self.ppu_arch < 15 or DataType(self.b_dtype).bits != 8 or self.b_transposed:
+            return False
+
+        buffer = region.buffer
+        layout = self.layout_map.get(buffer) if self.layout_map is not None else None
+        _, swzl_supported = self._ldmat_swzl_mode(region)
+        if layout is None or not (layout.is_equal(make_linear_layout(buffer)) or swzl_supported):
+            return False
+        if buffer.data_alignment < 16 or buffer.data_alignment % 16 != 0:
+            return False
+
+        strides = list(buffer.strides)
+        if not strides:
+            stride = tirx.IntImm("int32", 1)
+            for extent in reversed(buffer.shape):
+                strides.insert(0, stride)
+                stride *= extent
+        if len(strides) != len(buffer.shape):
+            return False
+
+        analyzer = tvm.arith.Analyzer()
+        if not analyzer.can_prove_equal(strides[-1], 1):
+            return False
+        if len(strides) >= 2 and not analyzer.can_prove_equal(FloorMod(strides[-2], 16), 0):
+            return False
+        base_offset = buffer.elem_offset + sum(axis.min * stride for axis, stride in zip(region.region, strides))
+        return analyzer.can_prove_equal(FloorMod(base_offset, 16), 0)
+
     def ldmatrix_a(self, A_local_buf: Buffer, A_shared_buf: Buffer | BufferRegion, ki: PrimExpr, rk: PrimExpr | None = 0):
         a_dtype = DataType(self.a_dtype)
         a_bits = a_dtype.bits
@@ -1195,11 +1225,8 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         self, B_local_buf: Buffer, B_shared_buf: Buffer | BufferRegion, ki: PrimExpr, rk: PrimExpr | None = 0, a_from_gemm_c: bool = False
     ):
         b_bits = DataType(self.b_dtype).bits
-        if b_bits not in (4, 8, 16):
-            return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
-        if b_bits == 4 and not self.b_transposed:
-            return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
-        if b_bits == 8 and not self.b_transposed and self.ppu_arch < 15:
+        natural_b_instruction_supported = b_bits == 16 or (b_bits == 8 and self.ppu_arch >= 15)
+        if b_bits not in (4, 8, 16) or (not self.b_transposed and not natural_b_instruction_supported):
             return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
 
         warp_col_tiles = self.warp_col_tiles
@@ -1219,26 +1246,42 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         B_other = [r.min for r in B_region.region[:-2]]
         replicate_b = self.n_dim == 16
 
-        # PPU1.5 can load the natural [K, N] b8 B operand directly into the
-        # MMA register order.  Keep the fast path conservative: a custom
-        # shared layout may permute bytes inside the 16-byte instruction row,
-        # which cannot be repaired by remapping only the row pointer.
-        B_layout = self.layout_map.get(B_buf) if self.layout_map is not None else None
         swzl_mode, swzl_supported = self._ldmat_swzl_mode(B_region)
-        layout_supported = B_layout is None or B_layout.is_equal(make_linear_layout(B_buf)) or swzl_supported
-        analyzer = tvm.arith.Analyzer()
-        use_trans_b8 = (
-            self.ppu_arch >= 15
-            and b_bits == 8
-            and not self.b_transposed
-            and layout_supported
-            and analyzer.can_prove_equal(FloorMod(B_buf.shape[-1], 16), 0)
-            and analyzer.can_prove_equal(FloorMod(B_base1, 16), 0)
-        )
+        use_trans_b8 = self._can_use_trans_b8(B_region)
         if b_bits == 8 and not self.b_transposed and not use_trans_b8:
             return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
 
         disable_ldmat_swzl = self._disable_ldmat_swzl() or not swzl_supported
+
+        if use_trans_b8:
+
+            @T.macro
+            def _warp_ldmatrix_b8(
+                B_local_buf,
+                B_shared_buf,
+                ki,
+                thread_binding,
+                rk=0,
+            ):
+                tx, warp_n, _ = self.extract_thread_binding(thread_binding)
+                for i in T.serial(warp_cols):
+                    wi = warp_n * warp_col_tiles + i * micro_size_y
+                    wk = rk * chunk + ki * micro_size_k
+                    src_indices = tuple(B_other) + (
+                        B_base0 + wk + tx,
+                        B_base1 + wi,
+                    )
+                    # x2 m16n16.b8 consumes one 16-byte row from each lane and
+                    # produces the complete m16n16k32 B fragment. matrix_type
+                    # 1 selects the B-operand register order.
+                    T.tix_ldmatrix_b8(
+                        1,
+                        2,
+                        T.access_ptr(B_buf[src_indices], "r", extent=16),
+                        T.access_ptr(B_local_buf[i * local_size_b], "w", extent=16),
+                    )
+
+            return _warp_ldmatrix_b8(B_local_buf, B_shared_buf, ki, thread_binding, rk)
 
         @T.macro
         def _warp_ldmatrix_b(
@@ -1257,22 +1300,6 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
                     warp_n * warp_col_tiles + i * micro_size_y,
                     rk * chunk + ki * micro_size_k,
                 )
-
-                if use_trans_b8:
-                    # x2 m16n16.b8 consumes one 16-byte row from each lane and
-                    # produces the complete m16n16k32 B fragment.  matrix_type
-                    # 1 selects the B-operand register order.
-                    src_indices = tuple(B_other) + (
-                        B_base0 + wk + tx,
-                        B_base1 + wi,
-                    )
-                    T.tix_ldmatrix_b8(
-                        1,
-                        2,
-                        T.access_ptr(B_buf[src_indices], "r", extent=16),
-                        T.access_ptr(B_local_buf[i * local_size_b], "w", extent=16),
-                    )
-                    continue
 
                 num = 4 if replicate_b else 2
                 access_extent = (2 * num) * (16 // b_bits)
