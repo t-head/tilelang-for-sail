@@ -1027,6 +1027,8 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
             return False
 
         buffer = region.buffer
+        if len(buffer.shape) < 2:
+            return False
         layout = self.layout_map.get(buffer) if self.layout_map is not None else None
         _, swzl_supported = self._ldmat_swzl_mode(region)
         if layout is None or not (layout.is_equal(make_linear_layout(buffer)) or swzl_supported):
@@ -1034,21 +1036,27 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         if buffer.data_alignment < 16 or buffer.data_alignment % 16 != 0:
             return False
 
-        strides = list(buffer.strides)
-        if not strides:
-            stride = tirx.IntImm("int32", 1)
-            for extent in reversed(buffer.shape):
-                strides.insert(0, stride)
-                stride *= extent
-        if len(strides) != len(buffer.shape):
-            return False
+        # Layout remapping makes the storage compact and discards explicit strides.
+        compact_strides = []
+        stride = tirx.IntImm("int32", 1)
+        for extent in reversed(buffer.shape):
+            compact_strides.append(stride)
+            stride *= extent
+        compact_strides.reverse()
 
         analyzer = tvm.arith.Analyzer()
-        if not analyzer.can_prove_equal(strides[-1], 1):
+        if buffer.strides and (
+            len(buffer.strides) != len(compact_strides)
+            or not all(analyzer.can_prove_equal(actual, compact) for actual, compact in zip(buffer.strides, compact_strides))
+        ):
             return False
-        if len(strides) >= 2 and not analyzer.can_prove_equal(FloorMod(strides[-2], 16), 0):
+        if not analyzer.can_prove_equal(FloorMod(compact_strides[-2], 16), 0):
             return False
-        base_offset = buffer.elem_offset + sum(axis.min * stride for axis, stride in zip(region.region, strides))
+
+        # SWZL only preserves contiguity within each logical 16-byte group.
+        if swzl_supported and not analyzer.can_prove_equal(FloorMod(region.region[-1].min, 16), 0):
+            return False
+        base_offset = buffer.elem_offset + sum(axis.min * stride for axis, stride in zip(region.region, compact_strides))
         return analyzer.can_prove_equal(FloorMod(base_offset, 16), 0)
 
     def ldmatrix_a(self, A_local_buf: Buffer, A_shared_buf: Buffer | BufferRegion, ki: PrimExpr, rk: PrimExpr | None = 0):
