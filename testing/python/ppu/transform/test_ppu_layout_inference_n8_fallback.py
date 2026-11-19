@@ -176,19 +176,17 @@ def test_default_config_keeps_n16_shape(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# End-to-end retry behavior on PPU0010 (the m16n8 fallback needs PPU0015)
+# PPU0010: the m16n8 retry is arch-gated off, first error escapes
 # ---------------------------------------------------------------------------
 
 
 @tilelang.testing.requires_ppu
 @tilelang.testing.requires_ppu_compute_version_lt(1, 5)
-def test_n8_retry_escape_ppu0010():
-    # block_N = 8 -> warp_col_tiles = 8: layout inference fails at the gemm
-    # micro-tile decision. The compatibility retry then flips
-    # tl.ppu_force_gemm_n8 and reruns the collection once; on PPU0010 the
-    # retry still cannot succeed (the m16n8 fallback atoms need PPU0015),
-    # so the second failure must escape with the retry-aware message from
-    # _check_m16n8_fallback_dtype.
+def test_n8_retry_arch_gated_off_ppu0010():
+    # The m16n8 retry needs PPU0015+ (arch >= 15); on PPU0010 the gate
+    # (ppu_enable_n8_compat && arch >= 15) keeps the retry off entirely,
+    # so the first collection error (the gemm.cc N-divisibility ICHECK)
+    # escapes as-is, without the doomed n8 retry.
     program = matmul(
         128,
         64,
@@ -200,16 +198,15 @@ def test_n8_retry_escape_ppu0010():
         T.float32,
         T.float32,
     )
-    with pytest.raises(Exception, match="compatibility retry was already attempted"):
+    with pytest.raises(Exception, match="N must be divisible by 16, but got 8"):
         tilelang.compile(program, out_idx=[2])
 
 
 @tilelang.testing.requires_ppu
 @tilelang.testing.requires_ppu_compute_version_lt(1, 5)
 def test_n8_compat_disabled_first_error_escapes():
-    # Same kernel with the total switch off: no catch/retry happens, so
-    # the first collection error (the plain unsupported-warp-col-tiles
-    # message) escapes untouched and no config is flipped.
+    # Same kernel with the total switch explicitly off: no catch/retry
+    # happens either, and the first collection error escapes untouched.
     program = matmul(
         128,
         64,
@@ -221,7 +218,7 @@ def test_n8_compat_disabled_first_error_escapes():
         T.float32,
         T.float32,
     )
-    with pytest.raises(Exception, match="Unsupported warp_col_tiles 8"):
+    with pytest.raises(Exception, match="N must be divisible by 16, but got 8"):
         tilelang.compile(
             program,
             out_idx=[2],
