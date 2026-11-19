@@ -17,6 +17,9 @@ Math (per request r, matching reference.py):
 The descales are runtime tensor values read inside the kernel; no scale is
 ever assumed to be one.
 
+Pages hold 64 tokens. With bottom-right causal masking, leading query rows
+with no visible KV tokens write zero and are omitted from the kernel launch.
+
 Architecture: a hybrid of the two self-authored route designs measured on
 this wheel. The shape-invariant dispatch selects exactly one route per
 request geometry; the two routes run DIFFERENT tile bodies because each
@@ -332,9 +335,9 @@ _FOLD_SPLIT_KEYS = {
 # permutation only reassigns which block computes which rows, so outputs are
 # unchanged. (The kv==q dense grid's reversal lives in `_LPT_DENSE_KEYS`.)
 _LPT_SPLIT_KEYS = {
-    (480, 480),   # s=2 split
-    (480, 720),   # s=3 split
-    (480, 960),   # s=4 split
+    (480, 480),  # s=2 split
+    (480, 720),  # s=3 split
+    (480, 960),  # s=4 split
 }
 # (base_blocks, total_tiles) split specializations whose tile body keeps the
 # EARLY acc_o rescale placement (right after scores_scale is computed, before
@@ -520,11 +523,10 @@ _NEG_SENTINEL = -1.0e30
 # (dense: floordiv(k, 2) of the half-page tile k; split: tile k itself); the
 # K staging keeps the physical block-table gather. Pure data movement: the
 # staged bytes and every downstream operand are unchanged, so results stay
-# bitwise identical. The Vt extent is bucketed so the contract shares ONE
-# hot-path compile: `_VTRANS_MIN_PAGES` covers the largest contract KV cache
-# (kv_len 131068 -> 2048 pages); larger out-of-contract extents compile
-# their own variant. Blocks at or beyond pages_used exit on a runtime guard.
-_VTRANS_MIN_PAGES = 2048
+# bitwise identical. Power-of-two buckets reuse compiled kernels for nearby
+# lengths without allocating a full-size workspace for short KV. Larger
+# lengths use their exact page count. Extra blocks exit on a runtime guard.
+_VTRANS_MAX_BUCKET_PAGES = 2048
 _VTRANS_THREADS = 256
 
 # Dense-route (base_blocks, total_tiles) specializations whose q-block launch
@@ -543,8 +545,8 @@ _VTRANS_THREADS = 256
 # flag is resolved at compile time (never a runtime select) and threaded
 # through the dense kernel's lru_cache key.
 _LPT_DENSE_KEYS = {
-    (480, 480),   # shape 0: kv==q causal grid, dense
-    (480, 960),   # shape 1: kv/q=2, dense
+    (480, 480),  # shape 0: kv==q causal grid, dense
+    (480, 960),  # shape 1: kv/q=2, dense
     (480, 1440),  # shape 2: kv/q=3, dense (probe)
     (480, 1920),  # shape 3: kv/q=4, dense (probe)
 }
@@ -677,22 +679,20 @@ def _build_fa_prim_func(
                 kv_start = (k % 2) * BN
                 # Gather one 32-token KV tile (half a cache page) through the
                 # block table.
-                T.copy(Kc[pid, kv_start:kv_start + BN, kvh, 0:head_dim], K_shared)
+                T.copy(Kc[pid, kv_start : kv_start + BN, kvh, 0:head_dim], K_shared)
                 # V stages from the logically-indexed transposed buffer: the
                 # tile's page is floordiv(k, 2), so the copy is contiguous on
                 # both sides and lowers to the async cp_async class. Same
                 # staged bytes as the physical gather.
                 T.copy(
-                    Vt[T.floordiv(k, 2), kvh, 0:head_dim, kv_start:kv_start + BN],
+                    Vt[T.floordiv(k, 2), kvh, 0:head_dim, kv_start : kv_start + BN],
                     V_shared_t,
                 )
 
                 # Causal + seqlen mask; -inf lanes drop out of the softmax.
                 for i, j in T.Parallel(BM, BN):
                     acc_s[i, j] = T.if_then_else(
-                        (bx * BM + i < q_len)
-                        & (k * BN + j < kv_len)
-                        & (k * BN + j <= bx * BM + i + kv_len - q_len),
+                        (bx * BM + i < q_len) & (k * BN + j < kv_len) & (k * BN + j <= bx * BM + i + kv_len - q_len),
                         0.0,
                         -T.infinity("float32"),
                     )
@@ -714,15 +714,11 @@ def _build_fa_prim_func(
                 T.copy(scores_max, scores_max_prev)
                 T.reduce_max(acc_s, scores_max, dim=1, clear=False)
                 for i in T.Parallel(BM):
-                    m_cur = T.if_then_else(
-                        scores_max[i] == -T.infinity("float32"), 0.0, scores_max[i]
-                    )
+                    m_cur = T.if_then_else(scores_max[i] == -T.infinity("float32"), 0.0, scores_max[i])
                     scores_scale[i] = T.exp2((scores_max_prev[i] - m_cur) * qk_scale)
                     scores_max_prev[i] = m_cur * qk_scale - 8.0
                 for i, j in T.Parallel(BM, BN):
-                    acc_s[i, j] = T.exp2(
-                        acc_s[i, j] * qk_scale - scores_max_prev[i]
-                    )
+                    acc_s[i, j] = T.exp2(acc_s[i, j] * qk_scale - scores_max_prev[i])
                 T.reduce_sum(acc_s, scores_sum, dim=1)
                 for i in T.Parallel(BM):
                     logsum[i] = logsum[i] * scores_scale[i] + scores_sum[i]
@@ -752,11 +748,11 @@ def _build_fa_prim_func(
                 k = full_range - 1 - kk
                 pid = BT[req_idx, T.floordiv(k, 2)]
                 kv_start = (k % 2) * BN
-                T.copy(Kc[pid, kv_start:kv_start + BN, kvh, 0:head_dim], K_shared)
+                T.copy(Kc[pid, kv_start : kv_start + BN, kvh, 0:head_dim], K_shared)
                 # V stages from the logically-indexed transposed buffer (see
                 # the masked-band copy above); contiguous on both sides.
                 T.copy(
-                    Vt[T.floordiv(k, 2), kvh, 0:head_dim, kv_start:kv_start + BN],
+                    Vt[T.floordiv(k, 2), kvh, 0:head_dim, kv_start : kv_start + BN],
                     V_shared_t,
                 )
 
@@ -785,14 +781,10 @@ def _build_fa_prim_func(
                 T.copy(scores_max, scores_max_prev)
                 T.reduce_max(acc_s, scores_max, dim=1, clear=False)
                 for i in T.Parallel(BM):
-                    scores_scale[i] = T.exp2(
-                        (scores_max_prev[i] - scores_max[i]) * qk_scale
-                    )
+                    scores_scale[i] = T.exp2((scores_max_prev[i] - scores_max[i]) * qk_scale)
                     scores_max_prev[i] = scores_max[i] * qk_scale - 8.0
                 for i, j in T.Parallel(BM, BN):
-                    acc_s[i, j] = T.exp2(
-                        acc_s[i, j] * qk_scale - scores_max_prev[i]
-                    )
+                    acc_s[i, j] = T.exp2(acc_s[i, j] * qk_scale - scores_max_prev[i])
                 T.reduce_sum(acc_s, scores_sum, dim=1)
                 for i in T.Parallel(BM):
                     logsum[i] = logsum[i] * scores_scale[i] + scores_sum[i]
@@ -811,9 +803,7 @@ def _build_fa_prim_func(
             # Normalize, apply the V descale, and write back in place.
             for i, d in T.Parallel(BM, head_dim):
                 if bx * BM + i < q_len:
-                    Out[q_start + bx * BM + i, bh, d] = T.cast(
-                        acc_o[i, d] / logsum[i] * v_scale, "bfloat16"
-                    )
+                    Out[q_start + bx * BM + i, bh, d] = T.cast(acc_o[i, d] / logsum[i] * v_scale, "bfloat16")
 
     return main
 
@@ -911,8 +901,8 @@ def _build_fa_split_prim_func(
         BT: T.Tensor((batch, bt_width), "int32"),
         QD: T.Tensor((batch, kv_heads), "float32"),
         KD: T.Tensor((batch, kv_heads), "float32"),
-        Out_partial: T.Tensor((num_split, total_q, q_heads, head_dim), "float32"),
-        Glse: T.Tensor((num_split, total_q, q_heads), "float32"),
+        Out_partial: T.Tensor((num_split, q_len, q_heads, head_dim), "float32"),
+        Glse: T.Tensor((num_split, q_len, q_heads), "float32"),
         kv_len: T.int32,
     ):
         with T.Kernel(q_heads, NB, num_split, threads=threads) as (
@@ -1055,9 +1045,7 @@ def _build_fa_split_prim_func(
                         T.copy(scores_max, scores_max_prev)
                         T.reduce_max(acc_s, scores_max, dim=1, clear=False)
                         for i in T.Parallel(BM):
-                            scores_scale[i] = T.exp2(
-                                (scores_max_prev[i] - scores_max[i]) * qk_scale
-                            )
+                            scores_scale[i] = T.exp2((scores_max_prev[i] - scores_max[i]) * qk_scale)
                             scores_max_prev[i] = -scores_max[i] * qk_scale
                         if not rescale_late:
                             # Early rescale placement (measured-best for the
@@ -1073,9 +1061,7 @@ def _build_fa_split_prim_func(
                             # identically, so the offset cancels in the
                             # partial normalization, and in the combine
                             # differences as a constant LSE shift.
-                            acc_s[i, j] = T.exp2(
-                                acc_s[i, j] * qk_scale + scores_max_prev[i] + 8.0
-                            )
+                            acc_s[i, j] = T.exp2(acc_s[i, j] * qk_scale + scores_max_prev[i] + 8.0)
                         T.reduce_sum(acc_s, scores_sum, dim=1)
                         for i in T.Parallel(BM):
                             logsum[i] = logsum[i] * scores_scale[i] + scores_sum[i]
@@ -1089,9 +1075,7 @@ def _build_fa_split_prim_func(
                         T.copy(scores_max, scores_max_prev)
                         T.reduce_max(acc_s, scores_max, dim=1, clear=False)
                         for i in T.Parallel(BM):
-                            scores_scale[i] = T.exp2(
-                                scores_max_prev[i] - scores_max[i]
-                            )
+                            scores_scale[i] = T.exp2(scores_max_prev[i] - scores_max[i])
                         if not rescale_late:
                             # Early rescale placement (see the fold branch).
                             for i, d in T.Parallel(BM, head_dim):
@@ -1151,9 +1135,7 @@ def _build_fa_split_prim_func(
 
                     for i, j in T.Parallel(BM, BN):
                         acc_s[i, j] = T.if_then_else(
-                            (bx * BM + i < q_len)
-                            & (k * BN + j < kv_len)
-                            & (k * BN + j <= bx * BM + i + kv_len - q_len),
+                            (bx * BM + i < q_len) & (k * BN + j < kv_len) & (k * BN + j <= bx * BM + i + kv_len - q_len),
                             0.0,
                             -T.infinity("float32"),
                         )
@@ -1171,9 +1153,7 @@ def _build_fa_split_prim_func(
                         T.copy(scores_max, scores_max_prev)
                         T.reduce_max(acc_s, scores_max, dim=1, clear=False)
                         for i in T.Parallel(BM):
-                            scores_scale[i] = T.exp2(
-                                (scores_max_prev[i] - scores_max[i]) * qk_scale
-                            )
+                            scores_scale[i] = T.exp2((scores_max_prev[i] - scores_max[i]) * qk_scale)
                             scores_max_prev[i] = -scores_max[i] * qk_scale
                         if not rescale_late:
                             # Early rescale placement (see the prefix body).
@@ -1181,9 +1161,7 @@ def _build_fa_split_prim_func(
                                 acc_o[i, d] = acc_o[i, d] * scores_scale[i]
                         for i, j in T.Parallel(BM, BN):
                             # Vendor Max_offset=8 (see the prefix body).
-                            acc_s[i, j] = T.exp2(
-                                acc_s[i, j] * qk_scale + scores_max_prev[i] + 8.0
-                            )
+                            acc_s[i, j] = T.exp2(acc_s[i, j] * qk_scale + scores_max_prev[i] + 8.0)
                         T.reduce_sum(acc_s, scores_sum, dim=1)
                         for i in T.Parallel(BM):
                             logsum[i] = logsum[i] * scores_scale[i] + scores_sum[i]
@@ -1196,9 +1174,7 @@ def _build_fa_split_prim_func(
                         T.copy(scores_max, scores_max_prev)
                         T.reduce_max(acc_s, scores_max, dim=1, clear=False)
                         for i in T.Parallel(BM):
-                            scores_scale[i] = T.exp2(
-                                scores_max_prev[i] - scores_max[i]
-                            )
+                            scores_scale[i] = T.exp2(scores_max_prev[i] - scores_max[i])
                         if not rescale_late:
                             # Early rescale placement (see the prefix body).
                             for i, d in T.Parallel(BM, head_dim):
@@ -1242,9 +1218,7 @@ def _build_fa_split_prim_func(
                     # on their lanes.
                     for i, j in T.Parallel(BM, BN):
                         acc_s[i, j] = T.if_then_else(
-                            (bx * BM + i < q_len)
-                            & (k * BN + j < kv_len)
-                            & (k * BN + j <= bx * BM + i + kv_len - q_len),
+                            (bx * BM + i < q_len) & (k * BN + j < kv_len) & (k * BN + j <= bx * BM + i + kv_len - q_len),
                             0.0,
                             -T.infinity("float32"),
                         )
@@ -1267,9 +1241,7 @@ def _build_fa_split_prim_func(
                         T.copy(scores_max, scores_max_prev)
                         T.reduce_max(acc_s, scores_max, dim=1, clear=False)
                         for i in T.Parallel(BM):
-                            scores_scale[i] = T.exp2(
-                                (scores_max_prev[i] - scores_max[i]) * qk_scale
-                            )
+                            scores_scale[i] = T.exp2((scores_max_prev[i] - scores_max[i]) * qk_scale)
                             scores_max_prev[i] = -scores_max[i] * qk_scale
                         if not rescale_late:
                             # Early rescale placement (measured-best for the
@@ -1285,9 +1257,7 @@ def _build_fa_split_prim_func(
                             # identically, so the offset cancels in the
                             # partial normalization, and in the combine
                             # differences as a constant LSE shift.
-                            acc_s[i, j] = T.exp2(
-                                acc_s[i, j] * qk_scale + scores_max_prev[i] + 8.0
-                            )
+                            acc_s[i, j] = T.exp2(acc_s[i, j] * qk_scale + scores_max_prev[i] + 8.0)
                         T.reduce_sum(acc_s, scores_sum, dim=1)
                         for i in T.Parallel(BM):
                             logsum[i] = logsum[i] * scores_scale[i] + scores_sum[i]
@@ -1346,18 +1316,15 @@ def _build_fa_split_prim_func(
             # once in the combine kernel.
             for i, d in T.Parallel(BM, head_dim):
                 if bx * BM + i < q_len:
-                    Out_partial[bz, q_start + bx * BM + i, bh, d] = T.if_then_else(
-                        logsum[i] > 0.0, acc_o[i, d] / logsum[i], 0.0
-                    )
+                    Out_partial[bz, bx * BM + i, bh, d] = T.if_then_else(logsum[i] > 0.0, acc_o[i, d] / logsum[i], 0.0)
             for i in T.Parallel(BM):
                 if bx * BM + i < q_len:
                     # Base-2 LSE of this slice. The fold tracks raw-logit
                     # maxima, so the scale enters here; the scale-first form's
                     # maxima are already scaled logits.
-                    Glse[bz, q_start + bx * BM + i, bh] = T.if_then_else(
+                    Glse[bz, bx * BM + i, bh] = T.if_then_else(
                         logsum[i] > 0.0,
-                        T.log2(logsum[i])
-                        + (scores_max[i] * qk_scale if fold else scores_max[i]),
+                        T.log2(logsum[i]) + (scores_max[i] * qk_scale if fold else scores_max[i]),
                         -T.infinity("float32"),
                     )
 
@@ -1380,8 +1347,8 @@ def _build_fa_combine_prim_func(
 
     @T.prim_func
     def main(
-        Out_partial: T.Tensor((num_split, total_q, q_heads, head_dim), "float32"),
-        Glse: T.Tensor((num_split, total_q, q_heads), "float32"),
+        Out_partial: T.Tensor((num_split, q_len, q_heads, head_dim), "float32"),
+        Glse: T.Tensor((num_split, q_len, q_heads), "float32"),
         VD: T.Tensor((batch, kv_heads), "float32"),
         Out: T.Tensor((total_q, q_heads, head_dim), "bfloat16"),
     ):
@@ -1404,28 +1371,27 @@ def _build_fa_combine_prim_func(
             # them out of both the normalization and the merge.
             for k in T.serial(num_split):
                 for i in T.Parallel(BM):
-                    row = T.min(q_start + bx * BM + i, total_q - 1)
+                    row = T.min(bx * BM + i, q_len - 1)
                     lse_max[i] = T.max(lse_max[i], Glse[k, row, bh])
+            for i in T.Parallel(BM):
+                # Give an all-empty row a finite shift so its weights are zero.
+                lse_max[i] = T.if_then_else(lse_max[i] == -T.infinity("float32"), 0.0, lse_max[i])
             for k in T.serial(num_split):
                 for i in T.Parallel(BM):
-                    row = T.min(q_start + bx * BM + i, total_q - 1)
+                    row = T.min(bx * BM + i, q_len - 1)
                     denom[i] = denom[i] + T.exp2(Glse[k, row, bh] - lse_max[i])
             for i in T.Parallel(BM):
-                total_lse[i] = lse_max[i] + T.log2(denom[i])
+                total_lse[i] = T.if_then_else(denom[i] > 0.0, lse_max[i] + T.log2(denom[i]), 0.0)
             for k in T.serial(num_split):
                 for i, d in T.Parallel(BM, head_dim):
-                    row = T.min(q_start + bx * BM + i, total_q - 1)
-                    o_acc[i, d] = o_acc[i, d] + T.exp2(
-                        Glse[k, row, bh] - total_lse[i]
-                    ) * Out_partial[k, row, bh, d]
+                    row = T.min(bx * BM + i, q_len - 1)
+                    o_acc[i, d] = o_acc[i, d] + T.exp2(Glse[k, row, bh] - total_lse[i]) * Out_partial[k, row, bh, d]
 
             # The V descale is applied exactly once here, mirroring the dense
             # route's single final scale.
             for i, d in T.Parallel(BM, head_dim):
                 if bx * BM + i < q_len:
-                    Out[q_start + bx * BM + i, bh, d] = T.cast(
-                        o_acc[i, d] * v_scale, "bfloat16"
-                    )
+                    Out[q_start + bx * BM + i, bh, d] = T.cast(o_acc[i, d] * v_scale, "bfloat16")
 
     return main
 
@@ -1694,6 +1660,10 @@ class Model(nn.Module):
         batch, bt_width = block_table.shape
         if cache_dim != head_dim or v.shape != k.shape:
             raise ValueError("k/v cache layout must match q head_dim")
+        if page_size != 64:
+            raise ValueError("FP8 paged attention requires 64-token KV pages")
+        if kv_heads == 0 or q_heads != 8 * kv_heads:
+            raise ValueError("FP8 paged attention requires an 8:1 query-to-KV head ratio")
 
         # Fresh per-call reads of the varlen metadata (control flow only:
         # request bounds and lengths; values/pointers are never cached).
@@ -1712,14 +1682,24 @@ class Model(nn.Module):
         # The two routes key their dispatch tables on DIFFERENT tile counts:
         # the split tables count BN=64 (page) tiles, the dense LPT table
         # counts BN=32 (half-page) tiles. Keep the two computations separate.
-        split_tile_n = page_size       # one split-route softmax tile
+        split_tile_n = page_size  # one split-route softmax tile
         dense_tile_n = page_size // 2  # one dense-route softmax tile
         for req_idx in range(len(bounds) - 1):
             q_start = bounds[req_idx]
             q_len = bounds[req_idx + 1] - q_start
             kv_len = kv_lens[req_idx]
-            if q_len <= 0 or kv_len <= 0:
+            if q_len <= 0:
                 continue
+            if kv_len < q_len:
+                # In bottom-right causal attention these leading rows see no
+                # keys. Dropping them preserves the causal edge for the suffix
+                # and guarantees kv_len >= q_len for both kernel routes.
+                masked = q_len - max(kv_len, 0)
+                out_c[q_start : q_start + masked].zero_()
+                q_start += masked
+                q_len -= masked
+                if q_len == 0:
+                    continue
             # Shape-keyed dispatch (shape invariants only — never values or
             # pointers): the measured override table first, then the wave
             # model, then the wave-saturated efficiency fallback, else the
@@ -1744,29 +1724,23 @@ class Model(nn.Module):
                 threads = _SPLIT_THREADS
                 stages = _SPLIT_STAGES
             if geom_probe is None and split_total_tiles >= 4:
-                override_s = _SPLIT_OVERRIDES.get(
-                    (base_blocks, split_total_tiles)
-                )
+                override_s = _SPLIT_OVERRIDES.get((base_blocks, split_total_tiles))
                 if override_s is not None:
                     num_split = override_s
                 else:
                     best_s, split_gain = _pick_num_split(base_blocks, split_total_tiles)
                     if split_gain >= _SPLIT_GAIN_THRESHOLD:
                         num_split = best_s
-                    elif (
-                        base_blocks >= _EFFICIENCY_SPLIT_MIN_BLOCKS
-                        and split_total_tiles >= _EFFICIENCY_SPLIT_MIN_TILES
-                    ):
+                    elif base_blocks >= _EFFICIENCY_SPLIT_MIN_BLOCKS and split_total_tiles >= _EFFICIENCY_SPLIT_MIN_TILES:
                         num_split = _EFFICIENCY_SPLIT_S
             # Global V pre-transpose (both routes): materialize the
             # logically-indexed transposed V buffer for THIS request (fresh
             # allocation from the current shapes, never keyed on pointers or
             # prior calls) so every mainloop V stage lowers to the async
             # cp_async copy class instead of the scalar transposed staging.
-            # The extent is bucketed so the contract shares one compiled
-            # transpose kernel.
-            pages_used = (kv_len + page_size - 1) // page_size
-            vt_pages = max(_VTRANS_MIN_PAGES, pages_used)
+            vt_pages = split_total_tiles
+            if vt_pages <= _VTRANS_MAX_BUCKET_PAGES:
+                vt_pages = 1 << (vt_pages - 1).bit_length()
             vt_c = torch.empty(
                 (vt_pages, kv_heads, head_dim, page_size),
                 dtype=q_c.dtype,
@@ -1813,9 +1787,7 @@ class Model(nn.Module):
                 # the predicate (lane-local arithmetic confines tail-row
                 # garbage; no stored row is affected). Resolved host-side from
                 # shape invariants and baked into the compile key.
-                two_region = (q_len % block_m == 0) or (
-                    (base_blocks, split_total_tiles) in _TWO_REGION_TAIL_KEYS
-                )
+                two_region = (q_len % block_m == 0) or ((base_blocks, split_total_tiles) in _TWO_REGION_TAIL_KEYS)
                 if geom_probe is not None:
                     # Geometry probe: hold the incumbent measured posture
                     # exactly (fold/LPT/rescale/two-region) so the block
@@ -1863,18 +1835,16 @@ class Model(nn.Module):
                 # Fresh per-call fp32 workspaces allocated from the current
                 # shapes (never keyed on pointers or prior calls).
                 out_partial = torch.empty(
-                    (num_split, total_q, q_heads, head_dim),
+                    (num_split, q_len, q_heads, head_dim),
                     dtype=torch.float32,
                     device=q.device,
                 )
                 glse = torch.empty(
-                    (num_split, total_q, q_heads),
+                    (num_split, q_len, q_heads),
                     dtype=torch.float32,
                     device=q.device,
                 )
-                split_kernel(
-                    q_c, k_c, vt_c, bt_c, qd_c, kd_c, out_partial, glse, kv_len
-                )
+                split_kernel(q_c, k_c, vt_c, bt_c, qd_c, kd_c, out_partial, glse, kv_len)
                 combine_kernel(out_partial, glse, vd_c, out_c)
             else:
                 # Dense route: LPT q-block reversal only for the measured
