@@ -315,18 +315,22 @@ bool HasAlignedPPUAsyncCopyTransactions(const Buffer &logical_buffer,
   // synchronous copy.
   constexpr int64_t kMaxEnumeratedTransactions = 4096;
   int64_t transaction_count = *extent / transaction_elements;
+  if (transaction_count > kMaxEnumeratedTransactions) {
+    return false;
+  }
+  // Reject factors against the remaining budget before multiplying so huge
+  // constant extents cannot overflow the row count past the guard.
+  int64_t row_budget = kMaxEnumeratedTransactions / transaction_count;
   int64_t outer_rows = 1;
   for (size_t i = 0; i + 1 < active_axes.size(); ++i) {
     PrimExpr simplified_outer_extent =
         analyzer->Simplify(ranges[active_axes[i]]->extent);
     const int64_t *outer_extent = as_const_int(simplified_outer_extent);
-    if (outer_extent == nullptr || *outer_extent <= 0) {
+    if (outer_extent == nullptr || *outer_extent <= 0 ||
+        *outer_extent > row_budget / outer_rows) {
       return false;
     }
     outer_rows *= *outer_extent;
-  }
-  if (outer_rows * transaction_count > kMaxEnumeratedTransactions) {
-    return false;
   }
   for (int64_t row = 0; row < outer_rows; ++row) {
     Array<PrimExpr> indices = base_indices;
@@ -366,6 +370,33 @@ bool RequiresSynchronousPPUSubwordCopy(const CopyNode &op,
   }
   if (plan.action == PPUAsyncCopyWidthAction::kForceSynchronous) {
     return true;
+  }
+
+  // The SIMT loop iterates MakeIterVars(), which takes the range set of the
+  // lower-level memory scope, and MakeIndices() feeds one shared loop var to
+  // each paired non-unit axis of src and dst.  Validating the two range sets
+  // separately is only sound when every paired non-unit extent matches;
+  // otherwise the loop can visit transactions outside the validated domain
+  // (unit axes are constant indices and always covered).  Mirror that pairing
+  // here and conservatively keep synchronous copy on any mismatch.
+  {
+    size_t src_dim = 0, dst_dim = 0;
+    while (src_dim < op.src_range.size() && dst_dim < op.dst_range.size()) {
+      if (is_one(op.src_range[src_dim]->extent)) {
+        ++src_dim;
+        continue;
+      }
+      if (is_one(op.dst_range[dst_dim]->extent)) {
+        ++dst_dim;
+        continue;
+      }
+      if (!analyzer->CanProveEqual(op.src_range[src_dim]->extent,
+                                   op.dst_range[dst_dim]->extent)) {
+        return true;
+      }
+      ++src_dim;
+      ++dst_dim;
+    }
   }
 
   // Auto-promote only complete, aligned four-byte transactions.  A mixed

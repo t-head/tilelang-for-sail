@@ -535,12 +535,15 @@ def _lower_multi_axis_2d_copy(
         return tilelang.ppu.transform.LowerTileOp()(mod)["main"]
 
 
-def _row_swapped_layout(buffer):
-    # XOR on the outer index defeats the symbolic modular proof, so alignment
-    # is provable only by enumerating concrete rows; the inner index is untouched
-    # so the common vectorizer still proves unit stride inside each transaction.
+def _row_xor_layout(buffer):
+    # XOR the inner index with a row-dependent multiple of four.  Additive row
+    # terms (XOR-on-row times cols, floormod, select, ...) stay provable because
+    # modular analysis tracks their coefficient; XOR on the inner index has an
+    # unknown modular set, so the whole-tile symbolic proof fails and validation
+    # must enumerate concrete rows.  The mask's low two bits are zero, so every
+    # transaction start stays 4-aligned and each enumerated row passes.
     rows, cols = buffer.shape
-    return T.Layout((rows, cols), lambda i, j: (i ^ 1) * cols + j)
+    return T.Layout((rows, cols), lambda i, j: i * cols + (j ^ (i * 4)))
 
 
 def test_ppu_multi_axis_aligned_2d_copy_emits_cp_async():
@@ -574,37 +577,181 @@ def test_ppu_multi_axis_swizzled_2d_copy_emits_cp_async():
     assert not _shared_sync_stores(lowered)
 
 
-def test_ppu_multi_axis_row_enumerated_copy_emits_cp_async():
-    for rows, inner, threads in ((2, 4, 128), (8, 64, 128)):
-        lowered = _lower_multi_axis_2d_copy(rows, inner, threads=threads, layout=_row_swapped_layout)
+def test_ppu_multi_axis_row_enumerated_copy_stays_synchronous():
+    # The row-XOR layout defeats the whole-tile symbolic proof, so validation
+    # falls back to enumerating concrete rows; every row is 4-aligned and the
+    # enumeration accepts.  The common vectorizer still cannot prove unit stride
+    # through the XOR, so the established synchronous lowering remains in effect
+    # (no async instruction, real shared stores).  The assertions pin that
+    # conservative outcome: any lowering change that starts emitting async on
+    # these layouts without a sound stride proof will fail here.
+    for rows, inner, threads in ((2, 16, 128), (8, 64, 128)):
+        lowered = _lower_multi_axis_2d_copy(rows, inner, threads=threads, layout=_row_xor_layout)
         calls = _count_calls(lowered)
-        assert calls.get("tl.ptx_cp_async", 0) > 0, (rows, inner)
-        assert not _shared_sync_stores(lowered), (rows, inner)
+        assert calls.get("tl.ptx_cp_async", 0) == 0, (rows, inner)
+        assert _shared_sync_stores(lowered), (rows, inner)
 
 
 def test_ppu_multi_axis_copy_rejects_misaligned_row_stride():
     # Inner extent tiles into whole transactions, but the padded row stride puts
     # some row starts off a four-byte boundary; both width regimes must reject.
+    # Pad source and destination independently so each side's row validation is
+    # exercised on its own (padding both lets the source check short-circuit).
     for rows, inner, stride, threads in ((2, 4, 6, 128), (4, 64, 66, 64)):
-        lowered = _lower_multi_axis_2d_copy(rows, inner, src_stride=stride, dst_stride=stride, threads=threads)
-        calls = _count_calls(lowered)
-        assert calls.get("tl.ptx_cp_async", 0) == 0, (rows, inner, stride)
-        assert _shared_sync_stores(lowered), (rows, inner, stride)
+        for src_stride, dst_stride in ((stride, inner), (inner, stride)):
+            lowered = _lower_multi_axis_2d_copy(rows, inner, src_stride=src_stride, dst_stride=dst_stride, threads=threads)
+            calls = _count_calls(lowered)
+            assert calls.get("tl.ptx_cp_async", 0) == 0, (rows, inner, stride, src_stride, dst_stride)
+            assert _shared_sync_stores(lowered), (rows, inner, stride, src_stride, dst_stride)
+
+
+def test_ppu_multi_axis_copy_rejects_mismatched_iteration_domain():
+    # The SIMT loop iterates the shared destination's extents, so a (2, 4) ->
+    # (2, 8) copy visits source transaction starts beyond the validated source
+    # range.  With this source layout the source-range check alone passes
+    # (offsets 0 and 12 are aligned) and the contiguous destination is provably
+    # aligned, while the loop also visits misaligned source starts 5 and 17;
+    # the domain-mismatch guard must keep the copy synchronous.
+    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+
+    @T.prim_func
+    def before(
+        A: T.Tensor((2, 4), "uint8"),
+        B: T.Tensor((2, 8), "uint8"),
+    ):
+        T.func_attr({"global_symbol": "main", "target": target})
+        T.launch_thread("blockIdx.x", 1)
+        tx = T.launch_thread("threadIdx.x", 128)
+        S = T.sblock_alloc_buffer((2, 8), dtype="uint8", scope="shared", align=128)
+        with T.sblock("root"):
+            T.annotate_layout({A: T.Layout((2, 4), lambda i, j: 12 * i + j + j // 4)})
+            T.copy(
+                A[0:2, 0:4],
+                S[0:2, 0:8],
+                annotations={"no_implicit_async_commit_wait": T.int32(1)},
+            )
+            if tx < 16:
+                B[tx // 8, tx % 8] = S[tx // 8, tx % 8]
+
+    mod = tvm.IRModule.from_expr(before)
+    with target:
+        mod = tilelang.ppu.transform.LayoutInference()(mod)
+        lowered = tilelang.ppu.transform.LowerTileOp()(mod)["main"]
+    calls = _count_calls(lowered)
+    assert calls.get("tl.ptx_cp_async", 0) == 0
+    assert _shared_sync_stores(lowered)
+
+
+def test_ppu_multi_axis_copy_with_interleaved_unit_axes_emits_cp_async():
+    # Unit axes sit at different positions on the two sides (src axis 0, dst
+    # axis 2); MakeIndices turns them into constant indices and pairs the
+    # remaining non-unit extents (8, 64), which match.  The domain guard must
+    # skip the unit axes and accept, so async copy is still emitted.  Pins the
+    # skip branches against an over-conservative per-dimension comparison.
+    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+
+    @T.prim_func
+    def before(
+        A: T.Tensor((1, 8, 64), "uint8"),
+        B: T.Tensor((1, 8, 64), "uint8"),
+    ):
+        T.func_attr({"global_symbol": "main", "target": target})
+        T.launch_thread("blockIdx.x", 1)
+        tx = T.launch_thread("threadIdx.x", 128)
+        S = T.sblock_alloc_buffer((8, 64, 1), dtype="uint8", scope="shared", align=128)
+        with T.sblock("root"):
+            T.copy(
+                A[0:1, 0:8, 0:64],
+                S[0:8, 0:64, 0:1],
+                annotations={"no_implicit_async_commit_wait": T.int32(1)},
+            )
+            for r in T.serial(4):
+                idx = tx * 4 + r
+                B[0, idx // 64, idx % 64] = S[idx // 64, idx % 64, 0]
+
+    mod = tvm.IRModule.from_expr(before)
+    with target:
+        mod = tilelang.ppu.transform.LayoutInference()(mod)
+        lowered = tilelang.ppu.transform.LowerTileOp()(mod)["main"]
+    calls = _count_calls(lowered)
+    assert calls.get("tl.ptx_cp_async", 0) > 0
+    assert not _shared_sync_stores(lowered)
 
 
 def test_ppu_multi_axis_copy_enumeration_budget_boundary():
-    # uint8 inner extent 64 -> 16 transactions per row.  256 rows hit the 4096
-    # enumeration budget exactly and stay async; 258 rows exceed it and must fall
-    # back to synchronous copy even though every row is individually aligned.
-    at_budget = _lower_multi_axis_2d_copy(256, 64, layout=_row_swapped_layout)
+    # uint8 inner extent 64 -> 16 transactions per row.  The row-XOR layout
+    # defeats the symbolic proof, so both cases reach the enumeration budget:
+    # 256 rows hit the 4096-transaction budget exactly; 272 rows exceed it and
+    # must be rejected against the remaining budget before any multiplication.
+    # 272 (not 258/264) keeps a per-thread element count divisible by four, so
+    # the width planner still offers a legal four-element transaction width.
+    #
+    # Observability limit: both sides of the boundary lower to the same
+    # synchronous IR (verified structurally identical apart from extents).
+    # The vectorizer cannot prove unit stride through the inner-index XOR, so
+    # even an accepted tile falls back to synchronous stores, and no layout
+    # that defeats the symbolic proof keeps a provable stride (additive
+    # 4-aligned row terms stay symbolically provable; swizzled layouts are
+    # provable too and never reach enumeration).  These assertions therefore
+    # pin the conservative fallback and bound the enumeration work; catching
+    # an off-by-one in the budget comparison itself would need a C++-level
+    # validator test (no such test infrastructure in-tree yet).
+    at_budget = _lower_multi_axis_2d_copy(256, 64, layout=_row_xor_layout)
     calls = _count_calls(at_budget)
-    assert calls.get("tl.ptx_cp_async", 0) > 0
-    assert not _shared_sync_stores(at_budget)
+    assert calls.get("tl.ptx_cp_async", 0) == 0
+    assert _shared_sync_stores(at_budget)
 
-    over_budget = _lower_multi_axis_2d_copy(258, 64, layout=_row_swapped_layout)
+    over_budget = _lower_multi_axis_2d_copy(272, 64, layout=_row_xor_layout)
     calls = _count_calls(over_budget)
     assert calls.get("tl.ptx_cp_async", 0) == 0
     assert _shared_sync_stores(over_budget)
+
+
+def test_ppu_multi_axis_copy_rejects_huge_extents_before_multiplying():
+    # Enumeration budget on huge outer extents: 4096 x 4096 outer rows with one
+    # transaction per row must be rejected without attempting 2^24 row
+    # enumerations (removing the budget guard would hang the lowering below).
+    # Pre- and post-multiplication rejection are observationally equivalent at
+    # this size; a true int64-wrap case cannot be expressed through the
+    # frontend (T.Layout iteration vars are int32, and larger affine layout
+    # offsets overflow the simplifier's int32 arithmetic first), so the
+    # overflow-safety of the factor-by-factor guard is verified by construction
+    # rather than by this test.
+    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+
+    @T.prim_func
+    def before(
+        A: T.Tensor((4096, 4096, 4), "uint8"),
+        B: T.Tensor((4096, 4096, 4), "uint8"),
+    ):
+        T.func_attr({"global_symbol": "main", "target": target})
+        T.launch_thread("blockIdx.x", 1)
+        tx = T.launch_thread("threadIdx.x", 128)
+        S = T.sblock_alloc_buffer((4096, 4096, 4), dtype="uint8", scope="shared", align=128)
+        with T.sblock("root"):
+            T.annotate_layout(
+                {
+                    S: T.Layout(
+                        (4096, 4096, 4),
+                        lambda i, j, k: (i * 4096 + j) * 4 + (k ^ (i * 4)),
+                    )
+                }
+            )
+            T.copy(
+                A[0:4096, 0:4096, 0:4],
+                S[0:4096, 0:4096, 0:4],
+                annotations={"no_implicit_async_commit_wait": T.int32(1)},
+            )
+            if tx < 4:
+                B[0, 0, tx] = S[0, 0, tx]
+
+    mod = tvm.IRModule.from_expr(before)
+    with target:
+        mod = tilelang.ppu.transform.LayoutInference()(mod)
+        lowered = tilelang.ppu.transform.LowerTileOp()(mod)["main"]
+    calls = _count_calls(lowered)
+    assert calls.get("tl.ptx_cp_async", 0) == 0
+    assert _shared_sync_stores(lowered)
 
 
 if __name__ == "__main__":
