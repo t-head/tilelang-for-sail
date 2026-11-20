@@ -227,8 +227,7 @@ def PPUPassPipelineBody(mod: IRModule, target: Target) -> IRModule:
     mod = _AlignAIUSharedMemory(mod)
     mod = tilelang.transform.MergeSharedMemoryAllocations(enable_aggressive_merge=enable_aggressive_merge, disable_reuse=disable_reuse)(mod)
 
-    mod = tilelang.transform.ThreadSync("shared")(mod)
-    mod = tilelang.transform.ThreadSync("shared.dyn")(mod)
+    mod = tilelang.transform.ThreadSync(["shared", "shared.dyn"])(mod)
 
     mod = tilelang.transform.MergeIfStmt()(mod)
 
