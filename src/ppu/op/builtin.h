@@ -13,6 +13,8 @@ namespace tl {
 
 static constexpr const char *kDisableAIULower = "tl.disable_aiu_lower";
 static constexpr const char *kDisableLdmatSwzl = "tl.disable_ldmat_swzl";
+static constexpr const char *kDisableLdmatSwzlCostModel =
+    "tl.disable_ldmat_swzl_cost_model";
 
 TVM_DLL const Op &tix_ldmatrix_b8();
 TVM_DLL const Op &tix_ldmatrix_swzl();
