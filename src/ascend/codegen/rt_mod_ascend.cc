@@ -1,4 +1,5 @@
 #include "codegen_ascend.h"
+#include "config.h"
 
 #include "runtime/metadata.h"
 #include "support/check.h"
@@ -24,6 +25,7 @@ std::string AscendCodeGen(IRModule mod) {
   bool output_ssa = false;
   CodeGenTileLangAscend cg;
   cg.Init(output_ssa);
+  cg.SetEmitLineDirectives(tl::tl_config::EmitLineDirectivesEnabled());
 
   for (auto kv : mod->functions) {
     ICHECK(kv.second->IsInstance<PrimFuncNode>())
@@ -45,12 +47,16 @@ std::string AscendCodeGen(IRModule mod) {
   return cg.Finish();
 }
 
+} // namespace
+
 // Build the per-kernel FunctionInfo table the runtime module needs to recover
 // the launch grid (via LaunchParamConfig) and pack arguments. Mirrors the CUDA
 // ExtractFuncInfo (src/cuda/codegen/rt_mod_cuda.cc) but only carries what the
 // Ascend launch ABI uses: arg types + kernel launch params (thread extents).
+// Shared with the PTO runtime module (rt_mod_pto.cc); declared in
+// codegen_ascend.h.
 ffi::Map<ffi::String, runtime::FunctionInfo>
-ExtractFuncInfo(const IRModule &mod) {
+ExtractAscendFuncInfo(const IRModule &mod) {
   ffi::Map<ffi::String, runtime::FunctionInfo> fmap;
   for (auto kv : mod->functions) {
     auto f = Downcast<tirx::PrimFunc>(kv.second);
@@ -88,8 +94,6 @@ ExtractFuncInfo(const IRModule &mod) {
   return fmap;
 }
 
-} // namespace
-
 ffi::Module BuildTileLangAscend(IRModule mod, Target target) {
   std::string code = AscendCodeGen(mod);
 
@@ -110,9 +114,9 @@ ffi::Module BuildTileLangAscend(IRModule mod, Target target) {
 
   ffi::Map<ffi::String, ffi::String> source_map;
   source_map.Set("asc", ffi::String(code));
-  return ascend::AscendModuleCreate(ffi::Bytes(aibin.data(), aibin.size()),
-                                    ffi::String("aibin"), ExtractFuncInfo(mod),
-                                    std::move(source_map));
+  return ascend::AscendModuleCreate(
+      ffi::Bytes(aibin.data(), aibin.size()), ffi::String("aibin"),
+      ExtractAscendFuncInfo(mod), std::move(source_map));
 }
 
 ffi::Module BuildTileLangAscendWithoutCompile(IRModule mod, Target target) {

@@ -48,5 +48,27 @@ def test_dynamic_shared_memory_varies_across_calls():
     _run_and_check(kernel, 100)
 
 
+@tilelang.testing.requires_ppu
+def test_ppu_dynamic_shared_memory_uses_hggc_setter():
+    length = T.dynamic("len", dtype=T.int32)
+
+    @T.prim_func
+    def main(global_tensor: T.Tensor[(length,), T.int32]):
+        with T.Kernel(1, threads=32):
+            buffer_shared = T.alloc_shared((length,), dtype=T.int32)
+            T.copy(buffer_shared, global_tensor)
+
+    kernel = tilelang.compile(main, target="ppu", execution_backend="cython")
+    host_source = kernel.get_host_source()
+    assert "static int main_set_dynamic_smem()" in host_source
+    assert "hggcGetDevice(&device)" in host_source
+    assert "hggcFuncSetAttribute" in host_source
+    assert "main_set_dynamic_smem() != 0" in host_source
+
+    # Exercise both first-time setup and the per-device cached path.
+    _run_and_check(kernel, 100)
+    _run_and_check(kernel, 100)
+
+
 if __name__ == "__main__":
     tilelang.testing.main()
