@@ -83,6 +83,45 @@ TL_PPU_DEFINE_MMA_DISPATCHER(kFloat8_e5m2, kFloat8_e5m2, kFloat32, 16, 16, 32,
 TL_PPU_DEFINE_MMA_DISPATCHER(kInt8, kInt8, kInt32, 16, 16, 32, false, true,
                              false, cute::PPU0015_16x16x32_S32S8S8S32_TN)
 
+// 16x8 MMA fallback: actlize provides the native PPU0015 m16n8 MMA atoms
+// (cute/arch/mma_ppu0015.hpp) that lower to the m16n8k* tensor-core
+// instruction family. TransA/TransB follow the existing F32F16F16F32 TN
+// entry above (TransA=false, TransB=true). fp8 is covered at k32 with F32
+// accumulation only: fp8 k16 (unreachable: k_dim is always 32 for fp8) and
+// fp16 accumulation stay unwired.
+TL_PPU_DEFINE_MMA_DISPATCHER(kFloat16, kFloat16, kFloat32, 16, 8, 16, false,
+                             true, false, cute::PPU0015_16x8x16_F32F16F16F32_TN)
+// F16 accumulate: the atom packs the four f16 outputs into 2 b32 registers
+// (D/C both uint32_t[2]), so the DReg == CReg assertion still holds.
+TL_PPU_DEFINE_MMA_DISPATCHER(kFloat16, kFloat16, kFloat16, 16, 8, 16, false,
+                             true, false, cute::PPU0015_16x8x16_F16F16F16F16_TN)
+TL_PPU_DEFINE_MMA_DISPATCHER(kBFloat16, kBFloat16, kFloat32, 16, 8, 16, false,
+                             true, false,
+                             cute::PPU0015_16x8x16_F32BF16BF16F32_TN)
+TL_PPU_DEFINE_MMA_DISPATCHER(kTensorFloat32, kTensorFloat32, kFloat32, 16, 8, 8,
+                             false, true, false,
+                             cute::PPU0015_16x8x8_F32TF32TF32F32_TN)
+// FP8 x FP8 -> F32 m16n8k32 over the E4M3/E5M2 operand mixes
+// (cute/arch/mma_ppu0015.hpp): the four atoms share the S8 k32 atom register
+// geometry (D/C float[4], A uint32_t[4], B uint32_t[2]) and the same
+// ALayout/BLayout/CLayout, so the plain dispatcher macro applies and the
+// b_bits == 8 shared-load layouts are reused as-is.
+TL_PPU_DEFINE_MMA_DISPATCHER(kFloat8_e4m3, kFloat8_e4m3, kFloat32, 16, 8, 32,
+                             false, true, false,
+                             cute::PPU0015_16x8x32_F32E4M3E4M3F32_TN)
+TL_PPU_DEFINE_MMA_DISPATCHER(kFloat8_e4m3, kFloat8_e5m2, kFloat32, 16, 8, 32,
+                             false, true, false,
+                             cute::PPU0015_16x8x32_F32E4M3E5M2F32_TN)
+TL_PPU_DEFINE_MMA_DISPATCHER(kFloat8_e5m2, kFloat8_e4m3, kFloat32, 16, 8, 32,
+                             false, true, false,
+                             cute::PPU0015_16x8x32_F32E5M2E4M3F32_TN)
+TL_PPU_DEFINE_MMA_DISPATCHER(kFloat8_e5m2, kFloat8_e5m2, kFloat32, 16, 8, 32,
+                             false, true, false,
+                             cute::PPU0015_16x8x32_F32E5M2E5M2F32_TN)
+
+TL_PPU_DEFINE_MMA_DISPATCHER(kInt8, kInt8, kInt32, 16, 8, 32, false, true,
+                             false, cute::PPU0015_16x8x32_S32S8S8S32_TN)
+
 // FP4 e2m1 MMA: the atom carries 4 extra E8M0 scale registers (SRegisters),
 // so it cannot use TL_PPU_DEFINE_MMA_DISPATCHER (call_fma only unpacks
 // D/A/B/C register groups). The scale-less entry point retains the historical
