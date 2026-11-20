@@ -20,12 +20,14 @@ partial-fragment fallback); fp8 GEMM-RR (NN/TT) end to end.
 
 import re
 
+import pytest
 import torch
 
 import tilelang
 import tilelang.language as T
 import tilelang.testing
-from tilelang.layout import make_linear_layout, make_swizzled_layout
+from tilelang.layout import make_full_bank_swizzled_layout, make_linear_layout, make_swizzled_layout
+from tilelang.ppu.intrinsics.macro.mma_macro_generator import PPUTensorCoreIntrinEmitter
 
 DTYPES = ["int8", "float8_e4m3fn", "float8_e5m2"]
 TORCH_DTYPES = {
@@ -34,6 +36,7 @@ TORCH_DTYPES = {
     "float8_e5m2": torch.float8_e5m2,
 }
 HELPER = "tl::tix_ldmatrix_x2_trans_m16n16_b8"
+SCALAR_B_LOAD = re.compile(r"\bB_local\[[^\n;]*?\]\s*=(?!=)")
 
 
 # fragment order equations (see A repo testing/python/cuda/
@@ -219,6 +222,172 @@ def test_ldsm_trans_b8_gemm_rr():
     """NN (B-operand transposed) and TT (A-operand transposed) fp32-acc fp8."""
     _check_gemm_rr("float8_e4m3fn", "B")
     _check_gemm_rr("float8_e4m3fn", "A")
+
+
+def _make_gemm_ss_nn_kernel(dtype, M, N, K, threads, policy=T.GemmWarpPolicy.Square):
+    """Shared-shared NN GEMM: B should use the transposed b8 matrix load."""
+    accum_dtype = "int32" if dtype == "int8" else "float32"
+
+    @T.prim_func
+    def main(
+        A: T.Tensor((M, K), dtype),
+        B: T.Tensor((K, N), dtype),
+        C: T.Tensor((M, N), accum_dtype),
+    ):
+        with T.Kernel(1, threads=threads):
+            A_shared = T.alloc_shared((M, K), dtype)
+            B_shared = T.alloc_shared((K, N), dtype)
+            C_fragment = T.alloc_fragment((M, N), accum_dtype)
+            T.copy(A, A_shared)
+            T.copy(B, B_shared)
+            T.clear(C_fragment)
+            T.gemm(A_shared, B_shared, C_fragment, policy=policy)
+            T.copy(C_fragment, C)
+
+    return main
+
+
+def _check_gemm_ss_nn(dtype, M, N, K, threads, policy=T.GemmWarpPolicy.Square):
+    kernel = tilelang.compile(_make_gemm_ss_nn_kernel(dtype, M, N, K, threads, policy), out_idx=[2])
+    source = kernel.get_kernel_source()
+    b_fragment_lines = [line for line in source.splitlines() if re.search(r"\bB_local\b", line)]
+    calls = re.findall(re.escape(HELPER) + r"\([^;]+\)", "\n".join(b_fragment_lines))
+    assert calls, f"Expected {HELPER} to load the B fragment"
+    assert all(call.rstrip().endswith(", true)") for call in calls), f"Expected B-operand register order, got: {calls}"
+    fallback_helper = re.compile(r"\btix_ldmatrix_(?:swzl_)?x\d+_trans(?:_ppu)?\(")
+    assert not any(fallback_helper.search(line) for line in b_fragment_lines), "Unexpected transposed B helper"
+    assert SCALAR_B_LOAD.search(source) is None, "Unexpected scalar B gather"
+
+    torch_dtype = TORCH_DTYPES[dtype]
+    generator = torch.Generator().manual_seed(0)
+    a = torch.randint(-4, 5, (M, K), generator=generator).to(torch_dtype)
+    b = torch.randint(-4, 5, (K, N), generator=generator).to(torch_dtype)
+    reference = a.float() @ b.float()
+    result = kernel(a.cuda(), b.cuda())
+    torch.testing.assert_close(result.float().cpu(), reference, rtol=0, atol=0)
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+def test_ldsm_trans_b8_gemm_ss_nn():
+    for dtype in ["float8_e4m3fn", "float8_e5m2"]:
+        _check_gemm_ss_nn(dtype, 128, 128, 64, 128)
+    _check_gemm_ss_nn("float8_e4m3fn", 256, 128, 32, 512, T.GemmWarpPolicy.FullRow)
+    _check_gemm_ss_nn("float8_e4m3fn", 256, 256, 32, 512, T.GemmWarpPolicy.FullRow)
+    _check_gemm_ss_nn("float8_e4m3fn", 128, 64, 32, 128, T.GemmWarpPolicy.FullCol)
+
+
+def _trans_b8_region_is_eligible(*, strides=None, elem_offset=0, include_layout=True):
+    buffer_kwargs = {"elem_offset": elem_offset, "data_alignment": 16}
+    if strides is not None:
+        buffer_kwargs["strides"] = strides
+    buffer = tilelang.tvm.tirx.decl_buffer((32, 128), "float8_e4m3fn", scope="shared", **buffer_kwargs)
+    region = tilelang.tvm.tirx.BufferRegion(
+        buffer,
+        [tilelang.tvm.ir.Range(0, 32), tilelang.tvm.ir.Range(0, 128)],
+    )
+    layout_map = {buffer: make_linear_layout(buffer)} if include_layout else None
+    emitter = PPUTensorCoreIntrinEmitter(
+        a_dtype="float8_e4m3fn",
+        b_dtype="float8_e4m3fn",
+        accum_dtype="float32",
+        a_transposed=False,
+        b_transposed=False,
+        block_row_warps=1,
+        block_col_warps=1,
+        warp_row_tiles=16,
+        warp_col_tiles=16,
+        chunk=32,
+        ppu_arch=15,
+        layout_map=layout_map,
+    )
+    return emitter._can_use_trans_b8(region)
+
+
+def test_ldsm_trans_b8_gemm_ss_nn_eligibility():
+    assert _trans_b8_region_is_eligible()
+    assert _trans_b8_region_is_eligible(strides=(128, 1))
+    assert not _trans_b8_region_is_eligible(include_layout=False)
+    assert not _trans_b8_region_is_eligible(elem_offset=1)
+    assert not _trans_b8_region_is_eligible(strides=(129, 1))
+    assert not _trans_b8_region_is_eligible(strides=(256, 2))
+
+
+def _make_gemm_ss_nn_unaligned_kernel():
+    """A non-16B B stride must retain the scalar fallback."""
+
+    @T.prim_func
+    def main(
+        A: T.Tensor((128, 64), "float8_e4m3fn"),
+        B: T.Tensor((64, 129), "float8_e4m3fn"),
+        C: T.Tensor((128, 128), "float32"),
+    ):
+        with T.Kernel(1, threads=128):
+            A_shared = T.alloc_shared((128, 64), "float8_e4m3fn")
+            B_shared = T.alloc_shared((64, 129), "float8_e4m3fn")
+            C_fragment = T.alloc_fragment((128, 128), "float32")
+            T.copy(A, A_shared)
+            T.copy(B, B_shared)
+            T.clear(C_fragment)
+            T.gemm(A_shared, B_shared[:, 1:129], C_fragment)
+            T.copy(C_fragment, C)
+
+    return main
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+def test_ldsm_trans_b8_gemm_ss_nn_unaligned_fallback():
+    kernel = tilelang.compile(_make_gemm_ss_nn_unaligned_kernel(), out_idx=[2])
+    source = kernel.get_kernel_source()
+    assert HELPER not in source
+
+    generator = torch.Generator().manual_seed(0)
+    a = torch.randint(-4, 5, (128, 64), generator=generator).to(torch.float8_e4m3fn)
+    b = torch.randint(-4, 5, (64, 129), generator=generator).to(torch.float8_e4m3fn)
+    result = kernel(a.cuda(), b.cuda())
+    torch.testing.assert_close(result.float().cpu(), a.float() @ b[:, 1:].float(), rtol=0, atol=0)
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+@pytest.mark.parametrize("swizzled", [False, True], ids=["noncompact-stride", "swizzled-column-offset"])
+def test_ldsm_trans_b8_gemm_ss_nn_remapped_fallback(swizzled):
+    dtype = "float8_e4m3fn"
+    if swizzled:
+        # Extra storage rows leave room for the nonzero element offset.
+        rows, width, strides, elem_offset = 48, 128, None, 1
+        col_start, n = 15, 64
+        make_layout = make_full_bank_swizzled_layout
+    else:
+        rows, width, strides, elem_offset = 32, 129, (144, 1), 0
+        col_start, n = 0, 128
+        make_layout = make_linear_layout
+
+    @T.prim_func
+    def main(A: T.Tensor((128, 32), dtype), B: T.Tensor((32, width), dtype), C: T.Tensor((128, n), "float32")):
+        with T.Kernel(1, threads=128):
+            A_shared = T.alloc_shared((128, 32), dtype)
+            B_shared = T.sblock_alloc_buffer((rows, width), dtype, scope="shared.dyn", strides=strides, elem_offset=elem_offset, align=16)
+            C_fragment = T.alloc_fragment((128, n), "float32")
+            T.annotate_layout({B_shared: make_layout(B_shared)})
+            T.copy(A, A_shared)
+            # Scalar stores can populate annotated buffers with noncompact strides.
+            if T.get_thread_binding() == 0:
+                for row, col in T.grid(32, width):
+                    B_shared[row, col] = B[row, col]
+            T.sync_threads()
+            T.clear(C_fragment)
+            T.gemm(A_shared, B_shared[:32, col_start : col_start + n], C_fragment)
+            T.copy(C_fragment, C)
+
+    kernel = tilelang.compile(main, out_idx=[2])
+    source = kernel.get_kernel_source()
+    assert HELPER not in source
+    assert SCALAR_B_LOAD.search(source) is not None
+
+    generator = torch.Generator().manual_seed(0)
+    a = torch.randint(-4, 5, (128, 32), generator=generator).to(torch.float8_e4m3fn)
+    b = torch.randint(-4, 5, (32, width), generator=generator).to(torch.float8_e4m3fn)
+    reference = a.float() @ b[:, col_start : col_start + n].float()
+    torch.testing.assert_close(kernel(a.cuda(), b.cuda()).float().cpu(), reference, rtol=0, atol=0)
 
 
 if __name__ == "__main__":
