@@ -1858,6 +1858,11 @@ private:
       PrimExpr curr_constr = curr.cset.ToConjunction();
 
       arith::Analyzer analyzer;
+      // Cross-thread disjointness (e.g. tx vs tx^1 under even/odd guards)
+      // needs the SMT fallback; the default rlimit of 1e4 is too tight to
+      // settle these queries, so raise it as the ascend
+      // transforms do (e.g. insert_nd2nz.cc).
+      analyzer.z3_prover.SetRLimit(30000);
       for (const auto &iv : prev.threads) {
         if (iv->dom.defined()) {
           analyzer.Bind(iv->var, iv->dom);
@@ -1914,6 +1919,9 @@ private:
       ConstrSet prev_cset{prev.cset};
       ConstrSet curr_cset{curr.cset};
       arith::Analyzer analyzer;
+      // Same as above: prove byte-range disjointness across threads with a
+      // usable z3 budget (default 1e4 cannot settle parity-style guards).
+      analyzer.z3_prover.SetRLimit(30000);
 
       // Add loop variable constraint for loop-carry analysis
       if (loop != nullptr) {
