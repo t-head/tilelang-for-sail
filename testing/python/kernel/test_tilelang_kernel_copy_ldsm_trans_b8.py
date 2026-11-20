@@ -365,9 +365,7 @@ def test_ldsm_trans_b8_gemm_ss_nn_remapped_fallback(swizzled):
     def main(A: T.Tensor((128, 32), dtype), B: T.Tensor((32, width), dtype), C: T.Tensor((128, n), "float32")):
         with T.Kernel(1, threads=128):
             A_shared = T.alloc_shared((128, 32), dtype)
-            B_shared = T.sblock_alloc_buffer(
-                (rows, width), dtype, scope="shared.dyn", strides=strides, elem_offset=elem_offset, align=16
-            )
+            B_shared = T.sblock_alloc_buffer((rows, width), dtype, scope="shared.dyn", strides=strides, elem_offset=elem_offset, align=16)
             C_fragment = T.alloc_fragment((128, n), "float32")
             T.annotate_layout({B_shared: make_layout(B_shared)})
             T.copy(A, A_shared)
