@@ -11,11 +11,11 @@ from tvm.target import Target
 from tilelang import tvm as tvm
 from tilelang.engine.param import KernelParam
 from tilelang.jit.adapter.wrapper import TLPyWrapper
-from tilelang.jit.adapter.cutedsl.checks import check_cutedsl_available
+from tilelang.jit.adapter.cutedsl.checks import check_cutedsl_available, fp8_conversion_compile_hint
 from tilelang.jit.adapter.cutedsl.libgen import CuTeDSLLibraryGenerator
 from tilelang.utils.language import retrieve_func_from_module
 from tilelang.backend.target import determine_target
-from tilelang.jit.adapter.base import BaseKernelAdapter, CachedTextSource
+from tilelang.jit.adapter.base import BaseKernelAdapter, CachedTextSource, output_allocation_stream
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +182,7 @@ class CuTeDSLKernelAdapter(BaseKernelAdapter):
         The mapping encodes:
         - id=0: shape var -> (0, buffer_param_index, dim_index)
         - id=1: stride var -> (1, buffer_param_index, stride_index)
+        - id=2: explicit scalar -> (2, scalar_param_index, -1)
 
         Returns:
             (dynamic_symbolic_map, dynamic_symbolic_order)
@@ -205,8 +206,15 @@ class CuTeDSLKernelAdapter(BaseKernelAdapter):
             if v in dynamic_symbolic_map:
                 return
             dynamic_symbolic_map[v] = entry
-            dynamic_symbolic_order.append(v)
+            if v not in params:
+                dynamic_symbolic_order.append(v)
             self._dynamic_symbolic_name_map[v.name] = entry
+
+        # Explicit scalars already occupy a primary wrapper argument. They
+        # can supply a buffer's dynamic shape without being appended again.
+        for i, param in enumerate(params):
+            if param not in buffer_map:
+                unique_push_back(param, (2, i, -1))
 
         # 1) Shapes
         for i, param in enumerate(params):
@@ -240,6 +248,8 @@ class CuTeDSLKernelAdapter(BaseKernelAdapter):
         if v in self.dynamic_symbolic_map:
             return self.dynamic_symbolic_map[v]
         if v.name in self._dynamic_symbolic_name_map:
+            if sum(symbol.name == v.name for symbol in self.dynamic_symbolic_map) != 1:
+                raise KeyError(f"Dynamic symbolic variable '{v.name}' has ambiguous name-only candidates")
             return self._dynamic_symbolic_name_map[v.name]
         raise KeyError(f"Dynamic symbolic variable '{v.name}' not found in symbolic map")
 
@@ -248,6 +258,8 @@ class CuTeDSLKernelAdapter(BaseKernelAdapter):
         if v in self._dynamic_symbolic_candidates_map:
             return self._dynamic_symbolic_candidates_map[v]
         if v.name in self._dynamic_symbolic_name_candidates_map:
+            if sum(symbol.name == v.name for symbol in self.dynamic_symbolic_map) != 1:
+                raise KeyError(f"Dynamic symbolic variable '{v.name}' has ambiguous name-only candidates")
             return self._dynamic_symbolic_name_candidates_map[v.name]
         raise KeyError(f"Dynamic symbolic variable '{v.name}' not found in symbolic map")
 
@@ -268,6 +280,12 @@ class CuTeDSLKernelAdapter(BaseKernelAdapter):
                 has_shape_candidate = True
             elif ref_id == 1:
                 has_stride_candidate = True
+            elif ref_id == 2:
+                value = param_values[buffer_idx]
+                if value is not None:
+                    return value
+                non_tensor_values.append((buffer_idx, value))
+                continue
             else:
                 raise ValueError(f"Unknown dynamic symbol ref id: {ref_id}")
 
@@ -332,7 +350,13 @@ class CuTeDSLKernelAdapter(BaseKernelAdapter):
             stream: CUDA stream handle
             device_id: CUDA device ID for multi-GPU support
         """
-        result = self.pymodule.call(*args, stream=stream, device_id=device_id)
+        try:
+            result = self.pymodule.call(*args, stream=stream, device_id=device_id)
+        except Exception as err:
+            hint = fp8_conversion_compile_hint(self.target.attrs.get("arch"), self.get_kernel_source()) if "NVVM" in str(err) else None
+            if hint is not None:
+                raise RuntimeError(hint) from err
+            raise
 
         # After first call, save cubin to cache if needed
         self._save_cubin_to_cache_if_needed()
@@ -422,27 +446,55 @@ class CuTeDSLKernelAdapter(BaseKernelAdapter):
             ins_idx += 1
 
         first_tensor = next((v for v in param_values if isinstance(v, torch.Tensor)), None)
-        if first_tensor is None:
+        # A kernel whose only tensors are out_idx outputs has no argument to
+        # infer the device from; allocate on the current device, as the CUDA
+        # adapters do.
+        if first_tensor is not None:
+            device = first_tensor.device
+        elif torch.cuda.is_available():
+            device = torch.device("cuda", torch.cuda.current_device())
+        else:
             raise ValueError("Expected at least one torch.Tensor argument to infer CUDA device")
 
         args: list[Any] = []
 
+        # Outputs written on a caller-supplied stream are allocated on that stream.
+        alloc_stream = None
+        if stream is not None and self.result_idx:
+            alloc_stream = output_allocation_stream(stream, device)
+
         # tensor pointers
-        for i in range(len(self.params)):
-            if i in self.result_idx:
-                dtype = self.param_dtypes[i]
-                shape = []
-                # Now working with native Python list, no FFI calls needed
-                for s in self.param_shapes[i]:
-                    if isinstance(s, tirx.Var):
-                        shape.append(self._resolve_dynamic_symbolic_value(s, param_values))
-                    else:  # Already converted to Python int during initialization
-                        shape.append(s)
-                tensor = torch.empty(*shape, dtype=dtype, device=first_tensor.device)
-                param_values[i] = tensor
-            else:
-                tensor = param_values[i]
-            args.append(tensor)
+        with torch.cuda.stream(alloc_stream):
+            for i in range(len(self.params)):
+                if i in self.result_idx:
+                    dtype = self.param_dtypes[i]
+                    shape = []
+                    # Now working with native Python list, no FFI calls needed
+                    for s in self.param_shapes[i]:
+                        if isinstance(s, tirx.Var):
+                            shape.append(self._resolve_dynamic_symbolic_value(s, param_values))
+                        else:  # Already converted to Python int during initialization
+                            shape.append(s)
+                    # Sub-byte dtypes are stored packed in torch (float4_e2m1fn_x2 holds two
+                    # FP4 elements per byte), so the logical element shape has to be divided
+                    # by the packing factor, exactly as the CUDA adapters do.  A final extent
+                    # that does not fill whole bytes is rejected, like the CUDA host check,
+                    # rather than rounded: neither floor nor ceil yields a valid packed view.
+                    element_bits = self.params[i].dtype.bits * self.params[i].dtype.lanes
+                    pack = 8 // element_bits if element_bits < 8 else 1
+                    if pack > 1 and shape and isinstance(shape[-1], int):
+                        if shape[-1] % pack != 0:
+                            name = self.prim_func.params[i].name
+                            raise ValueError(
+                                f"packed output {name} has a final dimension that is not storage-aligned: "
+                                f"{shape[-1]} elements of {self.params[i].dtype} is not a multiple of {pack}"
+                            )
+                        shape = [*shape[:-1], shape[-1] // pack]
+                    tensor = torch.empty(*shape, dtype=dtype, device=device)
+                    param_values[i] = tensor
+                else:
+                    tensor = param_values[i]
+                args.append(tensor)
 
         # dynamic symbolics
         for sym in self.dynamic_symbolic_order:
@@ -450,15 +502,16 @@ class CuTeDSLKernelAdapter(BaseKernelAdapter):
 
         # if stream is not None, we need to pass the stream to the library
         if stream is None:
-            if str(self.target).startswith("cuda") and torch.cuda.is_available():
-                stream = torch.cuda.current_stream().cuda_stream
+            if self.target.kind.name == "cuda" and torch.cuda.is_available():
+                stream = torch.cuda.current_stream(first_tensor.device).cuda_stream
             else:
                 stream = 0
 
-        # Get device_id from first tensor for multi-GPU support
-        if not first_tensor.is_cuda:
-            raise ValueError(f"CuTeDSL kernels require CUDA tensors, got tensor on device: {first_tensor.device}")
-        device_id = first_tensor.device.index or 0
+        # Get device_id from the first tensor, or the current device when the
+        # kernel takes no tensor input, for multi-GPU support
+        if first_tensor is not None and not first_tensor.is_cuda:
+            raise ValueError(f"CuTeDSL kernels require CUDA tensors, got tensor on device: {device}")
+        device_id = device.index or 0
 
         self._forward_from_prebuild_lib(*args, stream=stream, device_id=device_id)
 

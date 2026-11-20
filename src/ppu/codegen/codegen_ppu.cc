@@ -684,7 +684,7 @@ void CodeGenTileLangPPU::PrintExtraAttrs(const PrimFunc &f) {
   }
 }
 
-std::string CodeGenTileLangPPU::Finish() {
+void CodeGenTileLangPPU::EmitPreamble_(std::ostream &os) const {
   // HGGC 13's hggc.h declares CUtensorMap with `alignas(128)`, which MSVC
   // rejects as a function parameter alignment (C2719: "formal parameter
   // requires <N>-byte alignment"). MSVC's hard limit for parameter alignment
@@ -696,73 +696,70 @@ std::string CodeGenTileLangPPU::Finish() {
   // for the duration of <hggc.h>'s parsing there. Newer MSVC versions accept
   // the 128-byte aligned parameter, and keeping that alignment avoids
   // HGGC_ERROR_MISALIGNED_ADDRESS at launch time.
-  decl_stream
-      << "#if defined(_MSC_VER) && !defined(__clang__) && _MSC_VER < 1940\n";
-  decl_stream << "#define _tl_orig_alignas alignas\n";
-  decl_stream << "#define alignas(N) _tl_orig_alignas((N) <= 64 ? (N) : 64)\n";
-  decl_stream << "#include <hggc.h>\n";
-  decl_stream << "#undef alignas\n";
-  decl_stream << "#define alignas _tl_orig_alignas\n";
-  decl_stream << "#endif\n";
+  os << "#if defined(_MSC_VER) && !defined(__clang__) && _MSC_VER < 1940\n";
+  os << "#define _tl_orig_alignas alignas\n";
+  os << "#define alignas(N) _tl_orig_alignas((N) <= 64 ? (N) : 64)\n";
+  os << "#include <hggc.h>\n";
+  os << "#undef alignas\n";
+  os << "#define alignas _tl_orig_alignas\n";
+  os << "#endif\n";
 
   if (need_mma_h_) {
-    decl_stream << "#include <hggc_mma.h>\n";
+    os << "#include <hggc_mma.h>\n";
   }
   if (need_mma_instruction_h_) {
-    decl_stream << "#include <tl_templates/ppu/instruction/mma.h>\n";
+    os << "#include <tl_templates/ppu/instruction/mma.h>\n";
   }
   if (need_mma_sp_instruction_h_) {
-    decl_stream << "#include <tl_templates/ppu/instruction/mma_sp.h>\n";
+    os << "#include <tl_templates/ppu/instruction/mma_sp.h>\n";
   }
   if (need_intrin_h_) {
-    decl_stream << "#include <tl_templates/ppu/intrin.h>\n";
+    os << "#include <tl_templates/ppu/intrin.h>\n";
   }
   if (need_atomic_h_) {
-    decl_stream << "#include <tl_templates/ppu/atomic.h>\n";
+    os << "#include <tl_templates/ppu/atomic.h>\n";
   }
   if (need_math_h_) {
-    decl_stream << "#include <tl_templates/ppu/math.h>\n";
+    os << "#include <tl_templates/ppu/math.h>\n";
   }
   if (need_barrier_h_) {
-    decl_stream << "#include <tl_templates/ppu/barrier.h>\n";
+    os << "#include <tl_templates/ppu/barrier.h>\n";
   }
   if (enable_fp8_) {
-    decl_stream << "#include <tl_templates/ppu/hggc_fp8.h>\n";
+    os << "#include <tl_templates/ppu/hggc_fp8.h>\n";
   }
   if (enable_fp6_) {
-    decl_stream << "// #include <hggc_fp6.h>  // not in PPU SDK\n";
+    os << "// #include <hggc_fp6.h>  // not in PPU SDK\n";
   }
   if (enable_fp4_) {
-    decl_stream << "#include <tl_templates/ppu/hggc_fp4.h>\n";
+    os << "#include <tl_templates/ppu/hggc_fp4.h>\n";
   }
 
   if (need_math_constants_h_) {
-    decl_stream << "#include <hggc_math_constants.h>\n";
+    os << "#include <hggc_math_constants.h>\n";
   }
 
   if (need_cooperative_groups_) {
-    decl_stream << "#include <cooperative_groups.h>\n";
+    os << "#include <cooperative_groups.h>\n";
   }
   if (need_grid_sync_) {
-    decl_stream << "#include <tl_templates/ppu/grid_sync.h>\n";
+    os << "#include <tl_templates/ppu/grid_sync.h>\n";
   }
 
   if (need_acrand_kernel_h_) {
-    decl_stream << "#include <acrand_kernel.h>\n";
+    os << "#include <acrand_kernel.h>\n";
   }
 
-  decl_stream << "#include <tl_templates/ppu/copy.h>\n";
-  decl_stream << "#include <tl_templates/ppu/reduce.h>\n";
-  decl_stream << "#include <tl_templates/ppu/scan.h>\n";
-  decl_stream << "#include <tl_templates/ppu/ldsm.h>\n";
-  decl_stream << "#include <tl_templates/ppu/threadblock_swizzle.h>\n";
-  decl_stream << "#include <tl_templates/ppu/debug.h>\n";
-  decl_stream << "#ifdef ENABLE_BF16\n";
-  decl_stream << "#include <tl_templates/ppu/hggc_bf16_fallbacks.h>\n";
-  decl_stream << "#endif\n";
-  decl_stream << "\n";
-
-  return CodeGenC::Finish();
+  os << "#include <tl_templates/ppu/copy.h>\n";
+  os << "#include <tl_templates/ppu/reduce.h>\n";
+  os << "#include <tl_templates/ppu/scan.h>\n";
+  os << "#include <tl_templates/ppu/ldsm.h>\n";
+  os << "#include <tl_templates/ppu/threadblock_swizzle.h>\n";
+  os << "#include <tl_templates/ppu/debug.h>\n";
+  os << "#ifdef ENABLE_BF16\n";
+  os << "#include <tl_templates/ppu/hggc_bf16_fallbacks.h>\n";
+  os << "#endif\n";
+  os << "\n";
 }
 
 void CodeGenTileLangPPU::VisitStmt_(const tirx::ForNode *op) {
@@ -5460,7 +5457,12 @@ void CodeGenTileLangPPU::AddFunction(const GlobalVar &gvar, const PrimFunc &f) {
           << "T.HGGCSourceCodeKernel expects the lowered device global_symbol "
              "to match entry_name";
     }
+    // Keep raw user source intact while allowing the base class to manage
+    // line directives and imported-source ordering.
+    this->InitFuncState(f);
+    this->BeginRawSource();
     stream << static_cast<std::string>(code_block_source.value()) << "\n\n";
+    this->EndRawSource();
     return;
   }
 

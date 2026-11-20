@@ -628,6 +628,7 @@ CUBIN_KERNEL_LAUNCH_TEMPLATE = """\
       min_blocks_per_mp=1,
       stream=stream,
       use_pdl={use_pdl},
+      cooperative={cooperative},
     )"""
 
 # Fake tensor creation template
@@ -695,7 +696,7 @@ from pathlib import Path
 
 # Minimal imports for runtime (no cutlass/cute - only needed for cubin generation)
 import tvm.runtime as runtime
-
+{workspace_imports}
 _cpp_launcher = None
 _cpp_launcher_lib = None
 _cubin_generated = False
@@ -706,6 +707,8 @@ _cutlass_custream_cls = None
 _has_tma_descs = {has_tma_descs}
 _cutlass_host_launcher_supported = {cutlass_host_launcher_supported}
 _cutlass_host_launcher_disabled_reason = {cutlass_host_launcher_disabled_reason!r}
+_dynamic_smem_bytes = {dynamic_smem_bytes!r}
+_dynamic_smem_checked_devices = set()
 
 # Pre-compute paths - cubin is stored alongside the launcher .so
 # Use module basename to avoid conflicts when multiple kernels run concurrently
@@ -869,6 +872,26 @@ def _load_cpp_launcher():
   _cpp_launcher = _cpp_launcher_lib["launch_kernel"]
   return _cpp_launcher
 
+def _check_dynamic_smem(device_id):
+  \"\"\"Fail like the CUDA backend when a kernel needs more dynamic shared memory
+  than the device allows per block, instead of an opaque launch error.\"\"\"
+  if device_id in _dynamic_smem_checked_devices:
+    return
+  if any(size > 48 * 1024 for size in _dynamic_smem_bytes.values()):
+    from cuda.bindings import driver
+    err, device = driver.cuDeviceGet(device_id)
+    if err == driver.CUresult.CUDA_SUCCESS:
+      err, limit = driver.cuDeviceGetAttribute(
+          driver.CUdevice_attribute.CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN, device)
+    if err == driver.CUresult.CUDA_SUCCESS:
+      for name, size in _dynamic_smem_bytes.items():
+        if size > limit:
+          raise RuntimeError(
+              f"Failed to set the allowed dynamic shared memory size to {{size}} for kernel {{name}}: "
+              f"device {{device_id}} allows at most {{limit}} bytes per block"
+          )
+  _dynamic_smem_checked_devices.add(device_id)
+
 def call({call_func_params}, stream, device_id=0):
   \"\"\"Kernel dispatch function.
 
@@ -878,6 +901,8 @@ def call({call_func_params}, stream, device_id=0):
   \"\"\"
   global _cubin_path_bytes, _cubin_needs_generation
 
+  _check_dynamic_smem(device_id)
+{workspace_alloc_code}
   if _cubin_needs_generation:
     _generate_cubin_if_needed({cubin_gen_call_args})
     _cubin_needs_generation = False
@@ -924,7 +949,9 @@ class TLCuTeDSLSourceWrapper(TLCUDASourceWrapper):
         "float32": "cutlass.Float32",
         "float16": "cutlass.Float16",
         "bfloat16": "cutlass.BFloat16",
-        "float8_e4m3": "cutlass.Float8E4M3",
+        # The TIR dtype string for float8_e4m3fn is "float8_e4m3", and the
+        # CuTeDSL codegen only emits Float8E4M3FN, so both keys must agree.
+        "float8_e4m3": "cutlass.Float8E4M3FN",
         "float8_e4m3fn": "cutlass.Float8E4M3FN",
         "float8_e5m2": "cutlass.Float8E5M2",
         "float4_e2m1fn": "cutlass.Float4E2M1FN",
@@ -1023,7 +1050,13 @@ class TLCuTeDSLSourceWrapper(TLCUDASourceWrapper):
 
     def _pythonic_expr(self, expr: tvm.tirx.PrimExpr) -> str:
         """Convert TVM expression to Python string, ignoring casts."""
-        return pythonic_expr(expr, self._TYPE_MAP, ignore_cast=True, floor_div_op="//")
+        return pythonic_expr(
+            expr,
+            self._TYPE_MAP,
+            ignore_cast=True,
+            floor_div_op="//",
+            var_name_map=getattr(self, "_argument_names", None),
+        )
 
     def _generate_cubin_cluster_arg(self, cluster_dims: list[Any] | None) -> str:
         """Render the optional CuTeDSL launch cluster argument."""
@@ -1039,7 +1072,12 @@ class TLCuTeDSLSourceWrapper(TLCUDASourceWrapper):
 
     def _cxx_expr(self, expr: tvm.tirx.PrimExpr) -> str:
         """Convert TVM expression to C++ string for generated launcher code."""
-        return pythonic_expr(expr, self._CXX_TYPE_MAP, func_name_map={"min": "std::min", "max": "std::max"})
+        return pythonic_expr(
+            expr,
+            self._CXX_TYPE_MAP,
+            func_name_map={"min": "std::min", "max": "std::max"},
+            var_name_map=getattr(self, "_argument_names", None),
+        )
 
     @staticmethod
     def _cxx_cast(ctype: str, expr_str: str) -> str:
@@ -1112,35 +1150,115 @@ class TLCuTeDSLSourceWrapper(TLCUDASourceWrapper):
         """
         function_args = []
         buffer_args = []
+        self._argument_names = {}
+        source_names = set(re.findall(r"\b\w+\b", getattr(self, "lib_code", "")))
+        next_index = 0
+
+        def append(var, arg_type, dtype=None):
+            nonlocal next_index
+            if var in self._argument_names:
+                return
+            while True:
+                name = f"_tl_arg_{next_index}"
+                next_index += 1
+                # The embedded device source defines functions in the same
+                # Python scope as the cubin builder's input arguments.
+                related = {name, name + "_", name + "_ptr", f"__fake_{name}__"}
+                if not related & source_names:
+                    break
+            self._argument_names[var] = name
+            arg = {"name": name, "type": arg_type, "var": var}
+            if dtype is not None:
+                arg["dtype"] = dtype
+            function_args.append(arg)
+            if arg_type == "buffer":
+                buffer_args.append(name)
 
         for param in self.prim_func.params:
             if param in self.prim_func.buffer_map:
                 buffer = self.prim_func.buffer_map[param]
-                function_args.append(
-                    {
-                        "name": buffer.data.name,
-                        "type": "buffer",
-                        "dtype": self._TYPE_MAP.get(buffer.dtype) or self._TYPE_MAP.get(str(buffer.dtype)),
-                    }
+                append(
+                    buffer.data,
+                    "buffer",
+                    self._TYPE_MAP.get(buffer.dtype) or self._TYPE_MAP.get(str(buffer.dtype)),
                 )
-                buffer_args.append(buffer.data.name)
             elif isinstance(param, tvm.tirx.Var):
-                function_args.append({"name": param.name, "type": self._TYPE_MAP[param.dtype]})
+                append(param, self._TYPE_MAP[param.dtype])
             else:
                 raise ValueError(f"Parameter {param} not in buffer map")
 
-        existing_names = {arg["name"] for arg in function_args}
-        for dyn_sym in self.get_dynamic_symbolic_set(self.prim_func):
-            dyn_sym_name, dyn_sym_dtype = dyn_sym if isinstance(dyn_sym, tuple) else (dyn_sym, "int32")
-            if dyn_sym_name in existing_names:
-                continue
-            existing_names.add(dyn_sym_name)
-            function_args.append({"name": dyn_sym_name, "type": self._TYPE_MAP.get(dyn_sym_dtype, "int")})
+        for field in ("shape", "strides"):
+            for param in self.prim_func.params:
+                if param in self.prim_func.buffer_map:
+                    for value in getattr(self.prim_func.buffer_map[param], field):
+                        if isinstance(value, tvm.tirx.Var):
+                            append(value, self._TYPE_MAP.get(str(value.dtype), "int"))
+
+        # T.alloc_global buffers are host allocations that the CUDA host codegen
+        # turns into TVMBackendAllocWorkspace; here the Python host allocates them.
+        for buffer in self._collect_global_workspaces():
+            append(
+                buffer.data,
+                "buffer",
+                self._TYPE_MAP.get(buffer.dtype) or self._TYPE_MAP.get(str(buffer.dtype)),
+            )
+            function_args[-1]["workspace"] = buffer
 
         return function_args, buffer_args
 
-    @staticmethod
+    def _collect_global_workspaces(self) -> list[tvm.tirx.Buffer]:
+        """Global-scope buffers allocated by the lowered host entry (T.alloc_global)."""
+        workspaces = []
+
+        def visitor(node):
+            if isinstance(node, tvm.tirx.AllocBuffer) and node.buffer.scope() == "global":
+                workspaces.append(node.buffer)
+
+        post_order_visit(self._host_entry_func().body, visitor)
+        return workspaces
+
+    def _generate_workspace_alloc_code(self, function_args: list[dict]) -> str:
+        """Allocate T.alloc_global workspaces for one call, like TVMBackendAllocWorkspace.
+
+        The memory is uninitialized and lives until call() returns. It is allocated
+        on the launch stream: torch's caching allocator orders reuse of a block after
+        earlier work on the stream it was allocated on, so the kernels need neither a
+        cross-stream wait nor record_stream, even when the caller passes a stream
+        other than the current torch stream.
+        """
+        import tilelang.language as T
+
+        workspaces = [arg for arg in function_args if "workspace" in arg]
+        if not workspaces:
+            return ""
+        lines = [
+            "  _ws_device = torch.device('cuda', device_id)",
+            "  _ws_stream = torch.cuda.current_stream(_ws_device)",
+            "  if stream != _ws_stream.cuda_stream:",
+            # ExternalStream(0) yields a pooled stream on some PyTorch releases (2.4, 2.5).
+            "    _ws_stream = torch.cuda.ExternalStream(stream, device=_ws_device) if stream else torch.cuda.default_stream(_ws_device)",
+            "  with torch.cuda.stream(_ws_stream):",
+        ]
+        for arg in workspaces:
+            buffer = arg["workspace"]
+            dtype = T.dtype(str(buffer.dtype))
+            shape = [self._pythonic_expr(dim) for dim in buffer.shape]
+            element_bits = dtype.bits * dtype.lanes
+            pack = 8 // element_bits if element_bits < 8 else 1
+            if pack > 1:
+                last = buffer.shape[-1] if buffer.shape else 1
+                if not isinstance(last, tvm.tirx.IntImm) or int(last) % pack != 0:
+                    raise ValueError(
+                        f"T.alloc_global buffer {buffer.name} of {buffer.dtype} needs a final extent that is a "
+                        f"constant multiple of {pack} to be stored packed"
+                    )
+                shape[-1] = str(int(last) // pack)
+            shape_expr = f"({', '.join(shape)},)" if shape else "()"
+            lines.append(f"    {arg['name']} = torch.empty({shape_expr}, dtype={dtype.as_torch()}, device=_ws_device)")
+        return "\n".join(lines) + "\n"
+
     def _extract_func_call_args(
+        self,
         declaration: str,
         function_args: list[dict],
         function_params: list,
@@ -1148,16 +1266,6 @@ class TLCuTeDSLSourceWrapper(TLCUDASourceWrapper):
         desc_name_var_map: dict[str, tvm.tirx.Var] | None = None,
     ) -> list[tuple[str, str]]:
         """Extract function call arguments from Python function declaration."""
-
-        def maybe_desc(name: str | tuple[str, str], param_names: list[str], i: int):
-            """Record descriptor aliases while matching declaration parameters."""
-            name_str = name if isinstance(name, str) else name[0]
-            param = param_names[i]
-            if not (param == name_str + "_desc" or param.startswith(name_str + "_desc_")):
-                return False
-            if desc_name_map is not None:
-                desc_name_map[param] = name_str
-            return True
 
         def extract_param_names_ast(decl: str) -> list[str] | None:
             """Extract parameter names using AST parsing."""
@@ -1224,15 +1332,17 @@ class TLCuTeDSLSourceWrapper(TLCUDASourceWrapper):
             param_names = extract_param_names_split(declaration)
 
         call_args = []
-        for i, param_name in enumerate(param_names):
-            for arg in function_args:
-                if arg["name"] == param_name:
-                    call_args.append((param_name, arg["type"]))
-                elif maybe_desc(arg["name"], param_names, i):
-                    call_args.append((param_name, "None"))
-                    if desc_name_var_map is not None and function_params is not None:
-                        assert len(call_args) <= len(function_params)
-                        desc_name_var_map[param_name] = function_params[len(call_args) - 1]
+        by_var = {arg["var"]: arg for arg in function_args}
+        for param_name, param in zip(param_names, function_params, strict=True):
+            if param in by_var:
+                arg = by_var[param]
+                call_args.append((arg["name"], arg["type"]))
+            elif self.tma_descriptor_args is not None and param in self.tma_descriptor_args:
+                call_args.append((param_name, "None"))
+                desc_name_map[param_name] = self._pythonic_expr(self.tma_descriptor_args[param][4])
+                desc_name_var_map[param_name] = param
+            else:
+                raise ValueError(f"Cannot resolve CuTeDSL kernel argument by identity: {param}")
         return call_args
 
     @staticmethod
@@ -1242,7 +1352,7 @@ class TLCuTeDSLSourceWrapper(TLCUDASourceWrapper):
         """Filter out descriptor arguments."""
         filtered = []
         for arg_name, arg_type in call_args:
-            if "desc" in arg_name and arg_name in desc_names:
+            if arg_name in desc_names:
                 continue
             if arg_name in tma_tensors:
                 continue
@@ -1379,7 +1489,7 @@ class TLCuTeDSLSourceWrapper(TLCUDASourceWrapper):
         # Build kernel args
         kernel_args = []
         for arg_name, arg_type in call_args:
-            if "desc" in arg_name and arg_name in desc_names:
+            if arg_name in desc_names:
                 # For __grid_constant__ CUtensorMap: pass host pointer directly
                 # cuLaunchKernel will copy 128-byte CUtensorMap to param space
                 desc_idx = all_desc_names.index(arg_name)
@@ -1677,6 +1787,7 @@ class TLCuTeDSLSourceWrapper(TLCUDASourceWrapper):
                 cluster_arg=self._generate_cubin_cluster_arg(km["function_info"].get("cluster_dims")),
                 smem_size=km["function_info"]["dynamic_smem_buf"] or 0,
                 use_pdl=str(km["function_name"] in self.pdl_sync_map),
+                cooperative=str(self.use_cooperative_groups.get(km["function_name"], False)),
             )
             for km in kernel_metadata_list
         )
@@ -1727,10 +1838,12 @@ class TLCuTeDSLSourceWrapper(TLCUDASourceWrapper):
         has_tma_descs: bool,
         cutlass_host_launcher_supported: bool,
         cutlass_host_launcher_disabled_reason: str,
+        dynamic_smem_bytes: dict[str, int] | None = None,
     ) -> str:
         """Generate Python wrapper code."""
         # Build function parameters
-        call_func_params = ", ".join(arg["name"] for arg in function_args)
+        call_func_params = ", ".join(arg["name"] for arg in function_args if "workspace" not in arg)
+        workspace_alloc_code = self._generate_workspace_alloc_code(function_args)
         launcher_call_args = ", ".join(arg["name"] for arg in launcher_args)
         cutlass_launcher_call_args = ", ".join(cutlass_launcher_args)
 
@@ -1741,11 +1854,14 @@ class TLCuTeDSLSourceWrapper(TLCUDASourceWrapper):
             call_func_params=call_func_params,
             cubin_gen_call_args=cubin_gen_params,
             arg_prep_code="",
+            workspace_imports="import torch\n" if workspace_alloc_code else "",
+            workspace_alloc_code=workspace_alloc_code,
             launcher_call_args=launcher_call_args,
             cutlass_launcher_call_args=cutlass_launcher_call_args,
             has_tma_descs=str(bool(has_tma_descs)),
             cutlass_host_launcher_supported=str(bool(cutlass_host_launcher_supported)),
             cutlass_host_launcher_disabled_reason=cutlass_host_launcher_disabled_reason,
+            dynamic_smem_bytes=dynamic_smem_bytes or {},
         )
 
     # =========================================================================
@@ -1890,6 +2006,17 @@ class TLCuTeDSLSourceWrapper(TLCUDASourceWrapper):
 
         for function_info in function_information_list:
             function_name = function_info["function_name"]
+            # Launch metadata uses device Vars. Resolve it at this call site,
+            # including repeated calls of the same kernel with different inputs.
+            parameter_map = dict(zip(self.device_mod[function_name].params, function_info["function_params"], strict=True))
+            function_info = dict(function_info)
+            for field in ("grid_info", "block_info", "cluster_dims"):
+                values = function_info.get(field)
+                if values is not None:
+                    function_info[field] = [
+                        tvm.tirx.stmt_functor.substitute(value, parameter_map) if isinstance(value, tvm.tirx.PrimExpr) else value
+                        for value in values
+                    ]
             declaration = extract_python_func_declaration(code, function_name)
             desc_name_map: dict[str, str] = {}
             desc_name_var_map: dict[str, tvm.tirx.Var] = {}
@@ -1974,6 +2101,11 @@ class TLCuTeDSLSourceWrapper(TLCUDASourceWrapper):
             has_tma_descs=bool(all_desc_names_union),
             cutlass_host_launcher_supported=cutlass_host_launcher_supported,
             cutlass_host_launcher_disabled_reason=tma_host_disabled_reason,
+            dynamic_smem_bytes={
+                km["function_name"]: int(km["function_info"]["dynamic_smem_buf"])
+                for km in kernel_metadata
+                if isinstance(km["function_info"].get("dynamic_smem_buf"), int)
+            },
         )
 
         return python_wrapper

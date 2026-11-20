@@ -8,6 +8,7 @@ import tilelang
 import tilelang.language as T
 import tilelang.testing
 from tilelang import tvm
+from tilelang.cuda.target import normalize_cutedsl_target
 from tilelang.cuda.intrinsics.layout.mma_layout import mma_load_a_32x32_to_shared_16x64_layout
 from tilelang.cuda.intrinsics.macro.mma_sm120_macro_generator import SM120BlockScaleTile
 from tilelang.cuda.language.intrinsics import TensorCoreIntrinEmitterSM120, get_swizzle_layout
@@ -635,7 +636,8 @@ def test_sm120_fulltile_package_contract_odd_warp_atom_grid(warp_m, warp_n):
 
 
 @tilelang.testing.requires_cuda
-@tilelang.testing.requires_cuda_compute_version_eq(12, 0)
+@tilelang.testing.requires_cuda_compute_version_ge(12, 0)
+@tilelang.testing.requires_cuda_compute_version_lt(13, 0)
 @pytest.mark.parametrize("K", [64, 128, 256])
 def test_nvf4_mma_block_scale_codegen(K):
     kernel = tilelang.compile(
@@ -660,8 +662,20 @@ def test_nvf4_mma_block_scale_codegen(K):
     assert f"void* SFB_shared = ((void*)((char*)buf_dyn_shmem + {2 * fp4_tile_bytes + sf_tile_bytes}));" in src
 
 
+@pytest.mark.parametrize("K", [64, 256])
+def test_nvf4_mma_block_scale_cutedsl_codegen(K):
+    if tvm.ffi.get_global_func("target.build.tilelang_cutedsl_without_compile", allow_missing=True) is None:
+        pytest.skip("TileLang CuTeDSL backend is not enabled in this build.")
+    target = normalize_cutedsl_target({"kind": "cutedsl", "arch": "sm_120a"})
+    with target:
+        src = tilelang.lower(_make_nvf4_matmul_codegen_kernel(128, 128, K), target=target).kernel_source
+    assert 'tl.ptx_mma_block_scale("float32", "m16n8k64", "row", "col", "mxf4nvf4", 4, "e2m1", "e2m1", "ue4m3", ' in src
+    assert "tl.ptx_ldmatrix_x4" in src
+
+
 @tilelang.testing.requires_cuda
-@tilelang.testing.requires_cuda_compute_version_eq(12, 0)
+@tilelang.testing.requires_cuda_compute_version_ge(12, 0)
+@tilelang.testing.requires_cuda_compute_version_lt(13, 0)
 def test_nvf4_mma_block_scale_rejects_legacy_cutlass_128x4_layout_alias():
     with pytest.raises(ValueError, match="Unsupported SM120 scale layout: cutlass_128x4"):
         tilelang.compile(
@@ -679,7 +693,8 @@ def test_nvf4_mma_block_scale_rejects_legacy_cutlass_128x4_layout_alias():
 
 
 @tilelang.testing.requires_cuda
-@tilelang.testing.requires_cuda_compute_version_eq(12, 0)
+@tilelang.testing.requires_cuda_compute_version_ge(12, 0)
+@tilelang.testing.requires_cuda_compute_version_lt(13, 0)
 @pytest.mark.parametrize(
     "M, N, K, warp_row_tiles, warp_col_tiles",
     [
@@ -710,7 +725,8 @@ def test_nvf4_mma_block_scale_fulltile_is_frontend_lowered(M, N, K, warp_row_til
 
 
 @tilelang.testing.requires_cuda
-@tilelang.testing.requires_cuda_compute_version_eq(12, 0)
+@tilelang.testing.requires_cuda_compute_version_ge(12, 0)
+@tilelang.testing.requires_cuda_compute_version_lt(13, 0)
 def test_nvf4_mma_block_scale_packed_smem_offsets():
     kernel = tilelang.compile(
         _make_nvf4_matmul_codegen_kernel(256, 256, 256, num_stages=3),
@@ -757,7 +773,8 @@ def test_nvf4_mma_block_scale_packed_smem_non_alias_offset_units():
 
 
 @tilelang.testing.requires_cuda
-@tilelang.testing.requires_cuda_compute_version_eq(12, 0)
+@tilelang.testing.requires_cuda_compute_version_ge(12, 0)
+@tilelang.testing.requires_cuda_compute_version_lt(13, 0)
 @pytest.mark.parametrize(
     "K,input_mode",
     [
@@ -788,7 +805,8 @@ def test_nvf4_mma_block_scale_constant_scale_correctness(K, input_mode):
 
 
 @tilelang.testing.requires_cuda
-@tilelang.testing.requires_cuda_compute_version_eq(12, 0)
+@tilelang.testing.requires_cuda_compute_version_ge(12, 0)
+@tilelang.testing.requires_cuda_compute_version_lt(13, 0)
 def test_nvf4_mma_block_scale_varying_scale_correctness():
     import torch
 
@@ -811,7 +829,8 @@ def test_nvf4_mma_block_scale_varying_scale_correctness():
 
 
 @tilelang.testing.requires_cuda
-@tilelang.testing.requires_cuda_compute_version_eq(12, 0)
+@tilelang.testing.requires_cuda_compute_version_ge(12, 0)
+@tilelang.testing.requires_cuda_compute_version_lt(13, 0)
 @pytest.mark.parametrize(
     "K, fragment_a, fragment_scales, transpose_a, compact, policy",
     [
@@ -821,6 +840,10 @@ def test_nvf4_mma_block_scale_varying_scale_correctness():
         (128, True, True, True, False, T.GemmWarpPolicy.FullRow),
         (64, False, False, False, True, T.GemmWarpPolicy.FullRow),
         (256, False, False, False, True, T.GemmWarpPolicy.FullCol),
+        (256, True, False, False, False, T.GemmWarpPolicy.FullRow),
+        (192, True, False, False, False, T.GemmWarpPolicy.Square),
+        (256, True, False, True, False, T.GemmWarpPolicy.FullCol),
+        (192, False, False, False, False, T.GemmWarpPolicy.FullRow),
     ],
 )
 def test_nvf4_mma_block_scale_fragments_and_odd_warps(K, fragment_a, fragment_scales, transpose_a, compact, policy):
@@ -851,10 +874,40 @@ def test_nvf4_mma_block_scale_fragments_and_odd_warps(K, fragment_a, fragment_sc
             sf_layout="blockscaled_chunk_kmajor" if compact else "rowmajor",
             policy=policy,
         ),
-        target={"kind": "cuda", "arch": "sm_120a"},
+        target="cuda",
         out_idx=[4],
     )
     torch.testing.assert_close(kernel(A, B, SFA, SFB), ref, atol=0, rtol=0)
+
+
+@tilelang.testing.requires_cuda
+@tilelang.testing.requires_cuda_compute_version_eq(12, 0)
+@pytest.mark.parametrize("policy", [T.GemmWarpPolicy.FullRow, T.GemmWarpPolicy.Square])
+def test_nvf4_mma_block_scale_fragment_a_unrolls_k_atoms_and_packs_scales(policy):
+    kernel = tilelang.compile(
+        _make_nvf4_matmul_codegen_kernel(
+            128,
+            128,
+            256,
+            num_stages=0,
+            block_col_warps=4,
+            warp_row_tiles=64,
+            fragment_a=True,
+            sf_layout="rowmajor",
+            policy=policy,
+        ),
+        target={"kind": "cuda", "arch": "sm_120a"},
+        out_idx=[4],
+    )
+    src = kernel.get_kernel_source()
+    # K atoms are unrolled in TIR, so the A fragment is only indexed with constants.
+    assert "for (int ki" not in src
+    mma_lines = [line for line in src.splitlines() if "sm120_mma_sync_blockscaled<" in line]
+    assert mma_lines
+    # Shared scales are loaded once per K atom into per-lane packages; the MMAs read registers.
+    assert "SFA_package" in src
+    assert "SFB_package" in src
+    assert not any("SFA_shared" in line or "SFB_shared" in line for line in mma_lines)
 
 
 @tilelang.testing.requires_cuda
@@ -937,7 +990,8 @@ def _load_sm120_example(monkeypatch):
     return module
 
 
-@tilelang.testing.requires_cuda_compute_version_eq(12, 0)
+@tilelang.testing.requires_cuda_compute_version_ge(12, 0)
+@tilelang.testing.requires_cuda_compute_version_lt(13, 0)
 def test_sm120_nvfp4_example_kernel_handles_mn_tail_tiles(monkeypatch):
     import pytest
 
