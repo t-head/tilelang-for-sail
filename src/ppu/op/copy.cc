@@ -229,34 +229,28 @@ LinearOffsetOfIndices(const Buffer &logical_buffer, Array<PrimExpr> indices,
   return linear;
 }
 
-std::optional<size_t> GetSingleActiveAxis(const Array<Range> &ranges,
-                                          arith::Analyzer *analyzer) {
-  std::optional<size_t> active_axis;
-  for (size_t axis = 0; axis < ranges.size(); ++axis) {
-    if (analyzer->CanProveEqual(ranges[axis]->extent, 1)) {
-      continue;
-    }
-    if (active_axis.has_value()) {
-      return std::nullopt;
-    }
-    active_axis = axis;
-  }
-  return active_axis;
-}
-
 bool HasAlignedPPUAsyncCopyTransactions(const Buffer &logical_buffer,
                                         const Array<Range> &ranges,
                                         int transaction_elements,
                                         const Map<Buffer, Buffer> &buffer_remap,
                                         const LayoutMap &layout_map,
                                         arith::Analyzer *analyzer) {
-  auto active_axis = GetSingleActiveAxis(ranges, analyzer);
-  if (!active_axis.has_value()) {
+  // Multi-axis tiles (e.g. block_N x dim K/V loads) are validated on the
+  // innermost active axis: its extent must tile into whole transactions and
+  // every outer-axis row start must stay four-byte aligned after layout remap.
+  std::vector<size_t> active_axes;
+  for (size_t axis = 0; axis < ranges.size(); ++axis) {
+    if (!analyzer->CanProveEqual(ranges[axis]->extent, 1)) {
+      active_axes.push_back(axis);
+    }
+  }
+  if (active_axes.empty()) {
     return false;
   }
+  const size_t inner_axis = active_axes.back();
+  const Range &inner_range = ranges[inner_axis];
 
-  PrimExpr simplified_extent =
-      analyzer->Simplify(ranges[active_axis.value()]->extent);
+  PrimExpr simplified_extent = analyzer->Simplify(inner_range->extent);
   const int64_t *extent = as_const_int(simplified_extent);
   if (extent == nullptr || *extent <= 0 ||
       *extent % transaction_elements != 0) {
@@ -270,18 +264,16 @@ bool HasAlignedPPUAsyncCopyTransactions(const Buffer &logical_buffer,
       static_cast<int64_t>(physical_buffer->dtype.bits()) *
       physical_buffer->dtype.lanes();
 
-  Array<PrimExpr> indices;
-  indices.reserve(ranges.size());
+  Array<PrimExpr> base_indices;
+  base_indices.reserve(ranges.size());
   for (const Range &range : ranges) {
-    indices.push_back(range->min);
+    base_indices.push_back(range->min);
   }
 
   // The common vectorizer proves unit stride inside each vector transaction.
   // Here, prove the complementary condition that every transaction begins on
   // a four-byte boundary after the final layout remap.
-  const Range &active_range = ranges[active_axis.value()];
-  auto transaction_is_aligned = [&](PrimExpr delta) {
-    indices.Set(active_axis.value(), active_range->min + delta);
+  auto indices_are_aligned = [&](const Array<PrimExpr> &indices) {
     auto physical_offset = LinearOffsetOfIndices(logical_buffer, indices,
                                                  buffer_remap, layout_map);
     if (!physical_offset.has_value()) {
@@ -293,27 +285,73 @@ bool HasAlignedPPUAsyncCopyTransactions(const Buffer &logical_buffer,
         FloorMod(bit_offset, IntImm(DataType::Int(64), 32)),
         IntImm(DataType::Int(64), 0));
   };
+  auto with_inner_delta = [&](Array<PrimExpr> indices, PrimExpr delta) {
+    indices.Set(inner_axis, inner_range->min + delta);
+    return indices;
+  };
+  PrimExpr symbolic_inner_delta =
+      Var("ppu_async_copy_transaction", inner_range->min.dtype()) *
+      make_const(inner_range->min.dtype(), transaction_elements);
 
-  // First try to prove all transaction starts at once.  This keeps validation
-  // of naturally wide copies outside the one-wave promotion limit O(1).
-  Var transaction("ppu_async_copy_transaction", active_range->min.dtype());
-  PrimExpr symbolic_delta =
-      transaction * make_const(active_range->min.dtype(), transaction_elements);
-  if (transaction_is_aligned(symbolic_delta)) {
-    return true;
+  // First try to prove all transaction starts at once, with every outer axis
+  // left symbolic.  This keeps validation of affine layouts O(1).
+  {
+    Array<PrimExpr> indices = base_indices;
+    for (size_t i = 0; i + 1 < active_axes.size(); ++i) {
+      size_t axis = active_axes[i];
+      indices.Set(axis, ranges[axis]->min +
+                            Var("ppu_async_copy_outer_" + std::to_string(axis),
+                                ranges[axis]->min.dtype()));
+    }
+    if (indices_are_aligned(with_inner_delta(indices, symbolic_inner_delta))) {
+      return true;
+    }
   }
 
-  // Non-affine layouts may be provable only after substituting concrete
-  // indices.  Bound that fallback to the one-wave-scale cases this policy was
-  // measured for; larger unproven layouts conservatively use synchronous copy.
-  constexpr int64_t kMaxEnumeratedTransactions = 128;
+  // Non-affine layouts (e.g. swizzled shared) may be provable only after
+  // substituting concrete indices.  Enumerate outer-axis rows within a bounded
+  // budget, proving the inner axis symbolically per row before falling back to
+  // concrete transaction deltas; larger unproven layouts conservatively use
+  // synchronous copy.
+  constexpr int64_t kMaxEnumeratedTransactions = 4096;
   int64_t transaction_count = *extent / transaction_elements;
   if (transaction_count > kMaxEnumeratedTransactions) {
     return false;
   }
-  for (int64_t delta = 0; delta < *extent; delta += transaction_elements) {
-    if (!transaction_is_aligned(make_const(active_range->min.dtype(), delta))) {
+  // Reject factors against the remaining budget before multiplying so huge
+  // constant extents cannot overflow the row count past the guard.
+  int64_t row_budget = kMaxEnumeratedTransactions / transaction_count;
+  int64_t outer_rows = 1;
+  for (size_t i = 0; i + 1 < active_axes.size(); ++i) {
+    PrimExpr simplified_outer_extent =
+        analyzer->Simplify(ranges[active_axes[i]]->extent);
+    const int64_t *outer_extent = as_const_int(simplified_outer_extent);
+    if (outer_extent == nullptr || *outer_extent <= 0 ||
+        *outer_extent > row_budget / outer_rows) {
       return false;
+    }
+    outer_rows *= *outer_extent;
+  }
+  for (int64_t row = 0; row < outer_rows; ++row) {
+    Array<PrimExpr> indices = base_indices;
+    int64_t rem = row;
+    for (size_t i = 0; i + 1 < active_axes.size(); ++i) {
+      size_t axis = active_axes[i];
+      int64_t outer_extent =
+          *as_const_int(analyzer->Simplify(ranges[axis]->extent));
+      indices.Set(axis,
+                  ranges[axis]->min + make_const(ranges[axis]->min.dtype(),
+                                                 rem % outer_extent));
+      rem /= outer_extent;
+    }
+    if (indices_are_aligned(with_inner_delta(indices, symbolic_inner_delta))) {
+      continue;
+    }
+    for (int64_t delta = 0; delta < *extent; delta += transaction_elements) {
+      if (!indices_are_aligned(with_inner_delta(
+              indices, make_const(inner_range->min.dtype(), delta)))) {
+        return false;
+      }
     }
   }
   return true;
@@ -332,6 +370,33 @@ bool RequiresSynchronousPPUSubwordCopy(const CopyNode &op,
   }
   if (plan.action == PPUAsyncCopyWidthAction::kForceSynchronous) {
     return true;
+  }
+
+  // The SIMT loop iterates MakeIterVars(), which takes the range set of the
+  // lower-level memory scope, and MakeIndices() feeds one shared loop var to
+  // each paired non-unit axis of src and dst.  Validating the two range sets
+  // separately is only sound when every paired non-unit extent matches;
+  // otherwise the loop can visit transactions outside the validated domain
+  // (unit axes are constant indices and always covered).  Mirror that pairing
+  // here and conservatively keep synchronous copy on any mismatch.
+  {
+    size_t src_dim = 0, dst_dim = 0;
+    while (src_dim < op.src_range.size() && dst_dim < op.dst_range.size()) {
+      if (is_one(op.src_range[src_dim]->extent)) {
+        ++src_dim;
+        continue;
+      }
+      if (is_one(op.dst_range[dst_dim]->extent)) {
+        ++dst_dim;
+        continue;
+      }
+      if (!analyzer->CanProveEqual(op.src_range[src_dim]->extent,
+                                   op.dst_range[dst_dim]->extent)) {
+        return true;
+      }
+      ++src_dim;
+      ++dst_dim;
+    }
   }
 
   // Auto-promote only complete, aligned four-byte transactions.  A mixed
