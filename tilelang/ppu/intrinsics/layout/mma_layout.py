@@ -1,6 +1,10 @@
 # ================================================================
 # PPU Standard Layout Functions
 # ================================================================
+# m16n8 fallback note: the n8 paths reuse the n16 layout functions below
+# instead of keeping separate copies — the forward maps are identical on
+# the truncated domains, and the inverse is solved over the (truncated)
+# domain passed at the call site, so it truncates automatically.
 
 
 from __future__ import annotations
@@ -29,6 +33,39 @@ def ldmatrix_32x8_to_shared_16x16_layout(thread_id, local_id):
 def ldmatrix_trans_32x8_to_shared_16x16_layout(thread_id, local_id):
     row = 8 * (thread_id // 16) + (thread_id % 8)
     col = 8 * ((thread_id % 16) // 8) + local_id % 8
+    return row, col
+
+
+def ldmatrix_32x4_to_shared_16x8_layout_b_fp16(thread_id, local_id):
+    """m16n8k16 fallback B addressing, K-major shared tile (k16 x n8).
+
+    ldmatrix.x2 with .trans loads the two 8x8 fp16 halves (k rows 0-7 and
+    8-15) from the lane 0-15 addresses; lane 16-31 addresses are ignored
+    by .x2 but kept in bounds.
+    """
+    row = thread_id % 16
+    col = 0
+    return row, col
+
+
+def ldmatrix_32x4_to_shared_8x16_layout_b_fp16(thread_id, local_id):
+    """m16n8k16 fallback B addressing, N-major shared tile (n8 x k16): ldmatrix.x2 loads the two 8x8 halves at k columns 0 and 8 from the lane 0-15 addresses."""
+    row = thread_id % 8
+    col = 8 * ((thread_id % 16) // 8)
+    return row, col
+
+
+def ldmatrix_32x8_to_shared_8x32_layout_b(thread_id, local_id):
+    """m16n8k32 int8 fallback B addressing, N-major shared tile (n8 x k32): ldmatrix.x2 loads the two 8x16 halves at k columns 0-15 and 16-31 from the lane 0-15 addresses; lane 16-31 addresses are ignored by .x2 but kept in bounds."""
+    row = thread_id % 8
+    col = 16 * ((thread_id % 16) // 8)
+    return row, col
+
+
+def ldmatrix_32x2_to_shared_8x8_layout_b_fp32(thread_id, local_id):
+    """m16n8k8 tf32 fallback B addressing, N-major shared tile (n8 x k8): ldmatrix.x2 loads the two 8x8 halves at k columns 0 and 4 from the lane 0-15 addresses; lane 16-31 addresses are ignored by .x2 but kept in bounds."""
+    row = thread_id % 8
+    col = 4 * ((thread_id % 16) // 8)
     return row, col
 
 

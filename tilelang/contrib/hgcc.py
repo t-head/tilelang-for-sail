@@ -125,15 +125,6 @@ def get_target_arch(compute_version: str | tuple[int, int]) -> str:
         return "ppu_10"
 
 
-def get_target_arch_int(compute_version: str | tuple[int, int]) -> int:
-    """Convert compute version to integer."""
-    if isinstance(compute_version, str):
-        major, minor = parse_compute_version(compute_version)
-    else:
-        major, minor = compute_version
-    return major * 10 + minor
-
-
 def compile_ppu(
     code: str,
     target: Target | None = None,

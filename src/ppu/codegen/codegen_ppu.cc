@@ -598,7 +598,8 @@ public:
   }
 };
 
-// PPU: detect whether the kernel uses Actlize MMA instructions (m16n16k*).
+// PPU: detect whether the kernel uses Actlize MMA instructions
+// (m16n16k* or the m16n8k* fallback)
 class ActlizeDetector : public tirx::StmtExprVisitor {
 public:
   bool use_actlize_{false};
@@ -613,7 +614,8 @@ private:
     if (op->op.same_as(builtin::ptx_mma())) {
       std::string shape = Downcast<StringImm>(op->args[0])->value;
       auto [m, n, k] = tl::codegen::ppu::tix::ParseMMAShape(shape);
-      ICHECK(n == 16) << "Actlize MMA requires n == 16, but got n = " << n;
+      ICHECK(n == 16 || n == 8)
+          << "Actlize MMA requires n == 16 or n == 8, but got n = " << n;
       use_actlize_ = true;
     }
     tirx::StmtExprVisitor::VisitExpr_(op);
@@ -2982,7 +2984,9 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     PrimExpr stride = op->args[5];
 
     ICHECK(m == 16 && n == 16)
-        << "Only m == 16 && n == 16 case supported for now";
+        << "Only m == 16 && n == 16 case supported for now: T.mma_store is "
+           "not supported on the m16n8 MMA fallback path (n == 8); use "
+           "n == 16 for stores";
 
     // Each thread in a warp holds a certain number of elements of an MMA
     // output. For example, if we compute a 16x16 tile using MMA, each thread
@@ -5111,8 +5115,10 @@ void CodeGenTileLangPPU::AddFunction(const GlobalVar &gvar, const PrimFunc &f) {
   // Record cluster dimensions for usage in threadblock swizzle codegen
   this->cluster_dims = ClusterInfoExtractor().extract(f);
 
-  // Detect whether Actlize MMA (m16n16k*) is used, which requires the
-  // PPU-specific ldmatrix layout.
+  // Detect whether Actlize MMA (m16n16k* or the m16n8k* fallback) is
+  // used, which requires the PPU-specific ldmatrix layout. The ldmatrix path
+  // only rewrites x4 transposed loads (the n == 16 B fragment); n == 8 uses
+  // x2 loads and never selects the _ppu variant.
   ActlizeDetector actlize_detector;
   actlize_detector.detect(f);
   use_actlize_ldmatrix_ = actlize_detector.use_actlize_;

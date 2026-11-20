@@ -5,6 +5,7 @@
 
 #include "op/gemm.h"
 #include "support/check.h"
+#include <tvm/ir/transform.h>
 #include <tvm/runtime/logging.h>
 
 #include "op/builtin.h"
@@ -49,6 +50,15 @@ ComputeDefaultWarpPartition(const GemmWarpPolicyNode &policy, int M, int N,
   ICHECK(N % k_n_per_warp == 0)
       << "N must be divisible by " << k_n_per_warp << ", but got " << N;
 
+  // N % (n * k_n_per_warp) == 0: n_warp divides N and warp_col_tiles stays
+  // a multiple of k_n_per_warp, so each warp covers whole MMA tile columns.
+  // The old partition emitted non-multiple-of-16 warp_col_tiles and failed
+  // at the Python divisibility assertion; such candidates are now skipped
+  // here.
+  auto valid_n_warp = [N, k_n_per_warp](int n) {
+    return N % (n * k_n_per_warp) == 0;
+  };
+
   if (policy.IsFullRow()) {
     int best_m = 1;
     int best_n = 1;
@@ -61,6 +71,10 @@ ComputeDefaultWarpPartition(const GemmWarpPolicyNode &policy, int M, int N,
       int n = num_warps / best_m;
       if (n != 0) {
         best_n = n;
+      }
+      // Shrink n_warp until every warp covers whole MMA tiles.
+      while (best_n > 1 && !valid_n_warp(best_n)) {
+        --best_n;
       }
     } else {
       best_m = max_m_warp;
@@ -75,11 +89,19 @@ ComputeDefaultWarpPartition(const GemmWarpPolicyNode &policy, int M, int N,
     int max_n_warp = N / k_n_per_warp;
     if (max_n_warp > num_warps) {
       best_n = num_warps;
+      // Shrink n_warp until every warp covers whole MMA tiles.
+      while (best_n > 1 && !valid_n_warp(best_n)) {
+        --best_n;
+      }
     } else if (max_m_warp * max_n_warp > num_warps) {
       best_n = max_n_warp;
       int m = num_warps / best_n;
       if (m != 0) {
         best_m = m;
+      }
+      // Shrink m_warp until every warp covers whole MMA tiles.
+      while (best_m > 1 && M % (best_m * kMPerWarp) != 0) {
+        --best_m;
       }
     } else {
       best_m = max_m_warp;
@@ -102,6 +124,8 @@ ComputeDefaultWarpPartition(const GemmWarpPolicyNode &policy, int M, int N,
       if (m_per_warp < 1 || n_per_warp < 1)
         continue;
       if (m * n != num_warps)
+        continue;
+      if (!valid_n_warp(n) || M % (m * kMPerWarp) != 0)
         continue;
 
       float balance = std::abs(m_per_warp / n_per_warp - ideal_ratio);
@@ -143,9 +167,16 @@ struct Gemm {
   ComputeWarpPartition(const GemmWarpPolicyNode &policy, int M, int N,
                        int block_size, Target target, String gemm_inst) {
     int num_warps = block_size / TargetPPUGetWarpSize(target);
-    // PPU MMA uses m16n16 tiles, so each warp needs at least 16 columns.
-    constexpr int kNPerWarp = 16;
-    return ComputeDefaultWarpPartition(policy, M, N, num_warps, kNPerWarp);
+    // PPU MMA tiles need a 16-column warp slice; PPU0015+ relaxes it to 8
+    // for m16n8k* fallback shapes or when tl.ppu_force_gemm_n8 is set.
+    int k_n_per_warp = 16;
+    if (GetPPUArchInt(target) >= 15) {
+      bool force_gemm_n8 = tvm::transform::PassContext::Current()
+                               ->GetConfig<Bool>(kPpuForceGemmN8, Bool(false))
+                               .value();
+      k_n_per_warp = (force_gemm_n8 || N % 16 != 0) ? 8 : 16;
+    }
+    return ComputeDefaultWarpPartition(policy, M, N, num_warps, k_n_per_warp);
   }
 
   static bool ReuseExistingSharedLayout(String /* gemm_inst */) {
