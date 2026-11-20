@@ -13,7 +13,9 @@
  */
 
 #include "support/check.h"
+#include <tvm/ir/attrs.h>
 #include <tvm/ir/cast.h>
+#include <tvm/ir/transform.h>
 #include <tvm/runtime/logging.h>
 #include <tvm/s_tir/utils.h>
 #include <tvm/tirx/builtin.h>
@@ -26,6 +28,7 @@
 #include <algorithm>
 #include <atomic>
 #include <deque>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <queue>
@@ -1490,17 +1493,80 @@ private:
   Map<ObjectRef, Map<Buffer, Buffer>> trans_buffer_;
 };
 
+// Marks PrimFuncs whose layout inference succeeded via the m16n8 retry;
+// PpuLowerTileOp re-enables tl.ppu_force_gemm_n8 for marked functions only.
+// Mirrored in ppu_lower_tile_op.cc (no shared transform header).
+static constexpr const char *kPpuN8Forced = "tl.ppu_n8_forced";
+
+/*!
+ * \brief Retry layout collection once with tl.ppu_force_gemm_n8 = true so
+ * gemm partitioning and the MMA emitter select m16n8 atoms. A second
+ * failure rethrows the original exception (the retry error is logged).
+ */
+template <typename RunCollect>
+void RetryCollectWithN8Compat(tvm::transform::PassContext pass_ctx,
+                              std::exception_ptr first_error,
+                              const std::string &first_error_msg,
+                              RunCollect &&run_collect) {
+  LOG(WARNING) << "PPU layout inference failed with: " << first_error_msg
+               << ". Retrying once with the gemm m16n8 compatibility fallback "
+                  "(tl.ppu_force_gemm_n8 = true); this may result in a "
+                  "performance drop.";
+  pass_ctx->config.Set(kPpuForceGemmN8, Bool(true));
+  try {
+    run_collect();
+  } catch (const std::exception &retry_error) {
+    LOG(WARNING) << "PPU layout inference still fails after the m16n8 "
+                    "compatibility retry: "
+                 << retry_error.what() << "; rethrowing the original error.";
+    std::rethrow_exception(first_error);
+  }
+}
+
 class LayoutInferencer : public IRMutatorWithAnalyzer {
 public:
   static PrimFunc Substitute(PrimFunc f) {
     arith::Analyzer analyzer;
     PrimFuncNode *fptr = f.CopyOnWrite();
     fptr->body = ParallelLoopFuser::Fuse(f->body);
-    BufferUseDefCollector collector;
-    collector.Collect(f);
-    auto result = collector.Run();
+    LayoutInferenceResult result;
+
+    auto run_collect = [&]() {
+      BufferUseDefCollector collector;
+      collector.Collect(f);
+      result = collector.Run();
+    };
+
+    tvm::transform::PassContext pass_ctx =
+        tvm::transform::PassContext::Current();
+    bool ppu_enable_n8_compat =
+        pass_ctx->GetConfig<Bool>(kPpuEnableN8Compat, Bool(true)).value();
+    bool ppu_force_gemm_n8 =
+        pass_ctx->GetConfig<Bool>(kPpuForceGemmN8, Bool(false)).value();
+    // The m16n8 fallback requires PPU0015+ atoms; PPU0010 stays fail-fast.
+    // Skip the retry when the flag is already forced.
+    int ppu_arch = 0;
+    if (auto target = f->GetAttr<Target>(tvm::attr::kTarget)) {
+      ppu_arch = GetPPUArchInt(target.value());
+    }
+    bool n8_retry_applied = false;
+    if (ppu_enable_n8_compat && ppu_arch >= 15 && !ppu_force_gemm_n8) {
+      try {
+        run_collect();
+      } catch (const std::exception &e) {
+        RetryCollectWithN8Compat(pass_ctx, std::current_exception(), e.what(),
+                                 run_collect);
+        n8_retry_applied = true;
+      }
+    } else {
+      run_collect();
+    }
     LayoutInferencer substituter(result, &analyzer);
     fptr->body = substituter.VisitStmt(f->body);
+    if (n8_retry_applied) {
+      // Persist the retry decision on this function for PpuLowerTileOp.
+      f = WithAttr(std::move(f), kPpuN8Forced, Bool(true));
+    }
     return f;
   }
 
@@ -1679,8 +1745,20 @@ private:
 tvm::transform::Pass PpuLayoutInference() {
   using namespace tirx::transform;
   auto pass_func = [=](PrimFunc f, const IRModule &m, const PassContext &ctx) {
-    f = LayoutInferencer::Substitute(std::move(f));
-    ParallelLoopLayoutValidator::Validate(f->body);
+    // Substitute may flip kPpuForceGemmN8 in the shared PassContext;
+    // restore the saved value after each function on both exit paths.
+    tvm::transform::PassContext pass_ctx =
+        tvm::transform::PassContext::Current();
+    bool saved_force_gemm_n8 =
+        pass_ctx->GetConfig<Bool>(kPpuForceGemmN8, Bool(false)).value();
+    try {
+      f = LayoutInferencer::Substitute(std::move(f));
+      ParallelLoopLayoutValidator::Validate(f->body);
+    } catch (...) {
+      pass_ctx->config.Set(kPpuForceGemmN8, Bool(saved_force_gemm_n8));
+      throw;
+    }
+    pass_ctx->config.Set(kPpuForceGemmN8, Bool(saved_force_gemm_n8));
     return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tl.ppu.LayoutInference", {});

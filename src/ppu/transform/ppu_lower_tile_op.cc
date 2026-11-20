@@ -43,6 +43,11 @@ using namespace ffi;
 
 namespace {
 
+// Marks PrimFuncs whose layout inference succeeded via the m16n8 retry;
+// tl.ppu_force_gemm_n8 is re-enabled for these functions only.
+// Mirrored in ppu_layout_inference.cc (no shared transform header).
+static constexpr const char *kPpuN8Forced = "tl.ppu_n8_forced";
+
 static Buffer makeBufferWithLayout(const Buffer &buffer, const Layout &layout,
                                    Map<Var, Var> &var_remap) {
   const auto *ptr_type =
@@ -1467,7 +1472,27 @@ using namespace tirx::transform;
 
 tvm::transform::Pass PpuLowerTileOp() {
   auto pass_func = [=](PrimFunc f, const IRModule &m, const PassContext &ctx) {
-    return LowerTileOpPass::Substitute(std::move(f));
+    // Re-enable tl.ppu_force_gemm_n8 only for functions marked by
+    // LayoutInference; restore the saved value on both exit paths.
+    tvm::transform::PassContext pass_ctx =
+        tvm::transform::PassContext::Current();
+    bool saved_force_gemm_n8 =
+        pass_ctx->GetConfig<Bool>(kPpuForceGemmN8, Bool(false)).value();
+    bool n8_forced = false;
+    if (auto forced = f->GetAttr<Bool>(kPpuN8Forced)) {
+      n8_forced = forced.value();
+    }
+    try {
+      if (n8_forced) {
+        pass_ctx->config.Set(kPpuForceGemmN8, Bool(true));
+      }
+      f = LowerTileOpPass::Substitute(std::move(f));
+    } catch (...) {
+      pass_ctx->config.Set(kPpuForceGemmN8, Bool(saved_force_gemm_n8));
+      throw;
+    }
+    pass_ctx->config.Set(kPpuForceGemmN8, Bool(saved_force_gemm_n8));
+    return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tl.ppu.LowerTileOp", {});
 }
