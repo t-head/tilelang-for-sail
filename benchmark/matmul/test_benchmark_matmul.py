@@ -13,7 +13,6 @@ import pytest
 
 import benchmark_matmul
 import benchmark_matmul_sp
-import benchmark_matmul_intrinsic
 import benchmark_matmul_sr
 import benchmark_matmul_rs
 from utils import print_benchmark_summary, profile_python_script
@@ -192,73 +191,6 @@ def test_matmul(m, n, k, with_roller=False):
 
     print_benchmark_summary(
         "MatMul",
-        f"M={m}, N={n}, K={k}",
-        result.latency,
-        tilelang_tflops,
-        result.ref_latency if result.ref_latency is not None else 0.0,
-        ref_tflops,
-        "Reference",
-        result.config,
-        tilelang_cycles=tl_cycles,
-        tilelang_tc=tl_tc,
-        ref_cycles=ref_cycles,
-        ref_tc=ref_tc,
-    )
-
-
-# ---------------------------------------------------------------------------
-# benchmark_matmul_intrinsic
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "m,n,k",
-    DEFAULT_CASES,
-    ids=[_fmt(*c) for c in DEFAULT_CASES],
-)
-@pytest.mark.skip(reason="Skipping intrinsic")
-def test_matmul_intrinsic(m, n, k, with_roller=False):
-    """Run benchmark_matmul_intrinsic and verify results.
-
-    Usage:
-        pytest test_benchmark_matmul.py::test_matmul_intrinsic[M4096_N4096_K4096] -v -s
-    """
-    in_dtype = T.float16
-    out_dtype = T.float16
-    accum_dtype = T.float32
-    result = benchmark_matmul_intrinsic.matmul(m, n, k, in_dtype, out_dtype, accum_dtype, with_roller)
-    assert result.latency > 0, "Autotune returned zero/negative latency"
-    assert result.config is not None, "Autotune returned no config"
-
-    flops = _gemm_flops(m, n, k)
-    tilelang_tflops = flops / result.latency * 1e-9
-    ref_tflops = flops / result.ref_latency * 1e-9 if result.ref_latency is not None else 0.0
-    _pc_inject, _config_no_pc = _pass_configs_inject(result.config, "benchmark_matmul_intrinsic.matmul")
-    kernel_script = textwrap.dedent(f"""\
-        import sys; sys.path.insert(0, '.')
-        import torch, tilelang.language as T, benchmark_matmul_intrinsic
-        {_pc_inject}
-        A = torch.randn({m}, {k}, device='cuda', dtype=torch.float16)
-        B = torch.randn({n}, {k}, device='cuda', dtype=torch.float16)
-        kernel = benchmark_matmul_intrinsic.matmul({m}, {n}, {k}, T.float16, T.float16, T.float32, False, **{_safe_config_repr(_config_no_pc)})
-        def run():
-            kernel(A, B)
-            torch.cuda.synchronize()
-        run()
-    """)
-    ref_script = textwrap.dedent(f"""\
-        import torch
-        A = torch.randn({m}, {k}, device='cuda', dtype=torch.float16)
-        B = torch.randn({n}, {k}, device='cuda', dtype=torch.float16)
-        def run():
-            _ = A @ B.T
-            torch.cuda.synchronize()
-        run()
-    """)
-    tl_cycles, tl_tc, ref_cycles, ref_tc = _maybe_profile(kernel_script, ref_script)
-
-    print_benchmark_summary(
-        "MatMul Intrinsic",
         f"M={m}, N={n}, K={k}",
         result.latency,
         tilelang_tflops,
