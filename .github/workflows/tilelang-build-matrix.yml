@@ -36,13 +36,12 @@
 # dev and v0.1.12 share the 0.1.12 base version; without the hash their
 # wheel filenames would collide inside the merged publish artifact.
 #
-# Publishing: after every matrix entry passes, the per-entry wheel
-# artifacts are merged and published to a temporary wheel directory
-# through the reusable t-head/ci-infra push-tmp-wheel.yml template (same
-# channel as triton-for-sail triton-build-matrix.yml and DeepGEMM-for-sail
-# deepgemm-ut-upload-tmp.yml), gated on the suite so a failed entry keeps
-# its wheel as a run artifact only. Requires RELEASE_USERNAME /
-# RELEASE_TOKEN secrets (TEMPLATE_TOKEN falls back to github.token).
+# Publishing: after every matrix entry passes, retain the merged artifact
+# for download and call the t-head/ci-infra push-tmp-wheel.yml template per
+# entry so each wheel's repo/commit/branch/tag properties match its source.
+# If any build fails, keep run artifacts only without publishing.
+# Requires RELEASE_USERNAME / RELEASE_TOKEN secrets; TEMPLATE_TOKEN falls
+# back to github.token.
 
 name: TileLang Wheel Build On SAIL
 
@@ -118,8 +117,10 @@ jobs:
           matrix=$(python3 - "$REFS" "$EVENT_NAME" <<'PYEOF'
           import json
           import os
+          import re
           import subprocess
           import sys
+          from urllib.request import Request, urlopen
 
           refs = json.loads(sys.argv[1])
           event_name = sys.argv[2]
@@ -144,21 +145,57 @@ jobs:
           # of a "PRs merged since" check. Entries without a state file yet
           # are always built. Non-schedule triggers never skip anything.
           state_dir = os.environ.get("STATE_DIR")
-          tip_cache = {}
+          repo = os.environ["GITHUB_REPOSITORY"]
+          url = "https://x-access-token:{}@github.com/{}.git".format(
+              os.environ["GITHUB_TOKEN"], repo)
+          # Take one exact heads/tags snapshot; never expose the token-bearing URL in error logs.
+          try:
+              proc = subprocess.run(["git", "ls-remote", "--heads", "--tags", url],
+                                    capture_output=True, text=True, check=False, timeout=60)
+          except subprocess.TimeoutExpired:
+              raise SystemExit("git ls-remote timed out while resolving build sources") from None
+          if proc.returncode != 0:
+              raise SystemExit("git ls-remote failed while resolving build sources")
+          remote_refs = dict(line.split()[::-1] for line in proc.stdout.splitlines() if line.strip())
+          heads = {name.removeprefix("refs/heads/"): sha
+                   for name, sha in remote_refs.items() if name.startswith("refs/heads/")}
+          # Use the peeled commit for annotated tags, not the tag object SHA.
+          tags = {name.removeprefix("refs/tags/"): remote_refs.get(name + "^{}", sha)
+                  for name, sha in remote_refs.items()
+                  if name.startswith("refs/tags/") and not name.endswith("^{}")}
 
-          def ref_tip(ref):
-              if ref not in tip_cache:
-                  url = "https://x-access-token:{}@github.com/{}.git".format(
-                      os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"])
-                  # stderr is discarded so a failed ls-remote can never leak
-                  # the token-embedding URL into the log.
-                  proc = subprocess.run(["git", "ls-remote", url, ref],
-                                        capture_output=True, text=True, check=False)
-                  lines = [l for l in proc.stdout.splitlines() if l.strip()]
-                  if proc.returncode != 0 or not lines:
-                      raise SystemExit(f"git ls-remote failed for ref {ref!r}")
-                  tip_cache[ref] = lines[0].split()[0]
-              return tip_cache[ref]
+          def resolve_source(ref):
+              branch = ""
+              if ref.startswith("refs/heads/") and ref[11:] in heads:
+                  branch = ref[11:]
+                  commit = heads[branch]
+              elif ref.startswith("refs/tags/") and ref[10:] in tags:
+                  commit = tags[ref[10:]]
+              elif ref in heads:
+                  branch = ref
+                  commit = heads[ref]
+              elif ref in tags:
+                  commit = tags[ref]
+              elif re.fullmatch(r"[0-9a-fA-F]{40}", ref):
+                  commit = ref.lower()
+              elif re.fullmatch(r"[0-9a-fA-F]{7,39}", ref):
+                  # Expand short SHAs through the source repository API to the full SHA required by the template.
+                  request = Request(f"{os.environ['GITHUB_API_URL']}/repos/{repo}/commits/{ref}",
+                                    headers={"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}"})
+                  with urlopen(request, timeout=30) as response:
+                      commit = json.load(response)["sha"]
+              else:
+                  raise SystemExit(f"Unknown build ref: {ref!r}")
+              if not re.fullmatch(r"[0-9a-fA-F]{40}", commit):
+                  raise SystemExit(f"Invalid build commit for ref {ref!r}")
+              commit = commit.lower()
+              if not branch:
+                  # Associate a detached ref with a branch only when exactly one branch points to the build commit.
+                  matching_heads = [name for name, sha in heads.items() if sha == commit]
+                  if len(matching_heads) == 1:
+                      branch = matching_heads[0]
+              return {"repo": repo, "commit": commit, "branch": branch,
+                      "source_tag": ",".join(sorted(name for name, sha in tags.items() if sha == commit))}
 
           def last_built(safe_id):
               try:
@@ -175,12 +212,13 @@ jobs:
               # the tag or nightly skip state is never found and every ref
               # rebuilds every night.
               safe_id = ref.replace("/", "-") + "-" + TAG
+              source = resolve_source(ref)
               if event_name == "schedule":
                   built = last_built(safe_id)
-                  if built is not None and built == ref_tip(ref):
+                  if built is not None and built == source["commit"]:
                       skipped.append(f"{ref} (tip {built[:9]} unchanged since last successful build)")
                       continue
-              entries.append({"ref": ref, "image": IMAGE, "tag": TAG})
+              entries.append({"ref": ref, "image": IMAGE, "tag": TAG, "safe_id": safe_id, **source})
 
           print(json.dumps(entries))
 
@@ -232,13 +270,20 @@ jobs:
       - name: Checkout (${{ matrix.entry.ref }})
         uses: actions/checkout@v7
         with:
-          ref: ${{ matrix.entry.ref }}
+          # Pin the resolved SHA so branch movement during queueing or retries cannot invalidate source properties.
+          repository: ${{ matrix.entry.repo }}
+          ref: ${{ matrix.entry.commit }}
           submodules: recursive
           persist-credentials: false
 
       - name: Build wheel on PPU
         id: ppu-build
         uses: t-head/ci-infra/cluster-run@main
+        env:
+          SOURCE_REPO: ${{ matrix.entry.repo }}
+          SOURCE_COMMIT: ${{ matrix.entry.commit }}
+          SOURCE_BRANCH: ${{ matrix.entry.branch }}
+          SOURCE_TAG: ${{ matrix.entry.source_tag }}
         with:
           image: ${{ matrix.entry.image }}
           nnodes: 0
@@ -253,6 +298,10 @@ jobs:
             cd /workspace/source
 
             git config --global --add safe.directory '*'
+            if [[ "$(git rev-parse HEAD)" != "$SOURCE_COMMIT" ]]; then
+              echo "[FATAL] pod source commit does not match the upload metadata" >&2
+              exit 1
+            fi
             # The image bakes in PIP_INDEX_URL pointing at an unreachable
             # internal server; unset it (same as this repo's ci.yml).
             unset PIP_INDEX_URL
@@ -387,7 +436,10 @@ jobs:
             {
               echo "ref=${{ matrix.entry.ref }}"
               echo "config=${{ matrix.entry.tag }}"
+              echo "repo=$SOURCE_REPO"
               echo "commit=$(git -C /workspace/source rev-parse HEAD)"
+              echo "branch=$SOURCE_BRANCH"
+              echo "tag=$SOURCE_TAG"
               echo "image=${{ matrix.entry.image }}"
               echo "tilelang_version=$TILELANG_VER"
               echo "wheel=$(cd dist && ls tilelang*.whl 2>/dev/null | head -1)"
@@ -463,12 +515,21 @@ jobs:
           delete-merged: false
 
   push:
-    name: Call temporary wheel upload template
-    needs: merge
+    name: Upload temporary wheels (${{ matrix.entry.ref }})
+    # Source properties apply to the entire artifact; publish per entry only after the full matrix succeeds.
+    needs: [prepare-matrix, merge]
+    if: ${{ needs.prepare-matrix.outputs.matrix != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJson(needs.prepare-matrix.outputs.matrix) }}
     uses: t-head/ci-infra/.github/workflows/push-tmp-wheel.yml@main
     with:
-      # run_attempt moves when only the publishing job is rerun.
-      artifact_name: ${{ needs.merge.outputs.artifact_name }}
+      artifact_name: tilelang-wheel-${{ github.run_id }}-${{ matrix.entry.safe_id }}
+      repo: ${{ matrix.entry.repo }}
+      commit: ${{ matrix.entry.commit }}
+      branch: ${{ matrix.entry.branch }}
+      tag: ${{ matrix.entry.source_tag }}
       template_repository: t-head/ci-infra
       template_ref: main
     secrets:
@@ -477,15 +538,30 @@ jobs:
       template_token: ${{ secrets.TEMPLATE_TOKEN }}
 
   result:
-    name: Show batch directory URL
-    needs: push
+    name: Show upload results
+    needs: [prepare-matrix, push]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Write to logs and job summary
         shell: bash
         env:
-          UPLOAD_URL: ${{ needs.push.outputs.upload_url }}
+          SOURCE_MATRIX: ${{ needs.prepare-matrix.outputs.matrix }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          printf 'Batch directory: %s\n' "$UPLOAD_URL" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Reusable workflow matrix outputs retain only one completed entry, not all upload directories.
+          python3 - <<'PYEOF'
+          import json
+          import os
+
+          lines = ["## Wheel upload results", "",
+                   f"See the [upload job logs]({os.environ['RUN_URL']}) for each build entry's upload directory.", ""]
+          for entry in json.loads(os.environ["SOURCE_MATRIX"]):
+              lines.append(f"- {entry['ref']}: commit={entry['commit']}, "
+                           f"branch={entry['branch']}, tag={entry['source_tag']}")
+          summary = "\n".join(lines) + "\n"
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(summary)
+          PYEOF
