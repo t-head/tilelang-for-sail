@@ -15,7 +15,6 @@ __all__ = [
     "ptx_mma",
     "ptx_mma_scaled",
     "ptx_mma_sp",
-    "tix_ldmatrix_b8",
     "tix_ldmatrix_swzl",
 ]
 
@@ -172,22 +171,6 @@ def tix_ldmatrix_swzl(trans, num, src_access_ptr, dst_access_ptr, swzl_mode, tra
         dst_access_ptr,
         swzl_mode,
         trans_block,
-    )
-
-
-def tix_ldmatrix_b8(matrix_type, num, src_access_ptr, dst_access_ptr):
-    """Load a transposed b8 matrix fragment on PPU1.5.
-
-    ``matrix_type`` selects the destination register order: 0 for an MMA A
-    operand and 1 for an MMA B operand.
-    """
-    return tirx.call_intrin(
-        "handle",
-        tirx.op.Op.get("tl.tix_ldmatrix_b8"),
-        matrix_type,
-        num,
-        src_access_ptr,
-        dst_access_ptr,
     )
 
 

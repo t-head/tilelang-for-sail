@@ -1023,7 +1023,7 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
 
     def _can_use_trans_b8(self, region: BufferRegion) -> bool:
         """Whether a natural-layout b8 B region is legal for m16n16 ldmatrix."""
-        if self.ppu_arch < 15 or DataType(self.b_dtype).bits != 8 or self.b_transposed:
+        if self.ppu_arch < 15 or self.micro_size_k != 32 or DataType(self.b_dtype).bits != 8 or self.b_transposed:
             return False
 
         buffer = region.buffer
@@ -1282,7 +1282,9 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
                     # x2 m16n16.b8 consumes one 16-byte row from each lane and
                     # produces the complete m16n16k32 B fragment. matrix_type
                     # 1 selects the B-operand register order.
-                    T.tix_ldmatrix_b8(
+                    tirx.call_intrin(
+                        "handle",
+                        tirx.op.Op.get("tl.tix_ldmatrix_b8"),
                         1,
                         2,
                         T.access_ptr(B_buf[src_indices], "r", extent=16),

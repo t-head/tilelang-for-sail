@@ -276,6 +276,23 @@ def test_ldsm_trans_b8_gemm_ss_nn():
     _check_gemm_ss_nn("float8_e4m3fn", 128, 64, 32, 128, T.GemmWarpPolicy.FullCol)
 
 
+def _trans_b8_emitter(chunk, layout_map):
+    return PPUTensorCoreIntrinEmitter(
+        a_dtype="float8_e4m3fn",
+        b_dtype="float8_e4m3fn",
+        accum_dtype="float32",
+        a_transposed=False,
+        b_transposed=False,
+        block_row_warps=1,
+        block_col_warps=1,
+        warp_row_tiles=16,
+        warp_col_tiles=16,
+        chunk=chunk,
+        ppu_arch=15,
+        layout_map=layout_map,
+    )
+
+
 def _trans_b8_region_is_eligible(*, strides=None, elem_offset=0, include_layout=True):
     buffer_kwargs = {"elem_offset": elem_offset, "data_alignment": 16}
     if strides is not None:
@@ -286,20 +303,7 @@ def _trans_b8_region_is_eligible(*, strides=None, elem_offset=0, include_layout=
         [tilelang.tvm.ir.Range(0, 32), tilelang.tvm.ir.Range(0, 128)],
     )
     layout_map = {buffer: make_linear_layout(buffer)} if include_layout else None
-    emitter = PPUTensorCoreIntrinEmitter(
-        a_dtype="float8_e4m3fn",
-        b_dtype="float8_e4m3fn",
-        accum_dtype="float32",
-        a_transposed=False,
-        b_transposed=False,
-        block_row_warps=1,
-        block_col_warps=1,
-        warp_row_tiles=16,
-        warp_col_tiles=16,
-        chunk=32,
-        ppu_arch=15,
-        layout_map=layout_map,
-    )
+    emitter = _trans_b8_emitter(32, layout_map)
     return emitter._can_use_trans_b8(region)
 
 
@@ -310,6 +314,33 @@ def test_ldsm_trans_b8_gemm_ss_nn_eligibility():
     assert not _trans_b8_region_is_eligible(elem_offset=1)
     assert not _trans_b8_region_is_eligible(strides=(129, 1))
     assert not _trans_b8_region_is_eligible(strides=(256, 2))
+
+
+@pytest.mark.parametrize("k", [8, 16])
+def test_ldsm_trans_b8_small_k_uses_scalar_b_load(k):
+    # Isolate B-load lowering: PPU's FP8 MMA dispatcher only supports K=32.
+    dtype = "float8_e4m3fn"
+    tirx = tilelang.tvm.tirx
+
+    @T.prim_func
+    def main():
+        with T.Kernel(1, threads=32):
+            B_shared = T.alloc_shared((32, 16), dtype)
+            B_local = T.alloc_local((k // 2,), dtype)
+            emitter = _trans_b8_emitter(k, {B_shared: make_linear_layout(B_shared)})
+            emitter.ldmatrix_b(B_local, B_shared[:k, :], 0)
+
+    calls, stores = [], []
+
+    def visit(node):
+        if isinstance(node, tirx.Call) and isinstance(node.op, tilelang.tvm.ir.Op):
+            calls.append(node.op.name)
+        elif isinstance(node, tirx.BufferStore):
+            stores.append(node)
+
+    tirx.stmt_functor.post_order_visit(main.body, visit)
+    assert "tl.tix_ldmatrix_b8" not in calls
+    assert any(isinstance(store.value, tirx.BufferLoad) and store.buffer.scope() == "local" for store in stores)
 
 
 def _make_gemm_ss_nn_unaligned_kernel():
