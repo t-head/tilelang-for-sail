@@ -228,10 +228,8 @@ jobs:
               core.setFailed(`PR #${prNumber} is already merged`);
               return;
             }
-            if (pr.base.repo.full_name !== fullRepo || pr.head.repo.full_name !== fullRepo) {
-              core.setFailed(
-                `Fork PR not supported: head=${pr.head.repo.full_name} base=${pr.base.repo.full_name}`,
-              );
+            if (pr.base?.repo?.full_name !== fullRepo) {
+              core.setFailed('PR base repository mismatch');
               return;
             }
             try {
