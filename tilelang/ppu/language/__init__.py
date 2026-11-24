@@ -45,6 +45,7 @@ from tilelang.ppu.intrinsics import get_swizzle_layout, make_mma_swizzle_layout 
 # operators (nan_propagate). Semantics match the common versions; the extra
 # keywords are recorded on the op and consumed by the PPU pipeline.
 from .kernel import Kernel  # noqa: F401
+from .math import clamp_symmetric  # noqa: F401
 from .reduce_op import reduce_absmax, reduce_max, reduce_min  # noqa: F401
 from tilelang.language.math_intrinsics import (  # noqa: F401
     __cos,
@@ -93,6 +94,7 @@ _PPU_API_ALL = (
     "annotate_min_blocks_per_sm",
     "annotate_consumer_reg_alloc",
     "annotate_producer_reg_dealloc",
+    "clamp_symmetric",
     "copy",
     "fast_rcp",
     "gemm",

@@ -5055,36 +5055,6 @@ bool CodeGenTileLangCUDA::HandleLateIntrinsicCall(const CallNode *op,
       TryEmitPackedMathCall_(call, os)) {
     return true;
   }
-  if (op->op.same_as(tl::clamp())) {
-    ICHECK_EQ(op->args.size(), 3);
-    need_math_h_ = true;
-    DataType dtype = op->dtype;
-    std::vector<PrimExpr> args(op->args.begin(), op->args.end());
-    for (const PrimExpr &arg : args) {
-      ICHECK_EQ(arg.dtype(), dtype)
-          << "tl.clamp operands must have matching types";
-    }
-    if (!dtype.is_scalar()) {
-      // Bind effectful inputs before using them so each argument is still
-      // evaluated independently and exactly once.
-      for (PrimExpr &arg : args) {
-        if (SideEffect(arg) > CallEffectKind::kPure) {
-          Var value("clamp_arg", dtype);
-          arg = Let(value, arg, value);
-        }
-      }
-    }
-    if (dtype.is_scalar()) {
-      os << "tl::clamp(" << PrintExpr(args[0]) << ", " << PrintExpr(args[1])
-         << ", " << PrintExpr(args[2]) << ")";
-    } else if ((dtype.is_float16() || dtype.is_bfloat16()) &&
-               CanEmitPackedX2Math(dtype)) {
-      EmitPackedX2Call("clamp2", dtype, args, os);
-    } else {
-      EmitPerLaneScalarCall("tl::clamp", dtype, args, os);
-    }
-    return true;
-  }
   if (op->op.same_as(tl::clamp_symmetric())) {
     ICHECK_EQ(op->args.size(), 2);
     DataType dtype = op->dtype;

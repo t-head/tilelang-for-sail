@@ -1,8 +1,11 @@
-# PPU variant of testing/python/language/test_tilelang_language_clamp.py:
-# NaN-propagating tl::clamp / tl::clamp2 on PPU, including 16-bit vectors,
-# fp8 min/max and reversed bounds.
+# PPU variant of testing/python/language/test_tilelang_language_clamp.py.
+# Plain T.clamp follows the upstream (post-revert) semantics: it expands to
+# min/max and does not propagate NaN. NaN-propagating symmetric clipping is
+# provided by the PPU dialect's T.clamp_symmetric, mirroring the CUDA
+# backend's clamp_symmetric (#3605), including 16-bit packed x2 vectors.
 import pytest
 
+import tilelang
 import tilelang.testing
 from tilelang.ppu import language as T
 
@@ -111,91 +114,83 @@ def test_clamp():
     run_clamp_value_range(1024, 128, T.float32)
 
 
-CLAMP_NAN_DTYPES = [
-    T.float16,
-    T.bfloat16,
-    T.float32,
-    T.float64,
-    T.float8_e4m3,
-    T.float8_e5m2,
-]
-
-
-def clamp_nan_kernel(N, block_N, dtype):
-    @T.prim_func
-    def main(
-        A: T.Tensor((N,), dtype),
-        C: T.Tensor((N,), dtype),
-    ):
-        with T.Kernel(T.ceildiv(N, block_N), threads=block_N) as bx:
-            for i in T.Parallel(block_N):
-                C[bx * block_N + i] = T.clamp(A[bx * block_N + i], T.cast(-1.0, dtype), T.cast(1.0, dtype))
-
-    return main
-
-
 @tilelang.testing.requires_ppu
-@pytest.mark.parametrize("dtype", CLAMP_NAN_DTYPES)
-def test_clamp_propagates_nan(dtype):
-    """Clamp must propagate NaN, unlike a plain CUDA fmin/fmax composition."""
-    import torch
-
-    N = 32
-    kernel = tilelang.compile(clamp_nan_kernel(N, N, dtype), target="ppu")
-    torch_dtype = dtype.as_torch()
-
-    a = torch.linspace(-2.0, 2.0, N, device="cuda", dtype=torch.float32)
-    a[7] = float("nan")
-    a = a.to(torch_dtype)
-
-    # Caller-allocated output: rebuilding a torch tensor from an fp8 DLPack
-    # tensor is not supported on every torch version.
-    C = torch.empty(N, device="cuda", dtype=torch_dtype)
-    kernel(a, C)
-    got = C.float()
-
-    assert torch.isnan(got[7]).item(), f"T.clamp dropped NaN for {dtype}: got {got[7].item()} instead of NaN"
-    ref = torch.clamp(a.float(), -1.0, 1.0)
-    finite = ~torch.isnan(ref)
-    torch.testing.assert_close(got[finite], ref[finite], atol=0, rtol=0)
-
-
-@tilelang.testing.requires_ppu
-@pytest.mark.parametrize("dtype", [T.float16, T.bfloat16, T.float32, T.float64, T.float8_e4m3])
-def test_clamp_scalar_and_vector_type_promotion(dtype):
-    from tvm import tirx
-
-    for lanes in [1, 4]:
-        x = T.Var("x", dtype.with_lanes(lanes))
-        result = T.clamp(x, -1.0, T.float64(1.0))
-        assert result.dtype == T.float64.with_lanes(lanes)
-        assert isinstance(result, tirx.Call)
-        assert result.op.same_as(tirx.op.Op.get("tl.clamp"))
-        assert all(arg.dtype == result.dtype for arg in result.args)
-
-
-@tilelang.testing.requires_ppu
-def test_clamp_python_literals():
+@pytest.mark.parametrize("threads", [32, 64, 128])
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16", "float32"])
+def test_clamp_symmetric(threads, dtype):
     import torch
 
     @T.prim_func
-    def main(C: T.Tensor((4,), "float32")):
-        with T.Kernel(1, threads=1):
-            C[0] = T.clamp(0.5, -1.0, 1.0)
-            C[1] = T.clamp(2, -1, 1)
-            C[2] = T.clamp(-5, -1.0, 1.0)
-            C[3] = T.clamp(float("nan"), -1.0, 1.0)
+    def main(A: T.Tensor((128,), dtype), B: T.Tensor((128,), dtype), C: T.Tensor((128,), dtype)):
+        with T.Kernel(1, threads=threads):
+            for i in T.Parallel(128):
+                C[i] = T.clamp_symmetric(A[i], B[i])
 
-    c = torch.empty(4, device="cuda")
-    tilelang.compile(main, target="ppu")(c)
-    torch.testing.assert_close(c, torch.tensor([0.5, 1.0, -1.0, float("nan")], device="cuda"), equal_nan=True)
+    kernel = tilelang.compile(main, target="ppu")
+    torch_dtype = getattr(torch, dtype)
+    subnormal = torch.finfo(torch_dtype).tiny / 2
+    values = [0.0, -0.0, 0.5, -0.5, 4.0, -4.0, float("inf"), -float("inf"), float("nan"), -float("nan"), subnormal, -subnormal]
+    a = torch.tensor(values, device="cuda", dtype=torch_dtype).repeat(11)[:128].contiguous()
+    int_dtype = torch.int32 if dtype == "float32" else torch.int16
+    sign_mask = torch.iinfo(int_dtype).min
+    # Construct negative NaNs by bits: narrowing may canonicalize their sign.
+    a.view(int_dtype)[9::12].bitwise_or_(sign_mask)
+    c = torch.empty_like(a)
+    for limit in [2.0, subnormal, float("inf")]:
+        b = torch.full_like(a, limit)
+        # Input-only, limit-only, and both-NaN lanes, mixed with numeric lanes
+        # in the same packed x2 call. Include both NaN signs in each operand.
+        b[2::12] = float("nan")
+        b[5::12] = float("nan")
+        b.view(int_dtype)[5::12].bitwise_or_(sign_mask)
+        b[8::24] = float("nan")
+        b[9::24] = float("nan")
+        kernel(a, b, c)
+        ref = torch.clamp(a.float(), -b.float(), b.float())
+        torch.testing.assert_close(c.float(), ref, equal_nan=True, atol=0, rtol=0)
+        numeric = ~torch.isnan(ref)
+        assert torch.equal(torch.signbit(c[numeric]), torch.signbit(ref[numeric]))
 
 
 @tilelang.testing.requires_ppu
-@pytest.mark.parametrize("dtype", [T.float16, T.bfloat16, T.float32, T.float64, T.float8_e4m3])
+@pytest.mark.parametrize("threads", [32, 64, 128])
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16", "float32"])
+def test_clamp_symmetric_codegen(threads, dtype):
+    @T.prim_func
+    def main(A: T.Tensor((128,), dtype), C: T.Tensor((128,), dtype)):
+        with T.Kernel(1, threads=threads):
+            for i in T.Parallel(128):
+                C[i] = T.clamp_symmetric(A[i], 1.0)
+
+    kernel = tilelang.compile(main, target="ppu")
+    source = kernel.get_kernel_source()
+    helper = "tl::clamp_symmetric2(" if dtype != "float32" and threads < 128 else "tl::clamp_symmetric("
+    assert helper in source
+    assert "tl::clamp(" not in source
+
+
+@tilelang.testing.requires_ppu
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16", "float32"])
+def test_clamp_symmetric_types(dtype):
+    x = T.Var("x", dtype + "x4")
+    result = T.clamp_symmetric(x, 1.0)
+    assert result.dtype == dtype + "x4"
+    assert all(arg.dtype == dtype + "x4" for arg in result.args)
+    with pytest.raises(TypeError, match="float32"):
+        T.clamp_symmetric(T.Var("double_x", "float64"), 1.0)
+    with pytest.raises(TypeError, match="matching operand dtypes"):
+        T.clamp_symmetric(x, T.Var("limit", "float64"))
+    with pytest.raises(ValueError, match="matching lanes"):
+        T.clamp_symmetric(x, T.Var("limit", dtype + "x2"))
+
+
+@tilelang.testing.requires_ppu
+@pytest.mark.parametrize("dtype", [T.float16, T.bfloat16, T.float32, T.float64])
 def test_clamp_vectorized_operands(dtype):
     import torch
 
+    # Plain min/max clamp: no NaN inputs, since the target's min/max
+    # operations decide NaN handling and do not propagate it.
     N = 128
 
     @T.prim_func
@@ -205,30 +200,21 @@ def test_clamp_vectorized_operands(dtype):
                 C[i] = T.clamp(A[i], Lo[i], Hi[i])
 
     kernel = tilelang.compile(main, target="ppu")
-    source = kernel.get_kernel_source()
-    if dtype in (T.float16, T.bfloat16):
-        assert "tl::clamp2(" in source
-    else:
-        assert "tl::clamp(" in source
-    if dtype == T.float32:
-        assert "*(float4*)" in source
-
     a = torch.linspace(-2.0, 2.0, N, dtype=torch.float64, device="cuda")
     lo = torch.full_like(a, -1.0)
     hi = torch.full_like(a, 1.0)
-    a[1], lo[2], hi[3] = float("nan"), float("nan"), float("nan")
-    lo[4:8] = 5.0  # Reversed bounds must choose the upper bound.
+    lo[4:8] = 5.0  # Reversed bounds: min(max(x, lo), hi) still selects hi.
     lo[8:12], hi[8:12] = 0.5, 0.5
     a[12], a[13] = float("inf"), -float("inf")
     a, lo, hi = (value.to(dtype.as_torch()) for value in (a, lo, hi))
     c = torch.empty_like(a)
     kernel(a, lo, hi, c)
     ref = torch.clamp(a.double(), lo.double(), hi.double())
-    torch.testing.assert_close(c.double(), ref, equal_nan=True, atol=0, rtol=0)
+    torch.testing.assert_close(c.double(), ref, atol=0, rtol=0)
 
 
 @tilelang.testing.requires_ppu
-@pytest.mark.parametrize("dtype", [T.float16, T.bfloat16, T.float32, T.float64, T.float8_e4m3])
+@pytest.mark.parametrize("dtype", [T.float16, T.bfloat16, T.float32, T.float64])
 def test_clamp_vector_input_scalar_bounds(dtype):
     import torch
 
@@ -238,51 +224,10 @@ def test_clamp_vector_input_scalar_bounds(dtype):
             idx = T.Ramp(T.get_thread_binding() * 4, 1, 4)
             C[idx] = T.clamp(A[idx], T.cast(-1.0, dtype), T.cast(1.0, dtype))
 
-    a = torch.tensor([float("nan"), -2.0, 0.5, 2.0], device="cuda").repeat(32).to(dtype.as_torch())
+    a = torch.tensor([-3.0, -2.0, 0.5, 2.0], device="cuda").repeat(32).to(dtype.as_torch())
     c = torch.empty_like(a)
     tilelang.compile(main, target="ppu")(a, c)
-    torch.testing.assert_close(c.float(), a.float().clamp(-1, 1), equal_nan=True, atol=0, rtol=0)
-
-
-@tilelang.testing.requires_ppu
-def test_clamp_evaluates_each_operand_once():
-    import torch
-
-    @T.prim_func
-    def main(A: T.Tensor((3,), "float32"), C: T.Tensor((1,), "float32")):
-        with T.Kernel(1, threads=1):
-            C[0] = T.clamp(
-                T.atomic_add(A[0], 0.25, return_prev=True),
-                T.atomic_add(A[1], 0.25, return_prev=True),
-                T.atomic_add(A[2], 0.25, return_prev=True),
-            )
-
-    a = torch.tensor([0.0, -1.0, 1.0], device="cuda")
-    c = torch.empty(1, device="cuda")
-    tilelang.compile(main, target="ppu")(a, c)
-    torch.testing.assert_close(a, torch.tensor([0.25, -0.75, 1.25], device="cuda"))
-    torch.testing.assert_close(c, torch.zeros_like(c))
-
-
-@tilelang.testing.requires_ppu
-def test_clamp_identical_vector_atomics_evaluate_independently():
-    import torch
-
-    @T.prim_func
-    def main(A: T.Tensor((4,), "float32"), V: T.Tensor((4,), "float32"), C: T.Tensor((4,), "float32")):
-        with T.Kernel(1, threads=1):
-            C[T.Ramp(0, 1, 4)] = T.clamp(
-                T.atomic_addx4(A, V, return_prev=True),
-                T.atomic_addx4(A, V, return_prev=True),
-                T.atomic_addx4(A, V, return_prev=True),
-            )
-
-    a = torch.zeros(4, device="cuda")
-    v = torch.full_like(a, 0.25)
-    c = torch.empty_like(a)
-    tilelang.compile(main, target="ppu")(a, v, c)
-    torch.testing.assert_close(a, torch.full_like(a, 0.75))
-    torch.testing.assert_close(c, torch.full_like(c, 0.25))
+    torch.testing.assert_close(c.float(), a.float().clamp(-1, 1), atol=0, rtol=0)
 
 
 FP8_OPS = {
@@ -363,8 +308,8 @@ def test_fp8_vectorized_min_max(op):
 
 @tilelang.testing.requires_ppu
 def test_fp8_e4m3fn_min_max():
-    # float8_e4m3fn shares the emitted CUDA type with float8_e4m3; clamp covers
-    # both min and max.
+    # float8_e4m3fn shares the emitted device type with float8_e4m3; clamp
+    # covers both min and max.
     tilelang.compile(fp8_operand_kernel(1024, 128, T.float8_e4m3fn, "clamp"), out_idx=[2], target="ppu")
 
 

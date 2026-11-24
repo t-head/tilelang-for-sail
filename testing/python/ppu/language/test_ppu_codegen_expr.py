@@ -45,12 +45,12 @@ def test_ppu_pdl_codegen_follows_have_pdl(pdl_op, expected, monkeypatch):
     assert expected in _build_expr_source(getattr(T, pdl_op)(), [])
 
 
-def test_ppu_clamp_survives_lowering():
-    # tl.clamp keeps no ppu.FLowerIntrinsic registration: like the CUDA
-    # backend, the op survives LowerIntrin and the PPU codegen emits the
-    # NaN-propagating tl::clamp / tl::clamp2 calls.
+def test_ppu_clamp_symmetric_survives_lowering():
+    # tl.clamp_symmetric keeps no ppu.FLowerIntrinsic registration: like the
+    # CUDA backend, the op survives LowerIntrin and the PPU codegen emits the
+    # NaN-propagating tl::clamp_symmetric / tl::clamp_symmetric2 calls.
     value = T.Var("value", "float32x4")
-    func = tirx.PrimFunc([value], tirx.Evaluate(T.clamp(value, -1.0, 1.0)))
+    func = tirx.PrimFunc([value], tirx.Evaluate(T.clamp_symmetric(value, 1.0)))
     func = func.with_attr("target", PPU_TARGET)
     lowered = tilelang.transform.LowerIntrin()(tvm.IRModule({"main": func}))
 
@@ -59,7 +59,7 @@ def test_ppu_clamp_survives_lowering():
         lowered["main"].body,
         lambda node: calls.append(node) if isinstance(node, tirx.Call) else None,
     )
-    clamp_op = tirx.op.Op.get("tl.clamp")
+    clamp_op = tirx.op.Op.get("tl.clamp_symmetric")
     isnan_op = tirx.op.Op.get("tirx.isnan")
     assert any(call.op.same_as(clamp_op) for call in calls)
     assert not any(call.op.same_as(isnan_op) for call in calls)

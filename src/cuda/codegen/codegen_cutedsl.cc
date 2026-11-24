@@ -852,10 +852,6 @@ void CodeGenTileLangCuTeDSL::VisitExpr_(const CallNode *op,
                                         std::ostream &os) { // NOLINT(*)
   ICHECK(tl::GetAtomicScope(op) == "device")
       << "Non-device-scope atomics are not implemented by the CuTeDSL backend";
-  if (op->op.same_as(tl::clamp())) {
-    os << PrintExpr_(tl::LowerClamp(GetRef<Call>(op)));
-    return;
-  }
   if (op->op.same_as(builtin::bitwise_not()) && op->dtype.is_bool() &&
       op->dtype.is_scalar()) {
     ICHECK_EQ(op->args.size(), 1U);

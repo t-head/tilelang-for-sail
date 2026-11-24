@@ -3303,17 +3303,25 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
       this->PrintExpr(op->args[0], os);
     }
     os << ")";
-  } else if (op->op.same_as(tl::clamp())) {
-    // NaN-propagating clamp, mirroring the CUDA backend: scalar calls go to
-    // tl::clamp, 16-bit vectors decompose into per-pair tl::clamp2 calls on
-    // the packed fields, and other vectors into per-lane tl::clamp calls.
-    ICHECK_EQ(op->args.size(), 3);
+  } else if (op->op.same_as(tl::clamp_symmetric())) {
+    // NaN-propagating symmetric clamp, mirroring the CUDA backend: scalar
+    // calls go to tl::clamp_symmetric, 16-bit vectors decompose into
+    // per-pair tl::clamp_symmetric2 calls on the packed fields, and other
+    // vectors into per-lane tl::clamp_symmetric calls. Unlike CUDA there is
+    // no single min.NaN.xorsign.abs instruction; the device helpers in
+    // tl_templates/ppu/math.h compose it from the NaN-propagating packed
+    // min/max primitives, so no SM86-style capability gate applies.
+    ICHECK_EQ(op->args.size(), 2);
     need_math_h_ = true;
     DataType dtype = op->dtype;
+    ICHECK(dtype.element_of() == DataType::Float(32) || dtype.is_float16() ||
+           dtype.is_bfloat16())
+        << "tl.clamp_symmetric requires float16, bfloat16, or float32 "
+           "operands";
     std::vector<PrimExpr> args(op->args.begin(), op->args.end());
     for (const PrimExpr &arg : args) {
       ICHECK_EQ(arg.dtype(), dtype)
-          << "tl.clamp operands must have matching types";
+          << "tl.clamp_symmetric operands must have matching types";
     }
     if (!dtype.is_scalar()) {
       // Bind effectful inputs before using them so identical calls (or loads
@@ -3321,14 +3329,14 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
       // argument.
       for (PrimExpr &arg : args) {
         if (SideEffect(arg) > CallEffectKind::kPure) {
-          Var value("clamp_arg", dtype);
+          Var value("clamp_symmetric_arg", dtype);
           arg = Let(value, arg, value);
         }
       }
     }
     if (dtype.is_scalar()) {
-      os << "tl::clamp(" << PrintExpr(args[0]) << ", " << PrintExpr(args[1])
-         << ", " << PrintExpr(args[2]) << ")";
+      os << "tl::clamp_symmetric(" << PrintExpr(args[0]) << ", "
+         << PrintExpr(args[1]) << ")";
     } else {
       int lanes = dtype.lanes();
       bool is_bf16x2 = dtype.is_bfloat16();
@@ -3345,8 +3353,8 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
       int ssa_scope = BeginScope();
       if ((is_bf16x2 || is_fp16x2) && CanEmitPackedX2Math(dtype)) {
         // Each 32-bit field of the carrier packs a pair of elements; apply
-        // tl::clamp2 on each field directly (<= 8 lanes) or on each half of
-        // the 64-bit fields (12/16 lanes), same mapping as the binary
+        // tl::clamp_symmetric2 on each field directly (<= 8 lanes) or on each
+        // half of the 64-bit fields (12/16 lanes), same mapping as the binary
         // packed-x2 path above.
         static const char access[] = {'x', 'y', 'z', 'w'};
         int num_pairs = lanes / 2;
@@ -3373,19 +3381,18 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
           this->PrintIndent();
           if (lanes <= 8) {
             stream << "*(uint1*)(&(" << sret << "." << field
-                   << ")) = tl::to_uint1(tl::clamp2(";
+                   << ")) = tl::to_uint1(tl::clamp_symmetric2(";
           } else {
             stream << "*(((uint1*)(&(" << sret << "." << field << "))) + "
-                   << pair_offset << ") = tl::to_uint1(tl::clamp2(";
+                   << pair_offset << ") = tl::to_uint1(tl::clamp_symmetric2(";
           }
           stream << make_half_pair(arg_ids[0], field, pair_offset) << ", "
-                 << make_half_pair(arg_ids[1], field, pair_offset) << ", "
-                 << make_half_pair(arg_ids[2], field, pair_offset) << "));\n";
+                 << make_half_pair(arg_ids[1], field, pair_offset) << "));\n";
         }
       } else {
         for (int lane = 0; lane < lanes; ++lane) {
           std::ostringstream lane_call;
-          lane_call << "tl::clamp(";
+          lane_call << "tl::clamp_symmetric(";
           for (size_t i = 0; i < args.size(); ++i) {
             if (i != 0)
               lane_call << ", ";
