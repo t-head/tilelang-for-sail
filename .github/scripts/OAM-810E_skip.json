@@ -612,6 +612,30 @@
     "reason": "Temporarily disabled: use_cuda is being removed"
   },
   {
+    "file_path": "examples/flash_attention/test_example_flash_attention.py",
+    "test_filter": "test_example_gqa_fwd_varlen",
+    "extra_args": [],
+    "reason": "External FlashAttention reference is disabled in PPU CI."
+  },
+  {
+    "file_path": "examples/flash_attention/test_example_flash_attention.py",
+    "test_filter": "test_example_mha_fwd_varlen",
+    "extra_args": [],
+    "reason": "External FlashAttention reference is disabled in PPU CI."
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_gqa_fwd_varlen",
+    "extra_args": [],
+    "reason": "External FlashAttention reference is disabled in PPU CI."
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_mha_fwd_varlen",
+    "extra_args": [],
+    "reason": "External FlashAttention reference is disabled in PPU CI."
+  },
+  {
     "file_path": "examples/blocksparse_attention/test_example_blocksparse_attention.py",
     "test_filter": "test_example_tilelang_sparse_gqa_decode_varlen_indice",
     "extra_args": [],

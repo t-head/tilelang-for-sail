@@ -725,8 +725,6 @@ jobs:
             pip install 'z3-solver>=4.13.0,<4.15.5' tabulate
             yes | pip uninstall nvidia-cuda-nvrtc 2>/dev/null || true
             # Use the image-preinstalled torch/triton (hggcrt3 variant, compatible with PPU SDK libacblas).
-            # flash-attn is not bundled in the image; install if available but do not fail.
-            pip install flash-attn 2>/dev/null || echo "[WARN] flash-attn not available, skipping"
             cd /workspace/source
 
             # Install system deps
@@ -754,7 +752,7 @@ jobs:
 
             # ---- Run tests ----
             cd /workspace/source
-            python .github/scripts/test_tilelang.py -o test_result.xml -v --timeout 600 --workers 4 || TEST_RC=$?
+            python .github/scripts/test_tilelang.py -o test_result.xml -v --timeout 600 --workers 6 || TEST_RC=$?
             TEST_RC=${TEST_RC:-0}
 
             # ---- Copy results to NAS ----
