@@ -1143,7 +1143,9 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
 
     def _can_use_trans_b8(self, region: BufferRegion) -> bool:
         """Whether a natural-layout b8 B region is legal for m16n16 ldmatrix."""
-        if self.ppu_arch < 15 or self.micro_size_k != 32 or DataType(self.b_dtype).bits != 8 or self.b_transposed:
+        # The transposed-b8 path emits an m16n16k32 fragment; the m16n8
+        # fallback (n_dim == 8) keeps the default per-lane loader instead.
+        if self.ppu_arch < 15 or self.n_dim != 16 or self.micro_size_k != 32 or DataType(self.b_dtype).bits != 8 or self.b_transposed:
             return False
 
         buffer = region.buffer
