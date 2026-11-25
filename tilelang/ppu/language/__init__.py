@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from tilelang.language.common import *  # noqa: F401,F403
 from tilelang.language.common import __all__ as _COMMON_ALL
-from tilelang.language.annotations import annotate_l2_hit_ratio  # noqa: F401
+from tilelang.language.annotations import annotate_l2_hit_ratio, annotate_min_blocks_per_sm  # noqa: F401
 from tilelang.language.builtin import (  # noqa: F401
     __ffs,
     __fns,
     __ldg,
+    annotate_consumer_reg_alloc,
+    annotate_producer_reg_dealloc,
     disable_warp_group_reg_alloc,
     get_lane_idx,
     get_warp_group_idx,
@@ -88,6 +90,9 @@ _PPU_API_ALL = (
     "__sin",
     "__tan",
     "annotate_l2_hit_ratio",
+    "annotate_min_blocks_per_sm",
+    "annotate_consumer_reg_alloc",
+    "annotate_producer_reg_dealloc",
     "copy",
     "fast_rcp",
     "gemm",
