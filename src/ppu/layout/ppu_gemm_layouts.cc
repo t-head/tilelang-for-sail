@@ -130,8 +130,7 @@ static PrimExpr xor8x8(const PrimExpr &i, const PrimExpr j) {
 // Layout swizzling for 32 bytes
 static Layout MakeQuarterBankSwizzleLayout2D(int stride, int continuous,
                                              int element_size) {
-  Var i = InputPlaceholder(0);
-  Var j = InputPlaceholder(1);
+  auto [i, j] = MakeLayoutVars<2>();
   int vector_size = 128 / element_size;
   ICHECK(stride == 4 || stride % 8 == 0) << "stride=" << stride;
   ICHECK(continuous % (vector_size * 2) == 0)
@@ -143,14 +142,13 @@ static Layout MakeQuarterBankSwizzleLayout2D(int stride, int continuous,
   PrimExpr vec = FloorMod(j, vector_size);
   PrimExpr c_swizzle = xor2x2(c, FloorDiv(s, 4));
   PrimExpr index = vec + (c_swizzle + s * 2) * vector_size;
-  return Layout(Array<PrimExpr>{stride, continuous}, {tc, ts, index});
+  return Layout(Array<PrimExpr>{stride, continuous}, {i, j}, {tc, ts, index});
 }
 
 // Layout swizzling for 64 bytes
 static Layout MakeHalfBankSwizzleLayout2D(int stride, int continuous,
                                           int element_size) {
-  Var i = InputPlaceholder(0);
-  Var j = InputPlaceholder(1);
+  auto [i, j] = MakeLayoutVars<2>();
   int vector_size = 128 / element_size;
   ICHECK(stride == 4 || stride % 8 == 0) << "stride=" << stride;
   ICHECK(continuous % (vector_size * 4) == 0)
@@ -162,14 +160,13 @@ static Layout MakeHalfBankSwizzleLayout2D(int stride, int continuous,
   PrimExpr vec = FloorMod(j, vector_size);
   PrimExpr c_swizzle = xor4x4(c, FloorDiv(s, 2));
   PrimExpr index = vec + (c_swizzle + s * 4) * vector_size;
-  return Layout(Array<PrimExpr>{stride, continuous}, {tc, ts, index});
+  return Layout(Array<PrimExpr>{stride, continuous}, {i, j}, {tc, ts, index});
 }
 
 // Layout swizzling for 128 bytes
 static Layout MakeFullBankSwizzleLayout2D(int stride, int continuous,
                                           int element_size) {
-  Var i = InputPlaceholder(0);
-  Var j = InputPlaceholder(1);
+  auto [i, j] = MakeLayoutVars<2>();
   int vector_size = 128 / element_size;
   ICHECK(stride == 4 || stride % 8 == 0) << "stride=" << stride;
   ICHECK(continuous % (vector_size * 8) == 0)
@@ -181,33 +178,31 @@ static Layout MakeFullBankSwizzleLayout2D(int stride, int continuous,
   PrimExpr vec = FloorMod(j, vector_size);
   PrimExpr c_swizzle = xor8x8(c, s);
   PrimExpr index = vec + (c_swizzle + s * 8) * vector_size;
-  return Layout(Array<PrimExpr>{stride, continuous}, {tc, ts, index});
+  return Layout(Array<PrimExpr>{stride, continuous}, {i, j}, {tc, ts, index});
 }
 
 static Layout MakeGemmABLayoutF64_Kinner(int stride, int continuous) {
   // Swizzle<2, 0, 4>
-  Var i = InputPlaceholder(0);
-  Var j = InputPlaceholder(1);
+  auto [i, j] = MakeLayoutVars<2>();
   PrimExpr tc = FloorDiv(j, 16);
   PrimExpr ts = FloorDiv(i, 4);
   PrimExpr c = FloorMod(j, 16);
   PrimExpr s = FloorMod(i, 4);
   PrimExpr swizzled_c = FloorDiv(c, 4) * 4 + xor4x4(FloorMod(c, 4), s);
   PrimExpr index = swizzled_c + s * 16;
-  return Layout(Array<PrimExpr>{stride, continuous}, {tc, ts, index});
+  return Layout(Array<PrimExpr>{stride, continuous}, {i, j}, {tc, ts, index});
 }
 
 static Layout MakeGemmABLayoutF64_Kouter(int stride, int continuous) {
   // Swizzle<2, 2, 2>
-  Var i = InputPlaceholder(0);
-  Var j = InputPlaceholder(1);
+  auto [i, j] = MakeLayoutVars<2>();
   PrimExpr tc = FloorDiv(j, 16);
   PrimExpr ts = FloorDiv(i, 4);
   PrimExpr c = FloorMod(j, 16);
   PrimExpr s = FloorMod(i, 4);
   PrimExpr swizzled_c = FloorMod(c, 4) + xor4x4(FloorDiv(c, 4), s) * 4;
   PrimExpr index = swizzled_c + s * 16;
-  return Layout(Array<PrimExpr>{stride, continuous}, {tc, ts, index});
+  return Layout(Array<PrimExpr>{stride, continuous}, {i, j}, {tc, ts, index});
 }
 
 // ---------------------------------------------------------------------------
@@ -217,8 +212,7 @@ static Layout MakeGemmABLayoutF64_Kouter(int stride, int continuous) {
 // PPU: layout swizzling for 64 bytes used by cutlass-ppu Actlize RS B layout.
 static Layout MakeHalfBankSwizzleLayoutPPU2D(int stride, int continuous,
                                              int element_size, bool k_inner) {
-  Var i = InputPlaceholder(0);
-  Var j = InputPlaceholder(1);
+  auto [i, j] = MakeLayoutVars<2>();
   int vector_size = 128 / element_size;
   ICHECK(stride == 4 || stride % 8 == 0) << "stride=" << stride;
   ICHECK(continuous % (vector_size * 4) == 0)
@@ -232,7 +226,7 @@ static Layout MakeHalfBankSwizzleLayoutPPU2D(int stride, int continuous,
     PrimExpr vec = FloorMod(j, vector_size);
     PrimExpr c_swizzle = xor4x4(c, FloorDiv(s, 2));
     PrimExpr index = vec + (c_swizzle + s * 4) * vector_size;
-    return Layout(Array<PrimExpr>{stride, continuous}, {tc, ts, index});
+    return Layout(Array<PrimExpr>{stride, continuous}, {i, j}, {tc, ts, index});
   }
   PrimExpr ts = FloorDiv(i, 8);
   PrimExpr s = FloorMod(i, 8);
@@ -242,14 +236,13 @@ static Layout MakeHalfBankSwizzleLayoutPPU2D(int stride, int continuous,
   PrimExpr vec = FloorMod(vec_t, 4) * 2 + FloorDiv(vec_t, 4);
   PrimExpr c_swizzle = xor4x4(c, FloorDiv(s, 2));
   PrimExpr index = vec + (c_swizzle + s * 4) * vector_size;
-  return Layout(Array<PrimExpr>{stride, continuous}, {tc, ts, index});
+  return Layout(Array<PrimExpr>{stride, continuous}, {i, j}, {tc, ts, index});
 }
 
 // PPU: layout swizzling for 128 bytes used by cutlass-ppu Actlize RS B layout.
 static Layout MakeFullBankSwizzleLayoutPPU2D(int stride, int continuous,
                                              int element_size, bool k_inner) {
-  Var i = InputPlaceholder(0);
-  Var j = InputPlaceholder(1);
+  auto [i, j] = MakeLayoutVars<2>();
   int vector_size = 128 / element_size;
   ICHECK(stride == 4 || stride % 8 == 0) << "stride=" << stride;
   ICHECK(continuous % (vector_size * 8) == 0)
@@ -263,7 +256,7 @@ static Layout MakeFullBankSwizzleLayoutPPU2D(int stride, int continuous,
     PrimExpr vec = FloorMod(j, vector_size);
     PrimExpr c_swizzle = xor8x8(c, s);
     PrimExpr index = vec + (c_swizzle + s * 8) * vector_size;
-    return Layout(Array<PrimExpr>{stride, continuous}, {tc, ts, index});
+    return Layout(Array<PrimExpr>{stride, continuous}, {i, j}, {tc, ts, index});
   }
   PrimExpr ts = FloorDiv(i, 8);
   PrimExpr s = FloorMod(i, 8);
@@ -273,7 +266,7 @@ static Layout MakeFullBankSwizzleLayoutPPU2D(int stride, int continuous,
   PrimExpr vec = FloorMod(vec_t, 4) * 2 + FloorDiv(vec_t, 4);
   PrimExpr c_swizzle = xor8x8(c, s);
   PrimExpr index = vec + (c_swizzle + s * 8) * vector_size;
-  return Layout(Array<PrimExpr>{stride, continuous}, {tc, ts, index});
+  return Layout(Array<PrimExpr>{stride, continuous}, {i, j}, {tc, ts, index});
 }
 
 // ---------------------------------------------------------------------------

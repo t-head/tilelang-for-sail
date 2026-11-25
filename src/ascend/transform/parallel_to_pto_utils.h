@@ -102,9 +102,9 @@ struct MemoryAccess {
  */
 struct PtoInverseMapping {
   /*! Lane variable of the enclosing SIMD_VF (analysis placeholder). */
-  Var lane_var;
+  Var lane_var = Var();
   /*! Chunk position variable (per-lane column index). */
-  Var chunk_var;
+  Var chunk_var = Var();
   int64_t lanes = 0;
   /*! Logical extent E of the vectorized dimension (the original loop
    * extent, without padding). */
@@ -130,8 +130,8 @@ struct PtoInverseMapping {
   /*! True when the unit is a 2D nest. */
   bool is_2d = false;
   /*! Original loop vars of the nest (i = outer, j = inner). */
-  Var outer_var;
-  Var inner_var;
+  Var outer_var = Var();
+  Var inner_var = Var();
   /*! Extents of the two iterations (i and j). */
   int64_t outer_extent = 0;
   int64_t inner_extent = 0;
