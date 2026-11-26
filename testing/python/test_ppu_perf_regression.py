@@ -1129,7 +1129,8 @@ class TestWorkflowYAML:
             "pr.head.sha",
             "pr.state !== 'open'",
             "pr.merged",
-            "Fork PR not supported",
+            "if (pr.base?.repo?.full_name !== fullRepo) {",
+            "core.setFailed('PR base repository mismatch')",
             "^[0-9a-f]{40}$",
         ):
             assert required in resolve_text
@@ -1137,6 +1138,8 @@ class TestWorkflowYAML:
         # branch (via context.sha / context.payload.ref), but never for checkout.
         assert "actions/checkout" not in resolve_text
         assert "refs/pull/" not in resolve_text
+        assert "pr.head.repo" not in resolve_text
+        assert "pr.head?.repo" not in resolve_text
 
     def test_claim_uses_strict_fixed_marker_and_frozen_outputs(self):
         claim = self.wf["jobs"]["claim-request"]
