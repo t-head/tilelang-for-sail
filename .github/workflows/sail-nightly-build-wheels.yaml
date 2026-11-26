@@ -1,9 +1,6 @@
 name: sail nightly build tilelang
 
 on:
-  push:
-    branches:
-      - 'ci/add_nightly_build_fj'
   schedule:
     # Daily at 14:00 UTC (22:00 Beijing time), after the FA and Triton nightlies.
     - cron: '0 14 * * *'
