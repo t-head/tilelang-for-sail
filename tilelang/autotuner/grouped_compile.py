@@ -24,6 +24,21 @@ from tilelang.transform import PassConfigKey
 CompileUnitResult = tuple[int, dict[str, Any], JITKernel | None, Exception | None]
 
 
+def _with_device_compile_flags(
+    pass_configs: dict[str, Any],
+    compile_flags: list[str] | str | None,
+) -> dict[str, Any]:
+    """Append explicit flags after existing flags for grouped device compilation."""
+    if compile_flags is None:
+        return pass_configs
+
+    existing = pass_configs.get(PassConfigKey.TL_DEVICE_COMPILE_FLAGS) or []
+    existing = [existing] if isinstance(existing, str) else existing
+    flags = [compile_flags] if isinstance(compile_flags, str) else compile_flags
+    pass_configs[PassConfigKey.TL_DEVICE_COMPILE_FLAGS] = [*existing, *flags]
+    return pass_configs
+
+
 def compile_grouped_unit_tvm_ffi(
     unit_items: list[tuple[int, dict[str, Any]]],
     compile_args: CompileArgs,
@@ -40,6 +55,7 @@ def compile_grouped_unit_tvm_ffi(
     """
 
     pass_configs = dict(compile_args.pass_configs) if compile_args.pass_configs else {}
+    pass_configs = _with_device_compile_flags(pass_configs, compile_args.compile_flags)
     # Each grouped unit builds its own DumpIR with a per-instance counter, so units
     # running concurrently must not share the dump directory.
     with _DEBUG_COMPILE_LOCK if _dumps_debug_artifacts(pass_configs) else nullcontext():
