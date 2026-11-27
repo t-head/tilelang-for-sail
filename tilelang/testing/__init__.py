@@ -1,5 +1,6 @@
 import sys
 import inspect
+import contextlib
 import pytest
 import random
 import torch
@@ -7,6 +8,7 @@ import numpy as np
 from tilelang.contrib import nvcc, hgcc
 from tilelang.backend.target import determine_target
 from tilelang.cuda.target import target_is_cuda
+from tilelang.env import CacheState
 from tilelang.rocm.target import target_is_cdna, target_is_gfx950
 from tilelang.ppu.target import target_is_ppu
 from tvm.testing.utils import Feature, requires_cuda, requires_package, requires_llvm, requires_metal, requires_rocm, _compose
@@ -29,13 +31,41 @@ __all__ = (
         "main",
         "ascend_backend_compiled",
         "requires_ascend",
+        "requires_cutedsl",
         "requires_cuda_compute_version",
+        "without_kernel_cache",
+        "default_target_is_cutedsl",
         "process_func",
         "regression",
     ]
     + [f"requires_cuda_compute_version_{op}" for op in ("ge", "gt", "le", "lt", "eq")]
     + [f"requires_ppu_compute_version_{op}" for op in ("ge", "gt", "le", "lt", "eq")]
 )
+
+
+@contextlib.contextmanager
+def without_kernel_cache():
+    """Disable the `CacheState` kernel cache for the enclosed block.
+
+    Use it when a test calls `tilelang.compile()` (or `JITImpl.compile()`) and
+    asserts on work that only the compile path performs: the lowered artifact
+    (`Kernel.artifact`) or compile-time diagnostics. A kernel served from the
+    cache carries neither, so such a test passes only on a cold cache unless it
+    opts out.
+
+    The `@tilelang.jit` wrapper keeps its own kernel cache and consults it
+    before `JITImpl.compile()` runs, so repeated jit calls are not covered
+    here. A cache state the caller had already disabled is restored on exit.
+    """
+    enabled = CacheState.is_enabled()
+    CacheState.disable()
+    try:
+        yield
+    finally:
+        if enabled:
+            CacheState.enable()
+        else:
+            CacheState.disable()
 
 
 def _check_is_gfx950() -> bool:
@@ -60,6 +90,15 @@ def _check_is_cuda_or_cdna() -> bool:
         return target_is_cuda(target) or target_is_cdna(target)
     except (ValueError, RuntimeError):
         return False
+
+
+def default_target_is_cutedsl() -> bool:
+    """Whether TILELANG_DEFAULT_TARGET selects the CuTeDSL backend for unqualified compiles."""
+    from tilelang.env import env
+
+    target = env.get_default_target()
+    kind = target.get("kind") if isinstance(target, dict) else target
+    return str(kind).strip().lower() == "cutedsl"
 
 
 def ascend_backend_compiled() -> bool:
@@ -106,6 +145,29 @@ requires_ascend = Feature(
     "Ascend",
     compile_time_check=ascend_backend_compiled,
     run_time_check=_ascend_device_available,
+)
+
+
+def _cutedsl_compile_available() -> bool | str:
+    """Whether this build and Python environment can lower/compile CuTeDSL targets."""
+    import tvm
+
+    if tvm.ffi.get_global_func("target.build.tilelang_cutedsl_without_compile", allow_missing=True) is None:
+        return "TileLang CuTeDSL backend is not enabled in this build"
+    try:
+        from tilelang.jit.adapter.cutedsl.checks import check_cutedsl_available
+
+        check_cutedsl_available()
+        return True
+    except (ImportError, ModuleNotFoundError, RuntimeError, AssertionError) as err:
+        return f"CuTeDSL is not available: {err}"
+
+
+requires_cutedsl = Feature(
+    "cutedsl",
+    "CuTeDSL",
+    compile_time_check=_cutedsl_compile_available,
+    parent_features="cuda",
 )
 
 

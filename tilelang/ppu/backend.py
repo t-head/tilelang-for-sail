@@ -62,6 +62,14 @@ def tilelang_callback_ppu_compile(code, target, pass_config=None):
     elif extra_flags:
         for flag in extra_flags:
             options.extend(shlex.split(flag) if isinstance(flag, str) else [str(flag)])
+
+    compiler = str(cfg.get(PassConfigKey.TL_PPU_COMPILER, "hgcc"))
+    if compiler == "hgrtc":
+        from tilelang.contrib import hgrtc
+
+        return hgrtc.compile_ppu(code, target=target, options=options, verbose=env.get_default_verbose())
+    if compiler != "hgcc":
+        raise ValueError(f"Unsupported PPU compiler {compiler!r}; expected 'hgcc' or 'hgrtc'")
     return hgcc.compile_ppu(code, target=target, options=options, verbose=env.get_default_verbose())
 
 

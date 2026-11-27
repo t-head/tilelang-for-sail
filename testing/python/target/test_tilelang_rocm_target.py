@@ -80,6 +80,28 @@ def test_auto_target_uses_registered_detector_order_for_rocm():
         target_registry._TARGET_DETECTORS.update(old_detectors)
 
 
+def test_rocm_arch_detection_reads_current_device(monkeypatch):
+    import torch
+
+    import tilelang.rocm.target as rocm_target
+
+    probed = []
+
+    class _Props:
+        gcnArchName = "gfx942:sramecc+:xnack-"
+
+    def fake_get_device_properties(index):
+        probed.append(index)
+        return _Props()
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 1)
+    monkeypatch.setattr(torch.cuda, "get_device_properties", fake_get_device_properties)
+
+    assert rocm_target._detect_rocm_arch() == "gfx942"
+    assert probed == [1]
+
+
 def test_rdna_gfx1151_target_classification():
     target = _hip_target("gfx1151")
     assert target_is_rdna(target)
@@ -158,6 +180,18 @@ def test_rdna_internal_tuning_config_allows_mcpu_overrides():
     assert gfx1151.preferred_warps_per_block == 4
     assert gfx1151.pipeline_stage == 2
     assert gfx1151.reduction_step_for_dtype_bits(16) == 32
+
+
+@pytest.mark.skipif(
+    not tvm.runtime.enabled("rocm"),
+    reason="Requires the ROCm runtime to be built",
+)
+def test_rocm_device_existence_probe_does_not_raise():
+    # Linux builds enable USE_ROCM with hip_stub even on hosts without ROCm
+    # installed; probing tvm.rocm().exist (used at import time by requires_rocm)
+    # must return a bool rather than throwing from the stub.
+    assert isinstance(tvm.rocm(0).exist, bool)
+    assert not tvm.rocm(-1).exist
 
 
 if __name__ == "__main__":

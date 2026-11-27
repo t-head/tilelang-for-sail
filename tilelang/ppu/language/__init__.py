@@ -45,6 +45,7 @@ from tilelang.ppu.intrinsics import get_swizzle_layout, make_mma_swizzle_layout 
 # operators (nan_propagate). Semantics match the common versions; the extra
 # keywords are recorded on the op and consumed by the PPU pipeline.
 from .kernel import Kernel  # noqa: F401
+from .math import clamp_symmetric  # noqa: F401
 from .reduce_op import reduce_absmax, reduce_max, reduce_min  # noqa: F401
 from tilelang.language.math_intrinsics import (  # noqa: F401
     __cos,
@@ -70,6 +71,8 @@ from .gemm_op import gemm, gemm_blockscaled  # noqa: F401
 from .loop import Parallel, Unroll, unroll  # noqa: F401
 from .pdl import *  # noqa: F401,F403
 from .pdl import __all__ as _PDL_ALL
+from .prefetch import *  # noqa: F401,F403
+from .prefetch import __all__ as _PREFETCH_ALL
 from .print import *  # noqa: F401,F403
 from .print import __all__ as _PRINT_ALL
 from .random import *  # noqa: F401,F403
@@ -93,6 +96,7 @@ _PPU_API_ALL = (
     "annotate_min_blocks_per_sm",
     "annotate_consumer_reg_alloc",
     "annotate_producer_reg_dealloc",
+    "clamp_symmetric",
     "copy",
     "fast_rcp",
     "gemm",
@@ -147,6 +151,7 @@ __all__ = tuple(
             *_COMMON_ALL,
             *_PPU_API_ALL,
             *_PDL_ALL,
+            *_PREFETCH_ALL,
             *_PRINT_ALL,
             *_RANDOM_ALL,
             *_TIR_ALL,
@@ -154,4 +159,4 @@ __all__ = tuple(
     )
 )
 
-del _COMMON_ALL, _PPU_API_ALL, _PDL_ALL, _PRINT_ALL, _RANDOM_ALL, _TIR_ALL
+del _COMMON_ALL, _PPU_API_ALL, _PDL_ALL, _PREFETCH_ALL, _PRINT_ALL, _RANDOM_ALL, _TIR_ALL

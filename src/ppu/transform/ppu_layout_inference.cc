@@ -370,11 +370,12 @@ public:
               << layout_map[buffer]->GetTypeKey();
           const auto &src_layout = src_layout_opt.value();
           ICHECK(dst_layout->InputDim() == src_layout->InputDim());
+          Array<Var> idx_vars = MakeLayoutVars(dst_layout->InputDim());
           Array<PrimExpr> indices;
           indices.reserve(dst_layout->InputDim());
           arith::Analyzer inner_analyzer;
-          for (int i = 0; i < dst_layout->InputDim(); ++i) {
-            auto x = InputPlaceholder(i);
+          for (size_t i = 0; i < dst_layout->InputDim(); ++i) {
+            Var x = idx_vars[i];
             indices.push_back(x);
             // should be literal - literal = 0, any analyzer will work
             ICHECK(is_zero(inner_analyzer.Simplify(

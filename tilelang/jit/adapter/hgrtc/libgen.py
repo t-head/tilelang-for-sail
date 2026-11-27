@@ -1,15 +1,15 @@
 """Hgrtc Library Generator for TileLang.
 
-Compiles PPU kernels at runtime using hgcc and manages the resulting
-.hgbin modules.
+Compiles PPU kernels at runtime with the PPU SDK toolchain (hgcc, or the
+in-process hgrtc run-time compiler) and manages the resulting .hgbin modules.
 
-Why hgcc instead of AOT compilation:
+Why runtime compilation instead of AOT compilation:
 - No offline compilation step, enables true JIT workflows
 - Works with the PPU SDK toolchain only (no full TileLang native build needed)
 - Allows kernel specialization based on runtime parameters
 
 Key responsibilities:
-- Compile PPU device source to .hgbin using hgcc
+- Compile PPU device source to .hgbin with hgcc or hgrtc
 - Generate accompanying Python launcher code
 - Load compiled .hgbin through the HGGC driver and extract kernel handles
 - Manage module lifecycle (load/unload)
@@ -27,6 +27,7 @@ from types import ModuleType
 from tvm.target import Target
 
 from tilelang.jit.adapter.libgen import LibraryGenerator
+from tilelang.transform import PassConfigKey
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ def _get_hg_driver():
 
 
 class HGRTCLibraryGenerator(LibraryGenerator):
-    """Runtime compiler and loader for hgcc-compiled PPU kernels.
+    """Runtime compiler and loader for PPU kernels.
 
     Lifecycle:
         1. compile_lib(): PPU source → .hgbin + Python launcher
@@ -199,11 +200,14 @@ class HGRTCLibraryGenerator(LibraryGenerator):
         self.pypath = osp.splitext(lib_path)[0] + ".py"
         self.pymodule = self.import_from_file("kernel", self.pypath)
 
-        # Load the hgcc-compiled .hgbin through the HGGC driver.
+        # Load the .hgbin through the HGGC driver.
         self._load_module(lib_path)
 
     def compile_lib(self, timeout: float | None = None):
-        """Compile PPU device source to .hgbin using hgcc and write output files.
+        """Compile PPU device source to .hgbin and write output files.
+
+        hgcc is spawned by default; pass_configs={PassConfigKey.TL_PPU_COMPILER:
+        "hgrtc"} compiles in-process instead (see tilelang/contrib/hgrtc.py).
 
         Output artifacts (all in temp directory):
             - .hg: Source code (for debugging)
@@ -211,16 +215,22 @@ class HGRTCLibraryGenerator(LibraryGenerator):
             - .py: Python launcher (for calling kernels)
 
         Args:
-            timeout: Compilation timeout in seconds (currently unsupported by hgcc)
+            timeout: Compilation timeout in seconds (currently unsupported)
 
         Side effects:
             - Writes .hg, .hgbin, .py files to temp directory
             - Sets self.srcpath, self.libpath, self.pypath
         """
-        from tilelang.contrib import hgcc
-        from tilelang.transform import PassConfigKey
+        from tilelang.contrib import hgcc, hgrtc
 
         cfg = self.pass_configs or {}
+        compiler = str(cfg.get(PassConfigKey.TL_PPU_COMPILER, "hgcc"))
+        if compiler == "hgrtc":
+            compile_fn = hgrtc.compile_ppu
+        elif compiler == "hgcc":
+            compile_fn = hgcc.compile_ppu
+        else:
+            raise ValueError(f"Unsupported PPU compiler {compiler!r}; expected 'hgcc' or 'hgrtc'")
         # Note: verbose output is controlled by self.verbose; hgcc-style
         # verbose flags can be passed through tl.device_compile_flags.
         verbose = self.verbose
@@ -248,7 +258,7 @@ class HGRTCLibraryGenerator(LibraryGenerator):
         src.close()
         self.srcpath = src.name
 
-        binary = hgcc.compile_ppu(self.lib_code, target=self.target, options=options, verbose=verbose)
+        binary = compile_fn(self.lib_code, target=self.target, options=options, verbose=verbose)
 
         # Write binary to .hgbin file
         self.libpath = self.srcpath.replace(".hg", ".hgbin")
@@ -262,7 +272,7 @@ class HGRTCLibraryGenerator(LibraryGenerator):
             f.write(self.host_func)
 
     def _load_module(self, lib_path: str):
-        """Load an hgcc-compiled .hgbin through the HGGC driver (ctypes)."""
+        """Load a compiled .hgbin through the HGGC driver (ctypes)."""
         drv = _get_hg_driver()
         with open(lib_path, "rb") as f:
             data = f.read()

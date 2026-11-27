@@ -5,13 +5,17 @@
 #include <initializer_list>
 #include <string>
 
+#include "backend/common/codegen/codegen_c_base.h"
 #include "target/source/codegen_c.h"
 #include <tvm/arith/analyzer.h>
+
+#include "runtime/metadata.h"
+#include <tvm/ffi/extra/module.h>
 
 namespace tvm {
 namespace codegen {
 
-class CodeGenTileLangAscend final : public CodeGenC {
+class CodeGenTileLangAscend final : public CodeGenTileLangCBase {
 public:
   using CodeGenC::PrintType;
 
@@ -115,6 +119,7 @@ private:
   bool has_simd_inst_included_{false};
   bool has_gm_bypass_dcache_{false};
   bool has_gm_bypass_dcache_included_{false};
+  bool has_ascend_std_math_included_{false};
   bool has_philox_rng_{false};
   bool has_philox_rng_included_{false};
   bool has_cooperative_groups_included_{false};
@@ -162,6 +167,7 @@ private:
   AscendKernelMode kernel_mode_{AscendKernelMode::kVector};
   int mix_aiv_count_{2};
   bool enable_fast_math_{false};
+  bool require_batch_mode_{false};
 
   // Accumulates constraints along the traversal
   arith::Analyzer analyzer_;
@@ -182,6 +188,12 @@ private:
   bool EmitScalarizedStore(const BufferStoreNode *op);
   bool EmitOutOfVFBroadcastStore(const BufferStoreNode *op);
 };
+
+// Build the per-kernel FunctionInfo table shared by the Ascend and PTO
+// runtime modules (mirrors CUDA's ExtractFuncInfo,
+// src/cuda/codegen/rt_mod_cuda.cc).
+ffi::Map<ffi::String, runtime::FunctionInfo>
+ExtractAscendFuncInfo(const IRModule &mod);
 
 } // namespace codegen
 } // namespace tvm

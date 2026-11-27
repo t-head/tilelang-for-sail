@@ -684,7 +684,7 @@ void CodeGenTileLangPPU::PrintExtraAttrs(const PrimFunc &f) {
   }
 }
 
-std::string CodeGenTileLangPPU::Finish() {
+void CodeGenTileLangPPU::EmitPreamble_(std::ostream &os) const {
   // HGGC 13's hggc.h declares CUtensorMap with `alignas(128)`, which MSVC
   // rejects as a function parameter alignment (C2719: "formal parameter
   // requires <N>-byte alignment"). MSVC's hard limit for parameter alignment
@@ -696,73 +696,75 @@ std::string CodeGenTileLangPPU::Finish() {
   // for the duration of <hggc.h>'s parsing there. Newer MSVC versions accept
   // the 128-byte aligned parameter, and keeping that alignment avoids
   // HGGC_ERROR_MISALIGNED_ADDRESS at launch time.
-  decl_stream
-      << "#if defined(_MSC_VER) && !defined(__clang__) && _MSC_VER < 1940\n";
-  decl_stream << "#define _tl_orig_alignas alignas\n";
-  decl_stream << "#define alignas(N) _tl_orig_alignas((N) <= 64 ? (N) : 64)\n";
-  decl_stream << "#include <hggc.h>\n";
-  decl_stream << "#undef alignas\n";
-  decl_stream << "#define alignas _tl_orig_alignas\n";
-  decl_stream << "#endif\n";
+  os << "#if defined(_MSC_VER) && !defined(__clang__) && _MSC_VER < 1940\n";
+  os << "#define _tl_orig_alignas alignas\n";
+  os << "#define alignas(N) _tl_orig_alignas((N) <= 64 ? (N) : 64)\n";
+  os << "#include <hggc.h>\n";
+  os << "#undef alignas\n";
+  os << "#define alignas _tl_orig_alignas\n";
+  os << "#endif\n";
 
   if (need_mma_h_) {
-    decl_stream << "#include <hggc_mma.h>\n";
+    os << "#include <hggc_mma.h>\n";
   }
   if (need_mma_instruction_h_) {
-    decl_stream << "#include <tl_templates/ppu/instruction/mma.h>\n";
+    os << "#include <tl_templates/ppu/instruction/mma.h>\n";
   }
   if (need_mma_sp_instruction_h_) {
-    decl_stream << "#include <tl_templates/ppu/instruction/mma_sp.h>\n";
+    os << "#include <tl_templates/ppu/instruction/mma_sp.h>\n";
   }
   if (need_intrin_h_) {
-    decl_stream << "#include <tl_templates/ppu/intrin.h>\n";
+    os << "#include <tl_templates/ppu/intrin.h>\n";
   }
   if (need_atomic_h_) {
-    decl_stream << "#include <tl_templates/ppu/atomic.h>\n";
+    os << "#include <tl_templates/ppu/atomic.h>\n";
   }
   if (need_math_h_) {
-    decl_stream << "#include <tl_templates/ppu/math.h>\n";
+    os << "#include <tl_templates/ppu/math.h>\n";
   }
   if (need_barrier_h_) {
-    decl_stream << "#include <tl_templates/ppu/barrier.h>\n";
+    os << "#include <tl_templates/ppu/barrier.h>\n";
   }
   if (enable_fp8_) {
-    decl_stream << "#include <tl_templates/ppu/hggc_fp8.h>\n";
+    os << "#include <tl_templates/ppu/hggc_fp8.h>\n";
   }
   if (enable_fp6_) {
-    decl_stream << "// #include <hggc_fp6.h>  // not in PPU SDK\n";
+    os << "// #include <hggc_fp6.h>  // not in PPU SDK\n";
   }
   if (enable_fp4_) {
-    decl_stream << "#include <tl_templates/ppu/hggc_fp4.h>\n";
+    os << "#include <tl_templates/ppu/hggc_fp4.h>\n";
   }
 
   if (need_math_constants_h_) {
-    decl_stream << "#include <hggc_math_constants.h>\n";
+    os << "#include <hggc_math_constants.h>\n";
   }
 
   if (need_cooperative_groups_) {
-    decl_stream << "#include <cooperative_groups.h>\n";
+    // The SDK's cooperative_groups headers cast to uintptr_t from the host
+    // <cstdint>, which hgrtc does not provide. rtc_std.h supplies it there and
+    // is empty for hgcc. It has to come first: common.h only reaches it later,
+    // through copy.h below.
+    os << "#include <tl_templates/ppu/rtc_std.h>\n";
+    os << "#include <cooperative_groups.h>\n";
   }
   if (need_grid_sync_) {
-    decl_stream << "#include <tl_templates/ppu/grid_sync.h>\n";
+    os << "#include <tl_templates/ppu/grid_sync.h>\n";
   }
 
   if (need_acrand_kernel_h_) {
-    decl_stream << "#include <acrand_kernel.h>\n";
+    os << "#include <acrand_kernel.h>\n";
   }
 
-  decl_stream << "#include <tl_templates/ppu/copy.h>\n";
-  decl_stream << "#include <tl_templates/ppu/reduce.h>\n";
-  decl_stream << "#include <tl_templates/ppu/scan.h>\n";
-  decl_stream << "#include <tl_templates/ppu/ldsm.h>\n";
-  decl_stream << "#include <tl_templates/ppu/threadblock_swizzle.h>\n";
-  decl_stream << "#include <tl_templates/ppu/debug.h>\n";
-  decl_stream << "#ifdef ENABLE_BF16\n";
-  decl_stream << "#include <tl_templates/ppu/hggc_bf16_fallbacks.h>\n";
-  decl_stream << "#endif\n";
-  decl_stream << "\n";
-
-  return CodeGenC::Finish();
+  os << "#include <tl_templates/ppu/copy.h>\n";
+  os << "#include <tl_templates/ppu/reduce.h>\n";
+  os << "#include <tl_templates/ppu/scan.h>\n";
+  os << "#include <tl_templates/ppu/ldsm.h>\n";
+  os << "#include <tl_templates/ppu/threadblock_swizzle.h>\n";
+  os << "#include <tl_templates/ppu/debug.h>\n";
+  os << "#ifdef ENABLE_BF16\n";
+  os << "#include <tl_templates/ppu/hggc_bf16_fallbacks.h>\n";
+  os << "#endif\n";
+  os << "\n";
 }
 
 void CodeGenTileLangPPU::VisitStmt_(const tirx::ForNode *op) {
@@ -1684,6 +1686,41 @@ void CodeGenTileLangPPU::VisitExpr_(const CastNode *op, std::ostream &os) {
     return;
   }
 
+  // Round-to-nearest-even float32 -> tfloat32 (upstream #3714): PPU has no
+  // cvt.rn.tf32.f32 instruction, so dispatch to the software RTNE helper in
+  // the PPU templates.
+  if (cast_round == "rn" && from_ty.is_float() && from_ty.bits() == 32 &&
+      target_ty.is_tfloat32()) {
+    ICHECK(op->annotations.find("rbits") == op->annotations.end())
+        << "rbits is only supported with stochastic rounding, not round='rn'";
+    auto get_bool_anno = [&](const char *key, bool dflt) -> bool {
+      auto it = op->annotations.find(key);
+      if (it == op->annotations.end())
+        return dflt;
+      return Downcast<IntImm>((*it).second)->value != 0;
+    };
+    std::string cast_func = std::string("tl::__tl_cvt_f32_to_tf32_rn<") +
+                            (get_bool_anno("sat", true) ? "true>" : "false>");
+    if (from_ty.is_scalar()) {
+      os << cast_func << "(" << PrintExpr(op->value) << ")";
+      return;
+    }
+    std::string src = SSAGetID(PrintExpr(op->value), from_ty);
+    std::string sret = name_supply_->FreshName("_");
+    PrintIndent();
+    this->PrintType(target_ty, stream);
+    stream << ' ' << sret << ";\n";
+    for (int i = 0; i < from_ty.lanes(); ++i) {
+      std::ostringstream val;
+      val << cast_func << "(";
+      PrintVecElemLoad(src, from_ty, i, val);
+      val << ")";
+      PrintVecElemStore(sret, target_ty, i, val.str());
+    }
+    os << sret;
+    return;
+  }
+
   // Emit simple C-style type conversion for scalar casts without custom
   // rounding.
   if (from_ty.is_scalar() && cast_round.empty())
@@ -2464,9 +2501,36 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
   } else if (op->op.same_as(builtin::ptx_commit_group())) {
     print_extern_call_stmt("tl::cp_async_commit");
   } else if (op->op.same_as(builtin::ptx_wait_group())) {
-    int n = Downcast<IntImm>(op->args[0])->value;
+    // The wait depth lowers to a `ppu.cp.async.wait_group N`, whose operand
+    // must be a compile-time immediate. A software pipeline over a dynamic
+    // trip count can emit a non-constant depth (e.g. `1 - ko`) in its drain
+    // phase. Since there is no runtime form of the wait, fall back to a full
+    // wait (N=0: wait for all outstanding async copies), which is always a
+    // safe over-synchronization.
+    int n = 0;
+    if (const auto *imm = op->args[0].as<IntImmNode>()) {
+      n = static_cast<int>(imm->value);
+    }
     std::string func_name = "tl::cp_async_wait<" + std::to_string(n) + ">";
     print_extern_call_stmt(func_name, 1);
+  } else if (op->op.same_as(tl::prefetch_l2())) {
+    // The Python front end pins eviction_priority to -1 and is_global to true.
+    // Anything else has no distinct PPU encoding, so reject it here instead of
+    // emitting an asm string the backend would silently fold into another form.
+    auto priority = Downcast<IntImm>(op->args[1])->value;
+    bool is_global = Downcast<IntImm>(op->args[2])->value != 0;
+    ICHECK(priority == -1 && is_global)
+        << "tl.prefetch_l2 on PPU only supports the policy-less global form, "
+           "got "
+        << "eviction_priority=" << priority << ", is_global=" << is_global;
+    print_extern_call_stmt("tl::prefetch_l2<-1, true>", 0, 2);
+  } else if (op->op.same_as(tl::prefetch_l1()) ||
+             op->op.same_as(tl::prefetchu_l1())) {
+    LOG(FATAL) << (op->op.same_as(tl::prefetch_l1()) ? "tl.prefetch_l1"
+                                                     : "tl.prefetchu_l1")
+               << " is not supported on the PPU backend: PPU has no distinct "
+                  "L1 prefetch "
+                  "encoding. Use tl.prefetch_l2 instead.";
   } else if (op->op.same_as(builtin::create_barriers())) {
     this->PrintIndent();
     int barrier_count = Downcast<IntImm>(op->args[0])->value;
@@ -3306,17 +3370,25 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
       this->PrintExpr(op->args[0], os);
     }
     os << ")";
-  } else if (op->op.same_as(tl::clamp())) {
-    // NaN-propagating clamp, mirroring the CUDA backend: scalar calls go to
-    // tl::clamp, 16-bit vectors decompose into per-pair tl::clamp2 calls on
-    // the packed fields, and other vectors into per-lane tl::clamp calls.
-    ICHECK_EQ(op->args.size(), 3);
+  } else if (op->op.same_as(tl::clamp_symmetric())) {
+    // NaN-propagating symmetric clamp, mirroring the CUDA backend: scalar
+    // calls go to tl::clamp_symmetric, 16-bit vectors decompose into
+    // per-pair tl::clamp_symmetric2 calls on the packed fields, and other
+    // vectors into per-lane tl::clamp_symmetric calls. Unlike CUDA there is
+    // no single min.NaN.xorsign.abs instruction; the device helpers in
+    // tl_templates/ppu/math.h compose it from the NaN-propagating packed
+    // min/max primitives, so no SM86-style capability gate applies.
+    ICHECK_EQ(op->args.size(), 2);
     need_math_h_ = true;
     DataType dtype = op->dtype;
+    ICHECK(dtype.element_of() == DataType::Float(32) || dtype.is_float16() ||
+           dtype.is_bfloat16())
+        << "tl.clamp_symmetric requires float16, bfloat16, or float32 "
+           "operands";
     std::vector<PrimExpr> args(op->args.begin(), op->args.end());
     for (const PrimExpr &arg : args) {
       ICHECK_EQ(arg.dtype(), dtype)
-          << "tl.clamp operands must have matching types";
+          << "tl.clamp_symmetric operands must have matching types";
     }
     if (!dtype.is_scalar()) {
       // Bind effectful inputs before using them so identical calls (or loads
@@ -3324,14 +3396,14 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
       // argument.
       for (PrimExpr &arg : args) {
         if (SideEffect(arg) > CallEffectKind::kPure) {
-          Var value("clamp_arg", dtype);
+          Var value("clamp_symmetric_arg", dtype);
           arg = Let(value, arg, value);
         }
       }
     }
     if (dtype.is_scalar()) {
-      os << "tl::clamp(" << PrintExpr(args[0]) << ", " << PrintExpr(args[1])
-         << ", " << PrintExpr(args[2]) << ")";
+      os << "tl::clamp_symmetric(" << PrintExpr(args[0]) << ", "
+         << PrintExpr(args[1]) << ")";
     } else {
       int lanes = dtype.lanes();
       bool is_bf16x2 = dtype.is_bfloat16();
@@ -3348,8 +3420,8 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
       int ssa_scope = BeginScope();
       if ((is_bf16x2 || is_fp16x2) && CanEmitPackedX2Math(dtype)) {
         // Each 32-bit field of the carrier packs a pair of elements; apply
-        // tl::clamp2 on each field directly (<= 8 lanes) or on each half of
-        // the 64-bit fields (12/16 lanes), same mapping as the binary
+        // tl::clamp_symmetric2 on each field directly (<= 8 lanes) or on each
+        // half of the 64-bit fields (12/16 lanes), same mapping as the binary
         // packed-x2 path above.
         static const char access[] = {'x', 'y', 'z', 'w'};
         int num_pairs = lanes / 2;
@@ -3376,19 +3448,18 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
           this->PrintIndent();
           if (lanes <= 8) {
             stream << "*(uint1*)(&(" << sret << "." << field
-                   << ")) = tl::to_uint1(tl::clamp2(";
+                   << ")) = tl::to_uint1(tl::clamp_symmetric2(";
           } else {
             stream << "*(((uint1*)(&(" << sret << "." << field << "))) + "
-                   << pair_offset << ") = tl::to_uint1(tl::clamp2(";
+                   << pair_offset << ") = tl::to_uint1(tl::clamp_symmetric2(";
           }
           stream << make_half_pair(arg_ids[0], field, pair_offset) << ", "
-                 << make_half_pair(arg_ids[1], field, pair_offset) << ", "
-                 << make_half_pair(arg_ids[2], field, pair_offset) << "));\n";
+                 << make_half_pair(arg_ids[1], field, pair_offset) << "));\n";
         }
       } else {
         for (int lane = 0; lane < lanes; ++lane) {
           std::ostringstream lane_call;
-          lane_call << "tl::clamp(";
+          lane_call << "tl::clamp_symmetric(";
           for (size_t i = 0; i < args.size(); ++i) {
             if (i != 0)
               lane_call << ", ";
@@ -4941,6 +5012,8 @@ void CodeGenTileLangPPU::VisitExpr_(const BroadcastNode *op,
     return;
   }
 
+  // Each ulonglong4 component holds two float32 lanes. `make_float2` returns a
+  // temporary, so its address cannot be taken; pack the lane bits instead.
   if (op->dtype.is_float() && op->dtype.bits() == 32 &&
       op->dtype.lanes() == 8) {
     std::string v = PrintExpr(op->value);
@@ -4948,7 +5021,8 @@ void CodeGenTileLangPPU::VisitExpr_(const BroadcastNode *op,
     for (int i = 0; i < 4; ++i) {
       if (i != 0)
         os << ", ";
-      os << "*(unsigned long long*)&make_float2(" << v << ", " << v << ")";
+      os << "((unsigned long long)__float_as_uint(" << v
+         << ") << 32 | __float_as_uint(" << v << "))";
     }
     os << ')';
     return;
@@ -5460,7 +5534,12 @@ void CodeGenTileLangPPU::AddFunction(const GlobalVar &gvar, const PrimFunc &f) {
           << "T.HGGCSourceCodeKernel expects the lowered device global_symbol "
              "to match entry_name";
     }
+    // Keep raw user source intact while allowing the base class to manage
+    // line directives and imported-source ordering.
+    this->InitFuncState(f);
+    this->BeginRawSource();
     stream << static_cast<std::string>(code_block_source.value()) << "\n\n";
+    this->EndRawSource();
     return;
   }
 

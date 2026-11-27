@@ -2,6 +2,9 @@
 
 #ifndef __HGGCCC_RTC__
 #include <hggc_runtime.h>
+#else
+// The std:: traits used below arrive with the host headers under hgcc.
+#include "rtc_std.h"
 #endif
 
 #include <cutlass/numeric_types.h>
@@ -29,9 +32,9 @@ template <> struct normalize_atomic_type<bfloat16_t> {
   using type = __ppu_bfloat16;
 };
 
-template <> struct normalize_atomic_type<int64_t> {
-  using type = unsigned long long;
-};
+// int64_t stays signed on purpose: the max/min/and/or/xor paths below compare
+// through hggc::atomic_ref<T>, so widening to unsigned long long would order
+// negative values as huge positives (max(-1, 1) == -1).
 
 template <typename T1, typename T2> TL_DEVICE T1 hggc_cast(T2 val) {
   return T1(val);
@@ -518,8 +521,28 @@ template <hggc::thread_scope Scope = hggc::thread_scope_device, typename T1,
           typename T2>
 TL_DEVICE void AtomicStore(T1 *ref, T2 value, int memory_order) {
   using NT1 = typename normalize_atomic_type<T1>::type;
-  hggc::atomic_ref<NT1, Scope> aref(*reinterpret_cast<NT1 *>(ref));
-  aref.store(hggc_cast<NT1>(value), hggc::memory_order(memory_order));
+  if constexpr (std::is_same_v<NT1, half> ||
+                std::is_same_v<NT1, __ppu_bfloat16>) {
+    // hggc::atomic_ref rejects 1 or 2 byte types, so swap the bits in through
+    // the 16-bit atomicCAS loop, like the half/bf16 AtomicMax/AtomicMin above.
+    // atomicCAS is a relaxed device-scope op: the requested memory order and
+    // Scope are not carried here (same limitation as AtomicMax/AtomicMin).
+    unsigned short *address_as_ushort = reinterpret_cast<unsigned short *>(ref);
+    unsigned short val_as_ushort =
+        tl_atomic_detail::PackBits16(hggc_cast<NT1>(value));
+    unsigned short old_val_ushort = *address_as_ushort;
+    while (true) {
+      unsigned short assumed_val_ushort = old_val_ushort;
+      old_val_ushort =
+          atomicCAS(address_as_ushort, assumed_val_ushort, val_as_ushort);
+      if (assumed_val_ushort == old_val_ushort) {
+        break;
+      }
+    }
+  } else {
+    hggc::atomic_ref<NT1, Scope> aref(*reinterpret_cast<NT1 *>(ref));
+    aref.store(hggc_cast<NT1>(value), hggc::memory_order(memory_order));
+  }
 }
 
 template <typename T1, typename T2>

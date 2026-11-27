@@ -785,7 +785,7 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
       Var replica("ldmatrix_rep", local_layout->ReplicateExtent().dtype());
       analyzer->Bind(replica, Range(0, local_layout->ReplicateExtent()));
       PrimExpr local_index = analyzer->Simplify(Substitute(
-          local_indices_flattened, {{ReplicationPlaceholder(), replica}}));
+          local_indices_flattened, {{local_layout->ReplicateVar(), replica}}));
       PrimExpr thread = analyzer->Simplify(
           local_layout->ForwardThread(local_indices, replica));
       PrimExpr packet = FloorDiv(local_index, step) * step;
@@ -1031,7 +1031,7 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
     Var replica("swzl_rep", local_layout->ReplicateExtent().dtype());
     analyzer->Bind(replica, Range(0, local_layout->ReplicateExtent()));
     PrimExpr local_index = analyzer->Simplify(Substitute(
-        local_indices_flattened, {{ReplicationPlaceholder(), replica}}));
+        local_indices_flattened, {{local_layout->ReplicateVar(), replica}}));
     PrimExpr thread =
         analyzer->Simplify(local_layout->ForwardThread(local_indices, replica));
     PrimExpr packet = FloorDiv(local_index, packet_size) * packet_size;

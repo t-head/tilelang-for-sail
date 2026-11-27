@@ -14,6 +14,17 @@ def _rewrite(func, pass_name):
     return transform(tvm.IRModule({"main": func}))["main"]
 
 
+def _sample_values(expr, index):
+    # Evaluate an int64 index expression at a few non-negative sample points. The
+    # analyzer no longer simplifies Div(k * lanes + r, lanes) symbolically.
+    analyzer = tvm.arith.Analyzer()
+    values = []
+    for k in (0, 1, 2, 7, 12345, 2**20):
+        folded = analyzer.simplify(tir.stmt_functor.substitute(expr, {index: tir.IntImm("int64", k)}))
+        values.append(folded.value)
+    return values
+
+
 @pytest.mark.parametrize("pass_name", ["StorageRewrite", "PointerValueTypeRewrite"])
 @pytest.mark.parametrize("index_dtype", ["int32", "int64"])
 @pytest.mark.parametrize("offset", [0, 7])
@@ -85,7 +96,7 @@ def test_mixed_scalar_vector_coefficients(coefficients, lanes, expected_lanes, o
             load = stmt.value.vectors[0]
             assert load.dtype == expected_dtype
             scalar_address = load.indices[0] * expected_lanes + stmt.value.indices[0]
-            assert analyzer.can_prove_equal(scalar_address, address)
+            assert _sample_values(scalar_address, index) == _sample_values(address, index)
 
 
 def test_mixed_scalar_base_types_preserve_declared_type():

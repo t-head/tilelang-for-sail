@@ -19,9 +19,11 @@ TVM_REGISTER_PASS_CONFIG_OPTION(kDisableAIULower, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableLdmatSwzl, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableLdmatSwzlCostModel, Bool);
 
-// tl.clamp intentionally keeps no ppu.FLowerIntrinsic registration: like the
-// CUDA backend, the op survives lowering and is emitted by the PPU codegen's
-// NaN-propagating tl::clamp / tl::clamp2 branch.
+// tl.clamp_symmetric (registered by the CUDA op set, whose builtin.h this
+// file's header includes) intentionally keeps no ppu.FLowerIntrinsic
+// registration: like the CUDA backend, the op survives lowering and is
+// emitted by the PPU codegen's NaN-propagating tl::clamp_symmetric /
+// tl::clamp_symmetric2 branch.
 
 TIR_DEFINE_TL_BUILTIN(ppu_aiu_load)
     .set_num_inputs(-1)
