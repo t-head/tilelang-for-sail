@@ -40,6 +40,10 @@ from ..layout.mma_layout import (
     ldmatrix_32x16_to_shared_16x64_layout_a,
     ldmatrix_32x16_to_shared_16x64_layout_b,
     mma_store_32x8_to_shared_16x16_layout,
+    ldmatrix_32x4_to_shared_16x8_layout_b_fp16,
+    ldmatrix_32x4_to_shared_8x16_layout_b_fp16,
+    ldmatrix_32x2_to_shared_8x8_layout_b_fp32,
+    ldmatrix_32x8_to_shared_8x32_layout_b,
     # PPU-specific layout functions
     ppu_shared_16x16_to_mma_32x8_layout_trans_sr_b,
     ppu_ldmatrix_32x4_to_shared_16x8_layout_a,
@@ -472,10 +476,12 @@ class TensorCoreIntrinEmitter:
             if DataType(b_dtype).bits == 4:
                 mma_load_layout = mma_load_b_32x32_to_shared_16x64_layout
             elif DataType(b_dtype).bits == 8:
+                # n8 reuses the n16 map on the truncated local_id domain.
                 mma_load_layout = mma_load_b_32x16_to_shared_16x32_layout
             elif DataType(b_dtype).bits == 16:
                 mma_load_layout = mma_load_b_32x8_to_shared_16x16_layout
             elif DataType(b_dtype).bits == 32:
+                # n8 reuses the n16 map on the truncated local_id domain.
                 mma_load_layout = mma_load_b_32x4_to_shared_16x8_layout
             else:
                 raise ValueError(f"Unsupported dtype: {b_dtype}")
@@ -734,6 +740,8 @@ class TensorCoreIntrinEmitter:
         # then rs also can represent a transposed basic layout
         transform_func_sr_a: Callable = None
         transform_func_sr_b: Callable = None
+        # n8 reuses the n16 B maps: identical on the truncated n domain,
+        # and the inverse is solved over the truncated local-size domain.
         if dtype_bits == 32:
             transform_func_sr_a = shared_16x8_to_mma_32x4_layout_sr_a
             transform_func_sr_b = shared_16x8_to_mma_32x4_layout_sr_b
@@ -948,22 +956,23 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         super().__init__(*args, **kwargs)
 
     def _initialize_mma_prefix(self, k_dim: int = 16):
-        a_dtype = DataType(self.a_dtype)
-        b_dtype = DataType(self.b_dtype)
-        accum_dtype = DataType(self.accum_dtype)
+        if self.n_dim == 8:
+            # Only reachable via the m16n8 fallback; the dtype whitelist
+            # is k_dim-specific (see _m16n8_fallback_dtype_supported).
+            self._check_m16n8_fallback_dtype(k_dim)
         is_ppu0010_int8 = (
             self.ppu_arch == 10
-            and a_dtype == DataType("int8")
-            and b_dtype == DataType("int8")
-            and accum_dtype == DataType("int32")
+            and DataType(self.a_dtype) == DataType("int8")
+            and DataType(self.b_dtype) == DataType("int8")
+            and DataType(self.accum_dtype) == DataType("int32")
             and not self.a_transposed
         )
         if k_dim == 8:
-            self.mma_prefix = "m16n16k8"
+            self.mma_prefix = f"m16n{self.n_dim}k8"
         elif k_dim == 16:
-            self.mma_prefix = "m16n16k16"
+            self.mma_prefix = f"m16n{self.n_dim}k16"
         elif k_dim == 32 and (is_ppu0010_int8 or (self.ppu_arch >= 15 and not DataType(self.a_dtype).is_float4_e2m1fn())):
-            self.mma_prefix = "m16n16k32"
+            self.mma_prefix = f"m16n{self.n_dim}k32"
         elif (
             k_dim == 64 and self.ppu_arch >= 15 and DataType(self.a_dtype).is_float4_e2m1fn() and DataType(self.b_dtype).is_float4_e2m1fn()
         ):
@@ -972,25 +981,136 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         else:
             raise ValueError(f"Unsupported k_dim {k_dim}")
 
+    def _is_tf32_mma_operand(self, dtype: str, accum_dtype: str) -> bool:
+        """tf32 operand identification mirroring the main 16x16 path: either
+        custom[tfloat32] or plain float32 with a float32 accumulator."""
+        if self._get_dtype_abbrv(dtype) == "tf32":
+            return True
+        return self._should_use_tf32_mma_operand(dtype, accum_dtype)
+
+    @staticmethod
+    def _is_m16n8k32_fp8_operand(dtype: DataType) -> bool:
+        """Whether ``dtype`` is an fp8 flavor with a PPU0015 m16n8k32 atom
+        (e4m3/e5m2 spellings; the fnuz variants have no atom).
+
+        The bundled TVM DataType wrapper exposes no is_float8_* helpers, so
+        compare the exact type-name string against an explicit allow-list
+        (no prefix matching, so the fnuz variants stay out).
+        """
+        return str(dtype) in ("float8_e4m3", "float8_e4m3fn", "float8_e5m2")
+
+    def _m16n8_fallback_dtype_supported(self, k_dim: int) -> bool:
+        """Whether the (a, b, accum) combination has a native m16n8 atom
+        for this k_dim on PPU0015+ (the PPU0015_16x8* atoms):
+        k16: fp16 x fp16 + fp32/fp16, bf16 x bf16 + fp32; k8: tf32 operands
+        (either spelling) + fp32; k32: int8 x int8 + int32 and fp8 x fp8 +
+        fp32 over any e4m3/e5m2 mix (A != B included, shared S8 geometry).
+        Everything else has no fallback and keeps requiring a warp N slice
+        divisible by 16.
+        """
+        a_dtype = DataType(self.a_dtype)
+        b_dtype = DataType(self.b_dtype)
+        accum_dtype = DataType(self.accum_dtype)
+        if k_dim == 16:
+            if (
+                a_dtype == DataType("float16")
+                and b_dtype == DataType("float16")
+                and accum_dtype in (DataType("float32"), DataType("float16"))
+            ):
+                return True
+            return a_dtype == DataType("bfloat16") and b_dtype == DataType("bfloat16") and accum_dtype == DataType("float32")
+        if k_dim == 8:
+            # tf32 operands in either spelling (custom[tfloat32] or plain
+            # float32 with a float32 accumulator).
+            return (
+                self._is_tf32_mma_operand(self.a_dtype, self.accum_dtype)
+                and self._is_tf32_mma_operand(self.b_dtype, self.accum_dtype)
+                and accum_dtype == DataType("float32")
+            )
+        if k_dim == 32:
+            # fp8 x fp8 + fp32 shares the branch with int8 (shared S8 geometry).
+            if accum_dtype == DataType("float32") and self._is_m16n8k32_fp8_operand(a_dtype) and self._is_m16n8k32_fp8_operand(b_dtype):
+                return True
+            return a_dtype == DataType("int8") and b_dtype == DataType("int8") and accum_dtype == DataType("int32")
+        return False
+
+    def _check_m16n8_fallback_dtype(self, k_dim: int) -> None:
+        """Raise a clear error when n_dim == 8 has no supported m16n8 atom."""
+        if self.ppu_arch < 15 or not self._m16n8_fallback_dtype_supported(k_dim):
+            forced_hint = ""
+            if self._force_gemm_n8():
+                forced_hint = " (the tl.ppu_force_gemm_n8 compatibility retry was already attempted and still failed for this dtype)"
+            raise ValueError(
+                "The m16n8 MMA fallback on PPU0015+ supports fp16 x fp16 + fp32/fp16, "
+                "bf16 x bf16 + fp32, fp32(tf32) x fp32(tf32) + fp32, int8 x int8 + int32 "
+                "and fp8 x fp8 + fp32 (e4m3/e5m2 mixes, k32), "
+                f"got {self.a_dtype} x {self.b_dtype} + {self.accum_dtype} "
+                f"(k_dim={k_dim}, ppu_arch={self.ppu_arch}){forced_hint}; this dtype has no 16x8 "
+                "fallback, keep the warp N slice divisible by 16"
+            )
+
+    def _force_gemm_n8(self) -> bool:
+        """Whether tl.ppu_force_gemm_n8 is set: flipped by the PPU
+        LayoutInference retry after a layout conflict (or manually to
+        reproduce the forced fallback); visible to both infer_layout and
+        lowering until compilation finishes."""
+        pass_ctx = get_pass_context()
+        return pass_ctx.config.get(PassConfigKey.TL_PPU_FORCE_GEMM_N8.value, False)
+
+    def _use_m16n8_fallback(self, k_dim: int) -> bool:
+        """Whether the warp N slice must fall back to a native m16n8 atom:
+        PPU0015+, a warp N slice divisible by 8 but not 16 (or forced via
+        the compatibility retry), and a supported dtype combination."""
+        return (
+            self.ppu_arch >= 15
+            and self.warp_col_tiles % 8 == 0
+            and (self._force_gemm_n8() or self.warp_col_tiles % 16 != 0)
+            and self._m16n8_fallback_dtype_supported(k_dim)
+        )
+
     def _initialize_micro_size(self, m_dim: int = 16, k_dim: int = 16):
         warp_row_tiles = self.warp_row_tiles
         warp_col_tiles = self.warp_col_tiles
         assert warp_row_tiles >= 16, f"warp_row_tiles must be >= 16, got {warp_row_tiles}"
         assert warp_row_tiles % 16 == 0, f"warp_row_tiles must be divisible by 16, got {warp_row_tiles}"
-        assert warp_col_tiles >= 16, f"warp_col_tiles must be >= 16, got {warp_col_tiles}"
-        assert warp_col_tiles % 16 == 0, f"warp_col_tiles must be divisible by 16, got {warp_col_tiles}"
+
+        if self._force_gemm_n8() and warp_col_tiles % 8 == 0:
+            # Forced compatibility mode must take the n8 path; fail fast
+            # with the retry-aware message when no m16n8 atom exists.
+            self._check_m16n8_fallback_dtype(k_dim)
+
+        if self._use_m16n8_fallback(k_dim):
+            # PPU0015 fallback: cover the warp N slice with native m16n8
+            # atoms (actlize PPU0015_16x8x16 / _16x8x8 / _16x8x32).
+            assert warp_col_tiles >= 8, f"warp_col_tiles must be >= 8, got {warp_col_tiles}"
+            self.n_dim = 8
+            self.micro_size_y = 8
+            self.warp_cols = warp_col_tiles // 8
+        elif warp_col_tiles % 16 == 0:
+            assert warp_col_tiles >= 16, f"warp_col_tiles must be >= 16, got {warp_col_tiles}"
+            self.n_dim = 16
+            self.micro_size_y = 16
+            self.warp_cols = warp_col_tiles // 16
+        else:
+            raise ValueError(
+                f"Unsupported warp_col_tiles {warp_col_tiles}: must be divisible by 16, "
+                "or by 8 for the PPU0015 m16n8 fallback "
+                "(fp16 x fp16 + fp32/fp16, bf16 x bf16 + fp32, tf32 x tf32 + fp32, "
+                "int8 x int8 + int32, or fp8 x fp8 + fp32); "
+                f"got {self.a_dtype} x {self.b_dtype} + {self.accum_dtype}"
+            )
         self.warp_rows = warp_row_tiles // m_dim
-        self.n_dim = 16
-        self.micro_size_y = 16
-        self.warp_cols = warp_col_tiles // 16
         self.micro_size_x = m_dim
         self.micro_size_k = k_dim
 
     def get_store_index_map(self, inverse: bool = False) -> IndexMap:
         warp_size, local_size_c = self.WARP_SIZE, self.local_size_out
-        store_layout = ppu_mma_store_32x8_to_shared_16x16_layout
-        if self.ppu_arch >= 15:
+        # n8 reuses the n16 store map on the truncated local_size_out
+        # domain (4 regs per lane, dtype-independent CLayout).
+        if self.n_dim == 8 or self.ppu_arch >= 15:
             store_layout = mma_store_32x8_to_shared_16x16_layout
+        else:
+            store_layout = ppu_mma_store_32x8_to_shared_16x16_layout
         index_map = IndexMap.from_func(store_layout, index_dtype=T.int32)
         if not inverse:
             return index_map
@@ -1023,7 +1143,9 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
 
     def _can_use_trans_b8(self, region: BufferRegion) -> bool:
         """Whether a natural-layout b8 B region is legal for m16n16 ldmatrix."""
-        if self.ppu_arch < 15 or self.micro_size_k != 32 or DataType(self.b_dtype).bits != 8 or self.b_transposed:
+        # The transposed-b8 path emits an m16n16k32 fragment; the m16n8
+        # fallback (n_dim == 8) keeps the default per-lane loader instead.
+        if self.ppu_arch < 15 or self.n_dim != 16 or self.micro_size_k != 32 or DataType(self.b_dtype).bits != 8 or self.b_transposed:
             return False
 
         buffer = region.buffer
@@ -1233,8 +1355,15 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         self, B_local_buf: Buffer, B_shared_buf: Buffer | BufferRegion, ki: PrimExpr, rk: PrimExpr | None = 0, a_from_gemm_c: bool = False
     ):
         b_bits = DataType(self.b_dtype).bits
+        if b_bits == 32 and self.n_dim == 8:
+            # tf32 n8: K-major takes the element-wise default loader;
+            # N-major uses the inline ldmatrix.x2 branch below.
+            if not self.b_transposed:
+                return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
+        elif b_bits not in (4, 8, 16):
+            return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
         natural_b_instruction_supported = b_bits == 16 or (b_bits == 8 and self.ppu_arch >= 15)
-        if b_bits not in (4, 8, 16) or (not self.b_transposed and not natural_b_instruction_supported):
+        if not self.b_transposed and not natural_b_instruction_supported:
             return self._ldmatrix_b_default(B_local_buf, B_shared_buf, ki, rk)
 
         warp_col_tiles = self.warp_col_tiles
@@ -1312,11 +1441,24 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
                 )
 
                 num = 4 if replicate_b else 2
-                access_extent = (2 * num) * (16 // b_bits)
+                # Bytes written per lane: num 32-bit registers in dtype elements.
+                access_extent = (num * 32) // b_bits
                 if b_bits == 4:
                     row_off, col_off = ldmatrix_32x16_to_shared_16x64_layout_b(tx, 0)
+                elif b_bits == 8 and self.n_dim == 8:
+                    # n8: ldmatrix.x2 loads the n8 x k32 B tile as two 8x16 matrices.
+                    row_off, col_off = ldmatrix_32x8_to_shared_8x32_layout_b(tx, 0)
                 elif b_bits == 8:
                     row_off, col_off = ldmatrix_32x16_to_shared_16x32_layout_b(tx, 0)
+                elif b_bits == 16 and self.n_dim == 8:
+                    # n8: ldmatrix.x2 loads the n8 x k16 B tile as two 8x8 matrices.
+                    if b_transposed:
+                        row_off, col_off = ldmatrix_32x4_to_shared_8x16_layout_b_fp16(tx, 0)
+                    else:
+                        row_off, col_off = ldmatrix_32x4_to_shared_16x8_layout_b_fp16(tx, 0)
+                elif b_bits == 32 and self.n_dim == 8:
+                    # n8 tf32: ldmatrix.x2 loads the n8 x k8 B tile as two 8x8 matrices.
+                    row_off, col_off = ldmatrix_32x2_to_shared_8x8_layout_b_fp32(tx, 0)
                 elif self.ppu_arch >= 15 and not b_transposed:
                     row_off, col_off = ldmatrix_32x8_to_shared_16x16_layout(tx, 0)
                 else:
@@ -1574,7 +1716,8 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         accum_dtype = self.accum_dtype
         accum_dtype_abbrv = self.accum_dtype_abbrv
         mma_prefix = self.mma_prefix
-        # PPU uses m16n16 instructions, so B does not need replication.
+        # PPU m16n16/m16n8 atoms are native, so B never needs the CUDA-style
+        # replicate_b double-issue; local sizes already follow n_dim.
 
         a_is_fragment = is_fragment(A_local_buf)
         b_is_fragment = is_fragment(B_local_buf)

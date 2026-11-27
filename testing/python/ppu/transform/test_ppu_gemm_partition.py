@@ -33,46 +33,129 @@ def _apply_pass(mod, target, pass_name):
         return getattr(tilelang.ppu.transform, pass_name)()(mod)
 
 
-@pytest.mark.parametrize("pass_name", ["LayoutInference", "LowerTileOp"])
+# With the PPU0015 m16n8 fallback, partition candidates that would
+# truncate the output tile are skipped or shrunk instead of being selected:
+# the search falls back to a legal (m_warp, n_warp) covering the tile with
+# whole 16-wide MMA tiles. The expected partitions below are identical on
+# PPU0010 and PPU0015 because every case keeps N % 16 == 0 (k_n_per_warp = 16).
 @pytest.mark.parametrize(
-    "m,n,num_warps,policy",
+    "m,n,num_warps,policy,expected",
     [
         # Square formerly rounded N/12 and M/17 down to a 16-wide tile.
-        (16, 208, 12, T.GemmWarpPolicy.Square),
-        (288, 16, 17, T.GemmWarpPolicy.Square),
+        (16, 208, 12, T.GemmWarpPolicy.Square, (1, 1)),
+        (288, 16, 17, T.GemmWarpPolicy.Square, (1, 1)),
         # FullRow/FullCol formerly chose the requested nondividing warp count.
-        (16, 208, 12, T.GemmWarpPolicy.FullRow),
-        (208, 16, 12, T.GemmWarpPolicy.FullRow),
-        (336, 16, 20, T.GemmWarpPolicy.FullCol),
-        (16, 336, 20, T.GemmWarpPolicy.FullCol),
-        (48, 48, 8, T.GemmWarpPolicy.FullRow),
-        (48, 48, 8, T.GemmWarpPolicy.FullCol),
-        (48, 64, 4, T.GemmWarpPolicy.Square),
-        (48, 80, 8, T.GemmWarpPolicy.Square),
+        (16, 208, 12, T.GemmWarpPolicy.FullRow, (1, 1)),
+        (336, 16, 20, T.GemmWarpPolicy.FullCol, (7, 1)),
+        (16, 336, 20, T.GemmWarpPolicy.FullCol, (1, 7)),
+        (48, 48, 8, T.GemmWarpPolicy.FullRow, (3, 1)),
+        (48, 48, 8, T.GemmWarpPolicy.FullCol, (1, 3)),
+        (48, 64, 4, T.GemmWarpPolicy.Square, (1, 4)),
+        (48, 80, 8, T.GemmWarpPolicy.Square, (1, 1)),
     ],
 )
-def test_ppu_gemm_uncovered_partition_rejected(m, n, num_warps, policy, pass_name):
-    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+@pytest.mark.parametrize("arch", ["ppu_10", "ppu_15"])
+def test_ppu_gemm_uncovered_partition_falls_back_to_legal(m, n, num_warps, policy, expected, arch, monkeypatch):
+    target = tvm.target.Target({"kind": "ppu", "arch": arch})
+    emitters = []
+    make_emitter = PPUGemmMMA._make_mma_emitter
+
+    def record_emitter(self, *args, **kwargs):
+        # Observe the real native partition and emitter; do not replace either.
+        emitter = make_emitter(self, *args, **kwargs)
+        emitters.append(emitter)
+        return emitter
+
+    monkeypatch.setattr(PPUGemmMMA, "_make_mma_emitter", record_emitter)
     mod = _gemm_module(m, n, num_warps, policy, target)
-    with pytest.raises(Exception, match="warp partition would truncate output tile") as exc_info:
+    inferred = _apply_pass(mod, target, "LayoutInference")
+    lowered = _apply_pass(inferred, target, "LowerTileOp")
+
+    for emitter in emitters:
+        m_warp, n_warp = emitter.block_row_warps, emitter.block_col_warps
+        assert (m_warp, n_warp) == expected
+        assert 0 < m_warp * n_warp <= num_warps
+        assert m % (m_warp * 16) == 0
+        assert n % (n_warp * 16) == 0
+        assert m_warp * emitter.warp_rows * 16 == m
+        assert n_warp * emitter.warp_cols * 16 == n
+
+    mma_calls = []
+    tile_calls = []
+
+    def visit(node):
+        if isinstance(node, tvm.tirx.Call) and isinstance(node.op, tvm.ir.Op):
+            if node.op.name == "tirx.ptx_mma":
+                mma_calls.append(node)
+            elif node.op.name == "tl.tileop.gemm":
+                tile_calls.append(node)
+
+    post_order_visit(lowered["main"].body, visit)
+    assert mma_calls
+    assert not tile_calls
+    assert all(str(call.args[0].value) == "m16n16k16" for call in mma_calls)
+
+
+@pytest.mark.parametrize("pass_name", ["LayoutInference", "LowerTileOp"])
+@pytest.mark.parametrize("arch", ["ppu_10", "ppu_15"])
+def test_ppu_gemm_m_oversubscribed_partition_rejected(arch, pass_name):
+    # FullRow with more 16-row slices than warps cannot shrink m_warp to a
+    # legal divisor (13 row slices, 12 warps): the partition would truncate
+    # the output tile and is still rejected on both arches.
+    target = tvm.target.Target({"kind": "ppu", "arch": arch})
+    mod = _gemm_module(208, 16, 12, T.GemmWarpPolicy.FullRow, target)
+    with pytest.raises(Exception, match="warp partition would truncate output tile"):
         _apply_pass(mod, target, pass_name)
-    message = str(exc_info.value)
-    assert f"M={m}" in message
-    assert f"N={n}" in message
-    assert f"num_warps={num_warps}" in message
-    assert f"policy={policy.name}" in message
-    assert "M must be divisible by" in message
 
 
 @pytest.mark.parametrize("pass_name", ["LayoutInference", "LowerTileOp"])
 @pytest.mark.parametrize("policy", _POLICIES)
 @pytest.mark.parametrize("m,n,axis", [(8, 16, "M"), (16, 8, "N")])
-def test_ppu_gemm_requires_16x16_atoms(m, n, axis, policy, pass_name):
+def test_ppu_gemm_requires_16x16_atoms_ppu0010(m, n, axis, policy, pass_name):
     # In particular, CUDA's eight-column rule must not leak into PPU.
-    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+    # PPU0010 has no m16n8 fallback, so both axes must stay divisible by 16.
+    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_10"})
     mod = _gemm_module(m, n, 1, policy, target)
     with pytest.raises(Exception, match=f"{axis} must be divisible by 16"):
         _apply_pass(mod, target, pass_name)
+
+
+@pytest.mark.parametrize("policy", _POLICIES)
+@pytest.mark.parametrize("m,n,axis", [(8, 16, "M"), (16, 8, "N")])
+def test_ppu_gemm_axis_divisibility_ppu0015(m, n, axis, policy, monkeypatch):
+    # PPU0015 keeps the 16-row M requirement but relaxes the warp N slice
+    # to 8 via the m16n8 fallback atoms: (16, 8) lowers on n_dim == 8 atoms
+    # while (8, 16) is still rejected.
+    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+    mod = _gemm_module(m, n, 1, policy, target)
+    if axis == "M":
+        with pytest.raises(Exception, match="M must be divisible by 16"):
+            _apply_pass(mod, target, "LayoutInference")
+        return
+
+    emitters = []
+    make_emitter = PPUGemmMMA._make_mma_emitter
+
+    def record_emitter(self, *args, **kwargs):
+        emitter = make_emitter(self, *args, **kwargs)
+        emitters.append(emitter)
+        return emitter
+
+    monkeypatch.setattr(PPUGemmMMA, "_make_mma_emitter", record_emitter)
+    lowered = _apply_pass(mod, target, "LayoutInference")
+    lowered = _apply_pass(lowered, target, "LowerTileOp")
+    assert emitters
+    assert all(emitter.n_dim == 8 for emitter in emitters)
+
+    mma_calls = []
+
+    def visit(node):
+        if isinstance(node, tvm.tirx.Call) and isinstance(node.op, tvm.ir.Op) and node.op.name == "tirx.ptx_mma":
+            mma_calls.append(node)
+
+    post_order_visit(lowered["main"].body, visit)
+    assert mma_calls
+    assert all(str(call.args[0].value) == "m16n8k16" for call in mma_calls)
 
 
 @pytest.mark.parametrize("arch", ["ppu_10", "ppu_15"])
