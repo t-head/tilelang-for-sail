@@ -47,6 +47,64 @@ void FatalUnsupportedPpuArchGemm(const GemmNode &op, Target target,
              << "), M=" << op.m_ << ", N=" << op.n_ << ", K=" << op.k_ << ".";
 }
 
+// Single whitelist of the T.gemm operand dtype configurations. It mirrors the
+// native MMA atom table (MmaDispatcher specializations) in
+// tl_templates/ppu/instruction/mma.h, so an unsupported combination fails here
+// with the operand dtypes in the message instead of a device-compiler
+// static_assert deep inside the template.
+bool AllowPPUMMA(const GemmNode &op, int arch) {
+  DataType a = op.a_->dtype, b = op.b_->dtype, c = op.c_->dtype;
+  if (a.is_float8() && b.is_float8()) {
+    // Only the e4m3/e5m2 atoms exist, and only from ppu0015 on.
+    auto is_e4m3_or_e5m2 = [](DataType dtype) {
+      return dtype.is_float8_e4m3() || dtype.is_float8_e4m3fn() ||
+             dtype.is_float8_e5m2();
+    };
+    return arch >= 15 && c == DataType::Float(32) && is_e4m3_or_e5m2(a) &&
+           is_e4m3_or_e5m2(b);
+  }
+  if (a.is_float4() && b.is_float4()) {
+    // The scale-less FP4 atom; runtime scales go through T.gemm_blockscaled.
+    return arch >= 15 && c == DataType::Float(32);
+  }
+  if (a != b) {
+    return false;
+  }
+  if (a == DataType::Float(16)) {
+    return c == DataType::Float(16) || c == DataType::Float(32);
+  }
+  // float32 operands are emitted as the tf32 atom (see the PPU MMA emitter).
+  if (a == DataType::Float(32) || a.is_tfloat32()) {
+    return c == DataType::Float(32);
+  }
+  if (a == DataType::BFloat(16)) {
+    return c == DataType::Float(32);
+  }
+  if (a == DataType::Int(8)) {
+    return c == DataType::Int(32);
+  }
+  // The u8 atoms (s8u8/u8s8/u8u8) only exist on ppu0010. T.gemm does not reach
+  // them today: the Python emitter releases k32 for s8s8 only.
+  if (a == DataType::UInt(8)) {
+    return arch == 10 && c == DataType::Int(32);
+  }
+  return false;
+}
+
+void FatalMmaSyncUnavailable(const GemmNode &op, Target target) {
+  LOG(FATAL) << "T.gemm requires a native PPU MMA atom, but the operand dtype "
+                "configuration is not supported. Got target="
+             << target << ", A(scope=" << op.a_.scope()
+             << ", dtype=" << op.a_->dtype << "), B(scope=" << op.b_.scope()
+             << ", dtype=" << op.b_->dtype << "), C(scope=" << op.c_.scope()
+             << ", dtype=" << op.c_->dtype << "), M=" << op.m_
+             << ", N=" << op.n_ << ", K=" << op.k_
+             << ". Supported: "
+                "float16->float16/float32, bfloat16->float32, "
+                "float32/tfloat32->float32, int8->int32; ppu0015 "
+                "additionally float8_e4m3/e5m2 and float4_e2m1fn -> float32.";
+}
+
 std::pair<int, int>
 ComputeDefaultWarpPartition(const GemmWarpPolicyNode &policy, int M, int N,
                             int num_warps, int k_n_per_warp) {
@@ -154,6 +212,16 @@ struct Gemm {
     }
     if (op.isTcgen05_) {
       FatalUnsupportedPpuArchGemm(op, target, "T.tcgen05_gemm()");
+    }
+    // On an arch-less target the Python MMA emitter resolved the generation
+    // from the real device (hgcc.get_target_arch) and applied its own gate, so
+    // only the dtype-combination gate is left here.
+    int arch = std::numeric_limits<int>::max();
+    if (auto arch_attr = target->GetAttr<ffi::String>("arch")) {
+      arch = GetPPUArchInt(target);
+    }
+    if (!AllowPPUMMA(op, arch)) {
+      FatalMmaSyncUnavailable(op, target);
     }
     if (op.transB_ && IsFragmentBuffer(op.a_) && IsSharedBuffer(op.b_) &&
         op.a_->dtype.bits() == 16 && op.b_->dtype.bits() == 16 &&

@@ -421,4 +421,15 @@ TL_DEVICE void aiu_load(void const *smem_ptr, void const *global_ptr,
 #undef TL_AIU_LOAD_ASM
 }
 
+// PPU has a single hardware prefetch (vmem.prefetch.b32.kp6 for the global L2
+// form). Eviction priorities have no distinct PPU encoding (evict_normal and
+// evict_last both lower to the kp1 form), so only the policy-less form exists.
+template <int EvictPriority, bool IsGlobal>
+TL_DEVICE void prefetch_l2(const void *ptr) {
+  static_assert(EvictPriority == -1,
+                "tl::prefetch_l2 on PPU does not support eviction policies");
+  static_assert(IsGlobal, "tl::prefetch_l2 on PPU only supports global memory");
+  asm volatile("ppu.prefetch.global.L2 [%0];" : : "l"(ptr) : "memory");
+}
+
 } // namespace tl

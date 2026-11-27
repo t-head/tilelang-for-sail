@@ -740,6 +740,11 @@ void CodeGenTileLangPPU::EmitPreamble_(std::ostream &os) const {
   }
 
   if (need_cooperative_groups_) {
+    // The SDK's cooperative_groups headers cast to uintptr_t from the host
+    // <cstdint>, which hgrtc does not provide. rtc_std.h supplies it there and
+    // is empty for hgcc. It has to come first: common.h only reaches it later,
+    // through copy.h below.
+    os << "#include <tl_templates/ppu/rtc_std.h>\n";
     os << "#include <cooperative_groups.h>\n";
   }
   if (need_grid_sync_) {
@@ -1681,6 +1686,41 @@ void CodeGenTileLangPPU::VisitExpr_(const CastNode *op, std::ostream &os) {
     return;
   }
 
+  // Round-to-nearest-even float32 -> tfloat32 (upstream #3714): PPU has no
+  // cvt.rn.tf32.f32 instruction, so dispatch to the software RTNE helper in
+  // the PPU templates.
+  if (cast_round == "rn" && from_ty.is_float() && from_ty.bits() == 32 &&
+      target_ty.is_tfloat32()) {
+    ICHECK(op->annotations.find("rbits") == op->annotations.end())
+        << "rbits is only supported with stochastic rounding, not round='rn'";
+    auto get_bool_anno = [&](const char *key, bool dflt) -> bool {
+      auto it = op->annotations.find(key);
+      if (it == op->annotations.end())
+        return dflt;
+      return Downcast<IntImm>((*it).second)->value != 0;
+    };
+    std::string cast_func = std::string("tl::__tl_cvt_f32_to_tf32_rn<") +
+                            (get_bool_anno("sat", true) ? "true>" : "false>");
+    if (from_ty.is_scalar()) {
+      os << cast_func << "(" << PrintExpr(op->value) << ")";
+      return;
+    }
+    std::string src = SSAGetID(PrintExpr(op->value), from_ty);
+    std::string sret = name_supply_->FreshName("_");
+    PrintIndent();
+    this->PrintType(target_ty, stream);
+    stream << ' ' << sret << ";\n";
+    for (int i = 0; i < from_ty.lanes(); ++i) {
+      std::ostringstream val;
+      val << cast_func << "(";
+      PrintVecElemLoad(src, from_ty, i, val);
+      val << ")";
+      PrintVecElemStore(sret, target_ty, i, val.str());
+    }
+    os << sret;
+    return;
+  }
+
   // Emit simple C-style type conversion for scalar casts without custom
   // rounding.
   if (from_ty.is_scalar() && cast_round.empty())
@@ -2461,9 +2501,36 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
   } else if (op->op.same_as(builtin::ptx_commit_group())) {
     print_extern_call_stmt("tl::cp_async_commit");
   } else if (op->op.same_as(builtin::ptx_wait_group())) {
-    int n = Downcast<IntImm>(op->args[0])->value;
+    // The wait depth lowers to a `ppu.cp.async.wait_group N`, whose operand
+    // must be a compile-time immediate. A software pipeline over a dynamic
+    // trip count can emit a non-constant depth (e.g. `1 - ko`) in its drain
+    // phase. Since there is no runtime form of the wait, fall back to a full
+    // wait (N=0: wait for all outstanding async copies), which is always a
+    // safe over-synchronization.
+    int n = 0;
+    if (const auto *imm = op->args[0].as<IntImmNode>()) {
+      n = static_cast<int>(imm->value);
+    }
     std::string func_name = "tl::cp_async_wait<" + std::to_string(n) + ">";
     print_extern_call_stmt(func_name, 1);
+  } else if (op->op.same_as(tl::prefetch_l2())) {
+    // The Python front end pins eviction_priority to -1 and is_global to true.
+    // Anything else has no distinct PPU encoding, so reject it here instead of
+    // emitting an asm string the backend would silently fold into another form.
+    auto priority = Downcast<IntImm>(op->args[1])->value;
+    bool is_global = Downcast<IntImm>(op->args[2])->value != 0;
+    ICHECK(priority == -1 && is_global)
+        << "tl.prefetch_l2 on PPU only supports the policy-less global form, "
+           "got "
+        << "eviction_priority=" << priority << ", is_global=" << is_global;
+    print_extern_call_stmt("tl::prefetch_l2<-1, true>", 0, 2);
+  } else if (op->op.same_as(tl::prefetch_l1()) ||
+             op->op.same_as(tl::prefetchu_l1())) {
+    LOG(FATAL) << (op->op.same_as(tl::prefetch_l1()) ? "tl.prefetch_l1"
+                                                     : "tl.prefetchu_l1")
+               << " is not supported on the PPU backend: PPU has no distinct "
+                  "L1 prefetch "
+                  "encoding. Use tl.prefetch_l2 instead.";
   } else if (op->op.same_as(builtin::create_barriers())) {
     this->PrintIndent();
     int barrier_count = Downcast<IntImm>(op->args[0])->value;
@@ -4945,6 +5012,8 @@ void CodeGenTileLangPPU::VisitExpr_(const BroadcastNode *op,
     return;
   }
 
+  // Each ulonglong4 component holds two float32 lanes. `make_float2` returns a
+  // temporary, so its address cannot be taken; pack the lane bits instead.
   if (op->dtype.is_float() && op->dtype.bits() == 32 &&
       op->dtype.lanes() == 8) {
     std::string v = PrintExpr(op->value);
@@ -4952,7 +5021,8 @@ void CodeGenTileLangPPU::VisitExpr_(const BroadcastNode *op,
     for (int i = 0; i < 4; ++i) {
       if (i != 0)
         os << ", ";
-      os << "*(unsigned long long*)&make_float2(" << v << ", " << v << ")";
+      os << "((unsigned long long)__float_as_uint(" << v
+         << ") << 32 | __float_as_uint(" << v << "))";
     }
     os << ')';
     return;

@@ -108,6 +108,14 @@ class PassConfigKey(str, Enum):
     a host C/C++ compiler, including on Windows.
     """
 
+    TL_PPU_COMPILER = "tl.ppu_compiler"
+    """PPU device compiler for the TVM-FFI and Hgrtc execution backends: "hgcc" or "hgrtc".
+
+    Default: "hgcc". "hgrtc" compiles in-process through the PPU SDK's
+    libhgrtc.so instead of spawning hgcc, and needs the SDK's device-side
+    standard library headers (targets/x86_64-linux/include/hggc/std).
+    """
+
     TL_DEVICE_COMPILE_FLAGS = "tl.device_compile_flags"
     """Additional device compiler flags passed to nvcc/NVRTC.
 

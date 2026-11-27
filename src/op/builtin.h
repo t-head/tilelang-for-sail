@@ -109,6 +109,7 @@ static constexpr const char *kLayoutVisualizationFormats =
     "tl.layout_visualization_formats";
 static constexpr const char *kDeviceCompileFlags = "tl.device_compile_flags";
 static constexpr const char *kCUDACompiler = "tl.cuda_compiler";
+static constexpr const char *kPPUCompiler = "tl.ppu_compiler";
 /*! \brief Emit #line directives in generated C-family source from TIR spans,
  * mapping generated statements back to their Python source lines. The value is
  * a level: 0 = off (default), 1 = one directive per spanned statement, and

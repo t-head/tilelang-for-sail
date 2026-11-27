@@ -4,6 +4,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <hggc_runtime.h>
+#else
+// hgrtc has no host standard library; the std:: names used by the templates
+// come from the SDK's device-side one instead.
+#include "rtc_std.h"
 #endif
 
 #if !defined(__GNUC__) && !defined(__clang__)
@@ -220,6 +224,198 @@ TL_PATCH TL_DEVICE half_t hfmod(const half_t x, const half_t y) {
 
 TL_PATCH TL_DEVICE bfloat16_t hfmod(const bfloat16_t x, const bfloat16_t y) {
   return bfloat16_t(fmodf(float(x), float(y)));
+}
+
+// Math family from upstream #3172: PPU has no native 16-bit entries for
+// these, so evaluate in float32 and cast back (the established PPU style).
+#define TL_DEFINE_UNARY_16BIT_MATH(name)                                       \
+  TL_PATCH TL_DEVICE half_t h##name(const half_t x) {                          \
+    return half_t(name##f(float(x)));                                          \
+  }                                                                            \
+  TL_PATCH TL_DEVICE bfloat16_t h##name(const bfloat16_t x) {                  \
+    return bfloat16_t(name##f(float(x)));                                      \
+  }
+
+TL_DEFINE_UNARY_16BIT_MATH(asin)
+TL_DEFINE_UNARY_16BIT_MATH(acos)
+TL_DEFINE_UNARY_16BIT_MATH(asinh)
+TL_DEFINE_UNARY_16BIT_MATH(acosh)
+TL_DEFINE_UNARY_16BIT_MATH(atanh)
+TL_DEFINE_UNARY_16BIT_MATH(log1p)
+
+#undef TL_DEFINE_UNARY_16BIT_MATH
+
+TL_PATCH TL_DEVICE half_t hatan2(const half_t x, const half_t y) {
+  return half_t(atan2f(float(x), float(y)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hatan2(const bfloat16_t x, const bfloat16_t y) {
+  return bfloat16_t(atan2f(float(x), float(y)));
+}
+
+TL_PATCH TL_DEVICE half_t hhypot(const half_t x, const half_t y) {
+  return half_t(hypotf(float(x), float(y)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hhypot(const bfloat16_t x, const bfloat16_t y) {
+  return bfloat16_t(hypotf(float(x), float(y)));
+}
+
+// A wider RHS stays in float32 rather than being rounded to the result dtype
+// first (mirrors the CUDA overloads from upstream #3172).
+template <typename T>
+TL_PATCH TL_DEVICE half_t hatan2(const half_t x, const T y) {
+  return half_t(atan2f(float(x), float(y)));
+}
+
+template <typename T>
+TL_PATCH TL_DEVICE bfloat16_t hatan2(const bfloat16_t x, const T y) {
+  return bfloat16_t(atan2f(float(x), float(y)));
+}
+
+template <typename T>
+TL_PATCH TL_DEVICE half_t hhypot(const half_t x, const T y) {
+  return half_t(hypotf(float(x), float(y)));
+}
+
+template <typename T>
+TL_PATCH TL_DEVICE bfloat16_t hhypot(const bfloat16_t x, const T y) {
+  return bfloat16_t(hypotf(float(x), float(y)));
+}
+
+// copysign: magnitude bits of x, sign bit of y. The 16-bit/16-bit forms use
+// the raw encoding so a NaN y keeps its payload's sign untouched.
+TL_PATCH TL_DEVICE half_t hcopysign(const half_t x, const half_t y) {
+  return half_t::bitcast((x.raw() & 0x7FFFu) | (y.raw() & 0x8000u));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hcopysign(const bfloat16_t x,
+                                        const bfloat16_t y) {
+  return bfloat16_t::bitcast((x.raw() & 0x7FFFu) | (y.raw() & 0x8000u));
+}
+
+template <typename T>
+TL_PATCH TL_DEVICE half_t hcopysign(const half_t x, const T y) {
+  // Inspect the sign before any conversion can canonicalize a NaN.
+  return half_t::bitcast((x.raw() & 0x7FFFu) | (signbit(y) ? 0x8000u : 0u));
+}
+
+template <typename T>
+TL_PATCH TL_DEVICE bfloat16_t hcopysign(const bfloat16_t x, const T y) {
+  return bfloat16_t::bitcast((x.raw() & 0x7FFFu) | (signbit(y) ? 0x8000u : 0u));
+}
+
+// ldexp's second operand is an exponent, not a value of the same type.
+TL_PATCH TL_DEVICE half_t hldexp(const half_t x, const int n) {
+  return half_t(ldexpf(float(x), n));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hldexp(const bfloat16_t x, const int n) {
+  return bfloat16_t(ldexpf(float(x), n));
+}
+
+// Step the 16-bit encoding directly: a float32 step is below one 16-bit ulp
+// and rounds back. Compare as integers too, so subnormal handling does not
+// depend on the device's flushing behavior. `inf` is the dtype's +inf
+// encoding.
+TL_DEVICE uint16_t nextafter_bits16(const uint16_t ux, const uint16_t uy,
+                                    const uint16_t inf) {
+  const uint16_t mx = ux & 0x7FFF, my = uy & 0x7FFF;
+  if (mx > inf || my > inf)
+    return 0x7FFF;
+  if (ux == uy || (mx | my) == 0)
+    return uy;
+  if (mx == 0)
+    return (uy & 0x8000) | 0x0001;
+  const int kx = (ux & 0x8000) ? -int(mx) : int(mx);
+  const int ky = (uy & 0x8000) ? -int(my) : int(my);
+  const bool away = (kx < ky) == !(ux & 0x8000);
+  return ux + (away ? 1 : -1);
+}
+
+TL_PATCH TL_DEVICE half_t hnextafter(const half_t x, const half_t y) {
+  return half_t::bitcast(nextafter_bits16(x.raw(), y.raw(), 0x7C00));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hnextafter(const bfloat16_t x,
+                                         const bfloat16_t y) {
+  return bfloat16_t::bitcast(nextafter_bits16(x.raw(), y.raw(), 0x7F80));
+}
+
+// Directed rounding brackets a wider target without losing its direction
+// when round-to-nearest would produce x. Treat both zero encodings as equal
+// here.
+TL_DEVICE uint16_t nextafter_bits16(const uint16_t ux, const uint16_t lower,
+                                    const uint16_t upper, const uint16_t inf) {
+  const bool at_lower = ux == lower || ((ux | lower) & 0x7FFF) == 0;
+  return nextafter_bits16(ux, at_lower ? upper : lower, inf);
+}
+
+// The brackets come from the nearest 16-bit value of the wider target and
+// its directed neighbors, computed on the 16-bit encoding itself (PPU has no
+// __float2half_rd/__float2half_ru directed-conversion intrinsics).
+TL_PATCH TL_DEVICE half_t hnextafter(const half_t x, const float y) {
+  const half_t rn = half_t(y);
+  const float frn = float(rn);
+  uint16_t lower, upper;
+  if (frn == y) {
+    lower = upper = rn.raw();
+  } else if (frn < y) {
+    lower = rn.raw();
+    upper = nextafter_bits16(rn.raw(), 0x7C00, 0x7C00);
+  } else {
+    upper = rn.raw();
+    lower = nextafter_bits16(rn.raw(), 0xFC00, 0x7C00);
+  }
+  return half_t::bitcast(nextafter_bits16(x.raw(), lower, upper, 0x7C00));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hnextafter(const bfloat16_t x, const float y) {
+  const bfloat16_t rn = bfloat16_t(y);
+  const float frn = float(rn);
+  uint16_t lower, upper;
+  if (frn == y) {
+    lower = upper = rn.raw();
+  } else if (frn < y) {
+    lower = rn.raw();
+    upper = nextafter_bits16(rn.raw(), 0x7F80, 0x7F80);
+  } else {
+    upper = rn.raw();
+    lower = nextafter_bits16(rn.raw(), 0xFF80, 0x7F80);
+  }
+  return bfloat16_t::bitcast(nextafter_bits16(x.raw(), lower, upper, 0x7F80));
+}
+
+TL_PATCH TL_DEVICE half_t hnextafter(const half_t x, const double y) {
+  const half_t rn = half_t(y);
+  const float frn = float(rn);
+  uint16_t lower, upper;
+  if (frn == y) {
+    lower = upper = rn.raw();
+  } else if (frn < y) {
+    lower = rn.raw();
+    upper = nextafter_bits16(rn.raw(), 0x7C00, 0x7C00);
+  } else {
+    upper = rn.raw();
+    lower = nextafter_bits16(rn.raw(), 0xFC00, 0x7C00);
+  }
+  return half_t::bitcast(nextafter_bits16(x.raw(), lower, upper, 0x7C00));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hnextafter(const bfloat16_t x, const double y) {
+  const bfloat16_t rn = bfloat16_t(y);
+  const float frn = float(rn);
+  uint16_t lower, upper;
+  if (frn == y) {
+    lower = upper = rn.raw();
+  } else if (frn < y) {
+    lower = rn.raw();
+    upper = nextafter_bits16(rn.raw(), 0x7F80, 0x7F80);
+  } else {
+    upper = rn.raw();
+    lower = nextafter_bits16(rn.raw(), 0xFF80, 0x7F80);
+  }
+  return bfloat16_t::bitcast(nextafter_bits16(x.raw(), lower, upper, 0x7F80));
 }
 
 TL_PATCH TL_DEVICE half_t hexp(const half_t x) {
@@ -772,6 +968,32 @@ struct tfloat32_t : public cute::tfloat32_t {
   tfloat32_t(cutlass::tfloat32_t x)
       : cute::tfloat32_t(*reinterpret_cast<cute::tfloat32_t *>(&x)) {}
 };
+
+// Round-to-nearest-even float32 -> tfloat32 (upstream #3714). PPU has no
+// cvt.rn.tf32.f32 instruction, so round the encoding by hand: keep mantissa
+// bits [22:13], round bits [12:0] with ties-to-even; a mantissa carry
+// ripples into the exponent. tf32 shares the float32 exponent width, so Inf
+// passes through unchanged and NaN canonicalizes.
+template <bool kSat> TL_DEVICE tfloat32_t __tl_cvt_f32_to_tf32_rn(float src) {
+  const uint32_t ux = reinterpret_cast<const uint32_t &>(src);
+  const uint32_t exp = (ux >> 23) & 0xFFu;
+  if (exp == 0xFFu) {
+    if ((ux & 0x7FFFFFu) != 0u)
+      return tfloat32_t::bitcast(0x7FFFFFFFu); // canonical NaN
+    return tfloat32_t::bitcast(ux);            // ±Inf
+  }
+  uint32_t kept = ux & 0xFFFFE000u;
+  const uint32_t rest = ux & 0x1FFFu;
+  const bool round_up =
+      rest > 0x1000u || (rest == 0x1000u && (kept & 0x2000u) != 0u);
+  if (round_up)
+    kept += 0x2000u;
+  if constexpr (kSat) {
+    if ((kept & 0x7F800000u) == 0x7F800000u) // overflow: largest finite
+      kept = (ux & 0x80000000u) | 0x7F7FFFFFu;
+  }
+  return tfloat32_t::bitcast(kept);
+}
 
 template <typename T> struct to_cute_type {
   using type = T;
