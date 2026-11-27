@@ -98,7 +98,10 @@ def gemm(
     scale_A: BufferLikeType | None = None,
     scale_B: BufferLikeType | None = None,
 ) -> tirx.PrimExpr:
-    """PPU GEMM with backward-compatible packed MXFP4 scale operands."""
+    """PPU GEMM with packed MXFP4 scales and automatic register pipelining.
+
+    Eligible inner GEMM loops use a two-slot register pipeline automatically.
+    """
     if (scale_A is None) != (scale_B is None):
         raise ValueError("scale_A and scale_B must be provided together")
     if scale_A is None:
